@@ -345,11 +345,12 @@ public sealed class SkipLog
     /// <summary>Records that the element was left out.</summary>
     public void Add(int elementId, string elementClass, string reason) => _entries.Add((elementId, elementClass, reason));
 
-    /// <summary>Takes the element back (the export wrote it after all): its latest entry.</summary>
-    public void Remove(int elementId)
+    /// <summary>Takes the element back (the export wrote it after all): its latest entry. False when it had none.</summary>
+    public bool Remove(int elementId)
     {
         int index = _entries.FindLastIndex(entry => entry.Id == elementId);
         if (index >= 0) _entries.RemoveAt(index);
+        return index >= 0;
     }
 
     /// <summary>The skipped elements grouped by class and reason, largest first, then by class and reason.</summary>

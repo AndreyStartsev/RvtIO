@@ -402,4 +402,34 @@ public class IfcExporterBeamCommonPropertySetTests
             if (File.Exists(path)) File.Delete(path);
         }
     }
+
+    [Fact]
+    public void BeamSystemAssembly_IsCountedAsExportedAndTakenOutOfTheSkippedElements()
+    {
+        var system = new Element
+        {
+            Id = 5200, CategoryId = -2001327, Category = "OST_StructuralFramingSystem",
+            JoistSystem = new RvtIO.Parsing.JoistSystemData(1, "Joist type", [5100, 5101]),
+        };
+        Element[] elements = [Product(5100, 5102, -2001320, "OST_StructuralFraming", "Joist", 0),
+            Product(5101, 5102, -2001320, "OST_StructuralFraming", "Joist", 10), system];
+        var info = new RevitFileInfo();
+        info.Elements.AddRange(elements);
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-joist-{Guid.NewGuid():N}.ifc");
+        var skipLog = new SkipLog();
+        var exporter = new IfcExporter { Profile = IfcProfile.Current, SkipLog = skipLog };
+        try
+        {
+            exporter.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            Assert.Single(Regex.Matches(ifc, @"IFCELEMENTASSEMBLY\("));
+            Assert.Equal(2, Regex.Matches(ifc, @"=IFCBEAM\(").Count);
+            Assert.Equal(3, exporter.ExportedProducts);
+            Assert.Equal(0, skipLog.Total);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }

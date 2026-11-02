@@ -36,7 +36,7 @@ public class ExportReportTests
         Assert.Equal(1, log.Total);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SameFileComparesTheFullPathsAndTellsDifferentFilesApart()
     {
         string folder = Path.Combine(Path.GetTempPath(), "rvt-samefile-" + Guid.NewGuid().ToString("N"));
@@ -55,7 +55,7 @@ public class ExportReportTests
 
             string link = Path.Combine(folder, "link.rvt");
             try { File.CreateSymbolicLink(link, input); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; } // no right to make links here
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new SkipException("symbolic links cannot be created here"); }
             Assert.True(ExportReport.SameFile(link, input));
         }
         finally { Directory.Delete(folder, true); }
