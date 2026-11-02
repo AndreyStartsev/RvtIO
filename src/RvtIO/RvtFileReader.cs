@@ -24,8 +24,11 @@ public partial class RvtFileReader
     internal ParsingState? LastParsingState { get; private set; }
 
     /// <summary>Read and parse a Revit file, returning structured element data.</summary>
+    /// <exception cref="RvtInputException">The file cannot be read: missing, empty, not a compound file, cut or damaged.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold.</exception>
     public RevitFileInfo Read(string rvtPath)
     {
+        RvtContainerCheck.Verify(rvtPath);
         Parsing.ElementBuilder.SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings;
         var diag = _options.DiagnosticOutput;
         using var diagnosticScope = DiagnosticSink.Use(diag);
@@ -34,7 +37,8 @@ public partial class RvtFileReader
 
         using var root = RootStorage.OpenRead(rvtPath);
 
-        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact);
+        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact,
+            ElemTableRecover.Limits(_options.RaiseLimits), _options.Diagnostics);
         diag?.WriteLine($"ElemTable: {elemTable.Count} elements");
 
         var fileMetadata = BasicFileInfoReader.Read(root);
@@ -1124,6 +1128,9 @@ public partial class RvtFileReader
             }
 
             var chunks = decompressor.DecompressAll(raw);
+            var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
+            _options.Diagnostics?.Streams.Add(new StreamRecord("Partitions/" + partEntry.Name, raw.Length, members, decodedMembers,
+                failedMembers, recoveredMembers, unverifiedMembers));
             diag?.WriteLine($"  Chunks: {chunks.Count} decompressed");
             if (routing != null && int.TryParse(partEntry.Name, out int partitionNumber)
                 && RecordRouting.Stale(routing.Census, routing.Current, partitionNumber) is { Count: > 0 } stale)

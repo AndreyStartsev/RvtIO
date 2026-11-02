@@ -589,7 +589,7 @@ internal static class ElemTableRecover
         return table;
     }
 
-    /// <summary>Diagnostics from a <see cref="Recover(byte[], int, out RecoverOutcome)"/>
+    /// <summary>Diagnostics from a <see cref="Recover(byte[], int)"/>
     /// call: every field is either read directly from the stream at the offset the recovery
     /// itself located, or counted during the run.</summary>
     internal sealed class RecoverOutcome
@@ -610,6 +610,8 @@ internal static class ElemTableRecover
         public int DesyncCount;
         /// <summary>True only when the recovered bytes' own CRC32 matches the trailer's.</summary>
         public bool Accepted;
+        /// <summary>The limit that stopped the recovery (code and value), or null when no limit did.</summary>
+        public (string Limit, long Value)? LimitHit;
         /// <summary>Human-readable reason for the outcome.</summary>
         public string Reason = "";
     }
@@ -617,7 +619,15 @@ internal static class ElemTableRecover
     /// <summary>Hard safety cap on recovered output size, independent of any per-file ISIZE claim (such a claim
     /// cannot be trusted before the member's real trailer has been located); generous relative to the largest
     /// ElemTable while still bounding a pathological or adversarial stream.</summary>
-    private const int MaxRecoveredBytes = 256 * 1024 * 1024;
+    internal const int DefaultMaxRecoveredBytes = 256 * 1024 * 1024;
+
+    /// <summary>Limit of the desync relock loop: a damaged table that needs more relocks than this is not recovered.</summary>
+    internal const int DefaultMaxIterations = 4096;
+
+    /// <summary>The limits in force: the defaults, or with <paramref name="raise"/> the platform array length and no loop guard
+    /// (every iteration advances the bit position, so the loop still ends).</summary>
+    internal static (int MaxBytes, int MaxIterations) Limits(bool raise) =>
+        raise ? (Array.MaxLength, int.MaxValue) : (DefaultMaxRecoveredBytes, DefaultMaxIterations);
 
     /// <summary>Convenience overload for callers that only need the payload.</summary>
     public static byte[]? Recover(byte[] raw, int gzStart) => Recover(raw, gzStart, out _);
@@ -633,9 +643,10 @@ internal static class ElemTableRecover
     /// when the CRC32 of the recovered bytes matches that trailer, never by comparing lengths,
     /// since a corrupt ISIZE must not gate acceptance either way.
     /// </summary>
-    public static byte[]? Recover(byte[] raw, int gzStart, out RecoverOutcome outcome)
+    public static byte[]? Recover(byte[] raw, int gzStart, out RecoverOutcome outcome, (int MaxBytes, int MaxIterations)? limits = null)
     {
         outcome = new RecoverOutcome();
+        var (maxRecoveredBytes, maxIterations) = limits ?? Limits(false);
         var swAll = Diag != null ? System.Diagnostics.Stopwatch.StartNew() : null;
         try
         {
@@ -648,7 +659,7 @@ internal static class ElemTableRecover
             long deflateStart = (long)deflateByteStart * 8;
             Diag?.WriteLine($"[recover] raw={raw.Length} gzStart={gzStart} deflateByteStart={deflateByteStart}");
 
-            var outp = new ByteBuf(1 << 20, MaxRecoveredBytes);
+            var outp = new ByteBuf(1 << 20, maxRecoveredBytes);
             var br = new BitReader(raw, deflateStart);
 
             int guard = 0;
@@ -656,7 +667,7 @@ internal static class ElemTableRecover
             DesyncInfo? finalInfo = null;
             while (true)
             {
-                if (++guard > 4096) { outcome.Reason = "guard exceeded (4096 loop iterations)"; Diag?.WriteLine("[recover] STOP: guard 4096 exceeded"); break; }
+                if (++guard > maxIterations) { outcome.Reason = $"guard exceeded ({maxIterations} loop iterations)"; outcome.LimitHit = ("elem-table-recovery-iterations", maxIterations); Diag?.WriteLine($"[recover] STOP: guard {maxIterations} exceeded"); break; }
                 var info = InflateUntilDesync(br, outp);
                 if (Diag != null)
                     Diag.WriteLine($"[desync #{guard}] why={info.Why} bit={info.Bit} (byte={info.Bit / 8}.{info.Bit % 8}) " +
@@ -716,9 +727,9 @@ internal static class ElemTableRecover
                 Diag?.WriteLine($"  [relock] chose boff={boff.Value} (delta={boff.Value - info.Bit})");
 
                 // The tail buffer's cap is the shared safety cap minus what is already recovered,
-                // not derived from any per-file expected size (see MaxRecoveredBytes).
-                int remaining = MaxRecoveredBytes - outp.Count;
-                if (remaining <= 0) { outcome.Reason = "hit the output safety cap"; Diag?.WriteLine("[recover] STOP: remaining <= 0"); break; }
+                // not derived from any per-file expected size (see DefaultMaxRecoveredBytes).
+                int remaining = maxRecoveredBytes - outp.Count;
+                if (remaining <= 0) { outcome.Reason = "hit the output safety cap"; outcome.LimitHit = ("elem-table-recovery-bytes", maxRecoveredBytes); Diag?.WriteLine("[recover] STOP: remaining <= 0"); break; }
                 var tail = new ByteBuf(Math.Min(1 << 20, remaining), remaining);
                 DecodeWithH(raw, info.Lit, info.Dist, outp, boff.Value, 0, true, tail, out long endBit);
                 Diag?.WriteLine($"  [resume] tail={tail.Count} endBit={endBit} (delta={endBit - info.Bit})");
@@ -781,6 +792,7 @@ internal static class ElemTableRecover
         }
         catch (Exception ex)
         {
+            if (ex is OutputLimitExceededException) outcome.LimitHit = ("elem-table-recovery-bytes", maxRecoveredBytes);
             outcome.Reason = $"exception {ex.GetType().Name}: {ex.Message}";
             Diag?.WriteLine($"[recover] RESULT REJECTED: EXCEPTION {ex.GetType().Name}: {ex.Message}");
             Diag?.WriteLine(ex.StackTrace);

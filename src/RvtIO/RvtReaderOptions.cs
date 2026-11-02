@@ -34,6 +34,14 @@ public class RvtReaderOptions
     /// are then all decoded as before.</summary>
     public bool ResolveCurrentCopies { get; set; }
 
+    /// <summary>Raise the limits that cut a stream while it is recovered from damage: the output of the element table recovery
+    /// (256 MiB) and its loop guard (4096 iterations) become the platform array length and unbounded.
+    /// For very large models. Off by default.</summary>
+    public bool RaiseLimits { get; set; }
+
+    /// <summary>Collects the streams read, how much of each decoded, and the limits that cut a stream (see <see cref="ExportReport"/>). Null to collect nothing.</summary>
+    public RvtReadDiagnostics? Diagnostics { get; set; }
+
     /// <summary>Write diagnostic/progress messages to this TextWriter. Null for silent operation.</summary>
     public TextWriter? DiagnosticOutput { get; set; }
 }

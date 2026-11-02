@@ -327,6 +327,12 @@ public partial class IfcExporter
             throw new InvalidOperationException("The requested room export phase is not in a validated project phase order.");
     }
 
+    /// <summary>Receives the elements the export leaves out, with the class and the reason (see <see cref="ExportReport"/>). Null to collect nothing.</summary>
+    public SkipLog? SkipLog { get; init; }
+
+    /// <summary>Products written by the last export, as counted in the "IFC export:" diagnostic line.</summary>
+    public int ExportedProducts { get; private set; }
+
     /// <summary>Writes the IFC file for <paramref name="info"/> to <paramref name="outputPath"/>.</summary>
     public void Export(RevitFileInfo info, string outputPath)
     {
@@ -1588,43 +1594,46 @@ public partial class IfcExporter
             return b[0] > b[3] || b[1] > b[4] || b[2] > b[5];
         }
 
+        void Skip(Element skipped, string why) { skippedCount++; SkipLog?.Add(skipped.Id, RvtIO.SkipLog.ClassOf(skipped), why); }
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
         {
             if (spatialTerrainElementIds.Contains(elem.Id)
                 || groupDefinitionTopographyIds.Contains(elem.Id))
-            { skippedCount++; continue; }
+            { Skip(elem, "terrain-or-group-topography"); continue; }
             // Orphan blocks commonly contain reusable family/type geometry.
-            if (elem.IsBlockOnly) { skippedCount++; continue; }
-            if (elem.IsGroupTemplate) { skippedCount++; continue; }
-            if (CurrentProfile && info.ElemTableIsExact && elem.IsDiscovered) { skippedCount++; continue; }
-            if (CurrentProfile && elem.SerializedFamilyId is > 0) { skippedCount++; continue; }
+            if (elem.IsBlockOnly) { Skip(elem, "block-only-record"); continue; }
+            if (elem.IsGroupTemplate) { Skip(elem, "group-template"); continue; }
+            if (CurrentProfile && info.ElemTableIsExact && elem.IsDiscovered) { Skip(elem, "record-outside-exact-element-table"); continue; }
+            if (CurrentProfile && elem.SerializedFamilyId is > 0) { Skip(elem, "owned-by-family-nonspatial"); continue; }
             // Reinforcement bars are written whole (placement, swept discs, Pset) and contained by
             // the storey of their lowest point
             if (CurrentProfile && elem.RebarBars != null)
             {
                 if (!WriteRebarProduct(w, elem, elemById, ownerHistId, axisId, bldgLocalPlacementId, bodySubCtxId, propertySingleValueIds,
                         int.TryParse(info.Metadata?.RevitVersion, out int revitRelease) && revitRelease >= 2026, storeyIds, defaultStoreyId, storeyContents))
-                    skippedCount++;
+                    Skip(elem, "rebar-product-not-written");
+                else
+                    exportedCount++;
                 continue;
             }
-            if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { skippedCount++; continue; }
+            if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
             bool transformOnlyFamily = elem.Transform != null && elem.TypeId > 0
                 && elem.CategoryId is null or -2000080 or -2001000 or -2001100;
             // Wall type propagation is not yet reliable enough to use for suppression:
             // system-family walls may legitimately be referenced by neighbouring walls.
             if (elem.CategoryId != -2000011 && typeElementIds.Contains(elem.Id)
                 && !HasProjectPhaseReference(elem) && !transformOnlyFamily)
-            { skippedCount++; continue; }
+            { Skip(elem, "type-element"); continue; }
 
-            if (IsNonPhysicalCategory(elem.Category)) { skippedCount++; continue; }
+            if (IsNonPhysicalCategory(elem.Category)) { Skip(elem, "non-physical-category"); continue; }
 
             // Preview/type records inherit PHASE_CREATED during parameter propagation but do not
             // reference that phase in their own record graph.
             if (elem.CategoryId != -2000011
                 && !HasProjectPhaseReference(elem) && !transformOnlyFamily)
-            { skippedCount++; continue; }
+            { Skip(elem, "no-project-phase-reference"); continue; }
 
             // A placed family instance must reference a project level when its serialized level
             // parameters point to Level elements.
@@ -1641,12 +1650,12 @@ public partial class IfcExporter
             if (elem.Transform != null && explicitLevelIds.Count > 0
                 && explicitLevelIds.All(levelId => !storeyIds.ContainsKey(levelId)
                     && !IsProjectLevel(elemById[levelId])))
-            { skippedCount++; continue; }
+            { Skip(elem, "level-is-not-a-project-level"); continue; }
 
             if (elem.CategoryId == -2000011 && !visibleWallIds.Contains(elem.Id))
-            { skippedCount++; continue; }
+            { Skip(elem, "wall-not-visible"); continue; }
             if (curtainPanelWallIds.Contains(elem.Id))
-            { skippedCount++; continue; }
+            { Skip(elem, "curtain-panel-wall"); continue; }
 
             if (elem.CategoryId is -2000171 or -2000170)
             {
@@ -1654,7 +1663,7 @@ public partial class IfcExporter
                 // mullions are connected through CurtainGridLine/GridNode records rather than
                 // referencing the host wall themselves.
                 if (elem.BoundingBox == null && elem.Geometry?.BoundingBox == null && !info.GeometryUndecoded)
-                { skippedCount++; continue; }
+                { Skip(elem, "curtain-child-without-bounds"); continue; }
             }
 
             // An opening connected to a filtered design-option wall is a preview record.
@@ -1662,7 +1671,7 @@ public partial class IfcExporter
                 && (IntParam(elem, -1013201) != -4
                     || elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
                         && wall.CategoryId == -2000011 && !visibleWallIds.Contains(r)) == true))
-            { skippedCount++; continue; }
+            { Skip(elem, "opening-of-hidden-wall"); continue; }
 
             string? ifcType = elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
                 ? "IFCOPENINGELEMENT"
@@ -1691,7 +1700,7 @@ public partial class IfcExporter
                 if (elem.Geometry?.Faces?.Count(f => f.OuterVertices is { Count: >= 3 }) >= 4
                     && (!CurrentProfile || elem.TypeId > 0))
                     ifcType = "IFCBUILDINGELEMENTPROXY";
-                else { skippedCount++; continue; }
+                else { Skip(elem, "no-ifc-class-for-category"); continue; }
             }
             if (CurrentProfile && elem.CategoryId == -2009000 && elem.TypeId > 0
                 && ifcType == "IFCBUILDINGELEMENTPROXY")
@@ -1702,7 +1711,7 @@ public partial class IfcExporter
             if (CurrentProfile && ifcType == "IFCOPENINGELEMENT"
                 && elem.References?.FirstOrDefault(r => visibleWallIds.Contains(r)) is int openingHostWallId
                 && WallWritesNoBodyOpeningsCurrent(exportedIfcElements, openingHostWallId))
-            { skippedCount++; continue; }
+            { Skip(elem, "opening-of-wall-without-body-openings"); continue; }
             if (Environment.GetEnvironmentVariable("RVTIO_PROD_DIAG") is { Length: > 0 } prodDiag)
                 File.AppendAllText(prodDiag, string.Join(',', elem.Id, ifcType, elem.IsDiscovered ? 1 : 0, elem.TypeId,
                     elem.CategoryId, elem.SerializedCreatedPhaseId, elem.SerializedDemolishedPhaseId, elem.SerializedFamilyId,
@@ -1716,10 +1725,10 @@ public partial class IfcExporter
 
             if (ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCCURTAINWALL"
                 && IsValidatedStackedWallContainer(elem, elemById))
-            { skippedCount++; continue; }
+            { Skip(elem, "stacked-wall-container"); continue; }
 
             if (elem.TypeId <= 0 && elem.Geometry == null && elem.Location == null && !info.GeometryUndecoded)
-            { skippedCount++; continue; }
+            { Skip(elem, "no-geometry-or-location"); continue; }
 
             bool alwaysPass = elem.CategoryId is -2000011 or -2000340
                 or -2000171 or -2000170; // walls, generic model, mullions, curtain panels
@@ -1735,7 +1744,7 @@ public partial class IfcExporter
                     bool hasHost = elem.SuperInstanceId is > 0
                         || ResolveHostedElementHostIds(
                             elem, elemById, visibleWallIds, inverseHostedHostIds).Count > 0;
-                    if (!hasHost) { skippedCount++; continue; }
+                    if (!hasHost) { Skip(elem, "hosted-element-without-host"); continue; }
                 }
                 else
                 {
@@ -1743,7 +1752,7 @@ public partial class IfcExporter
                     // another stream member.
                     if (elem.Geometry == null && elem.BoundingBox == null && elem.Transform == null
                         && !roofContainerChildren.ContainsKey(elem.Id) && !info.GeometryUndecoded)
-                    { skippedCount++; continue; }
+                    { Skip(elem, "no-geometry-or-bounds"); continue; }
                 }
             }
 
@@ -1753,7 +1762,7 @@ public partial class IfcExporter
                     ifcType, out int phantomStoreyWallSoFar);
                 _suppressedPhantomStoreyWallProductsByClass[ifcType] =
                     phantomStoreyWallSoFar + 1;
-                skippedCount++;
+                Skip(elem, "phantom-storey-wall");
                 continue;
             }
 
@@ -1824,7 +1833,7 @@ public partial class IfcExporter
                         hostedElements.Add((elem, hostEntry.Key, bbox, 0));
 
                 _suppressedUnplacedOwnerProxyProducts++;
-                skippedCount++;
+                Skip(elem, "unplaced-owner-proxy");
                 continue;
             }
 
@@ -4394,7 +4403,7 @@ public partial class IfcExporter
 
                 _suppressedOpenSurfaceHostedCutterProxyProducts++;
                 withFaces--;
-                skippedCount++;
+                Skip(elem, "open-surface-hosted-cutter-proxy");
                 continue;
             }
 
@@ -4420,7 +4429,7 @@ public partial class IfcExporter
                 }
                 _suppressedGeometrylessProductsByClass.TryGetValue(ifcType, out int suppressedSoFar);
                 _suppressedGeometrylessProductsByClass[ifcType] = suppressedSoFar + 1;
-                skippedCount++;
+                Skip(elem, "geometryless-product");
                 continue;
             }
 
@@ -4790,8 +4799,15 @@ public partial class IfcExporter
             ? StairAggregation.SplitLegacyBodies(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, axisId, _usedExportIds)
             : [];
         if (CurrentProfile)
-            WriteJoistAssemblies(w, info.Elements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
-                storeyContents, propertySingleValueIds);
+            // the main loop left the beam system out; its assembly is a product of the file
+            foreach (int systemId in WriteJoistAssemblies(w, info.Elements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
+                         storeyContents, propertySingleValueIds))
+            {
+                // counted with or without a skip log; the log entry is only there to be taken out
+                exportedCount++;
+                skippedCount--;
+                SkipLog?.Remove(systemId);
+            }
 
         // Resolve decomposition AFTER normal product emission.
         foreach (var pending in pendingCurtainParents.Values.OrderBy(item => item.Element.Id))
@@ -4853,6 +4869,7 @@ public partial class IfcExporter
             if (pending.CountedSuppressed)
             {
                 skippedCount--;
+                SkipLog?.Remove(parent.Id);
                 _suppressedGeometrylessProductsByClass[containerClass]--;
             }
             exportedCount++;
@@ -6435,6 +6452,7 @@ public partial class IfcExporter
         w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily));
         w.WriteTo(output, headerFileName, "IFC2X3", desc, appName, headerOrganization);
 
+        ExportedProducts = exportedCount;
         _diag?.WriteLine($"IFC export: {exportedCount} elements exported, {skippedCount} skipped (faces:{withFaces}, bbox:{withBbox}, no-geom:{noGeom})");
         _diag?.WriteLine($"IFC openings: box={_dbgOpenOk} no-host={_dbgOpenNoHost} no-param={_dbgOpenNoParam}");
         _diag?.WriteLine($"IFC family complex cutters: available={familyCutAvailable} used={familyCutUsed}");

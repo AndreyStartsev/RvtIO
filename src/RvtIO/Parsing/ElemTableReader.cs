@@ -40,7 +40,8 @@ internal static class ElemTableReader
     /// <param name="exact">True when the whole table was decoded with a verified page CRC and length, so an element
     /// without a row is known to be absent from the table (and not just lost to a damaged stream).</param>
     public static Dictionary<uint, uint> Read(RootStorage root,
-        out Dictionary<uint, uint> worksets, out Dictionary<uint, int> creationDates, out bool exact)
+        out Dictionary<uint, uint> worksets, out Dictionary<uint, int> creationDates, out bool exact,
+        (int MaxBytes, int MaxIterations)? limits = null, RvtReadDiagnostics? diagnostics = null)
     {
         worksets = new();
         creationDates = new();
@@ -136,7 +137,10 @@ internal static class ElemTableReader
             // the member's real trailer, never by length. A CRC-validated result wins over an earlier tier; otherwise the earlier
             // result stands.
             int haveLen = decompressed?.Length ?? 0;
-            var recovered = ElemTableRecover.Recover(data, gzStart, out var outcome);
+            var recovered = ElemTableRecover.Recover(data, gzStart, out var outcome, limits);
+            if (outcome.LimitHit is { } hit)
+                diagnostics?.LimitHits.Add(new ReaderLimitHit("Global/ElemTable", hit.Limit, hit.Value, Raisable: true,
+                    $"the recovery of the damaged element table stopped at its limit of {hit.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} ({outcome.Reason}); the table keeps what an earlier decoder produced ({haveLen.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} bytes)"));
             if (recovered != null)
             {
                 bool sameAsEarlierTier = decompressed != null && recovered.AsSpan().SequenceEqual(decompressed);

@@ -6,6 +6,7 @@ API between minor releases.
 
 ## [Unreleased]
 
+- Adds the exit codes 2 (input cannot be read: missing, empty, not a compound file, cut or damaged), 3 (a stream exceeded a reader limit and the read was cut) and 4 (a decoder failed on a readable file), a one-line message instead of an unhandled exception for a truncated or damaged file, and the options `--report`, `--allow-partial` and `--raise-limits`. A complete export without them is unchanged. See [the export report](docs/export-report.md). `RvtFileReader.Read` and `RvtDocument.Open` check that every stream of the compound file can be read to its declared end and throw `RvtInputException` (or `RvtLimitException` for a stream over the platform array length) instead of an `EndOfStreamException` from a decoder; `RvtReaderOptions.Diagnostics` collects the streams read and the limits that cut one.
 - Derives IFC base quantities of beams, columns, members and piles from the surface integrals of the source geometry (planes, cylinders and cones); cutting solids no longer enter the totals.
 - Takes the length of a curtain wall mullion from the axis of its own symbol, and the footprint of a curved wall from the area of its rebuilt curve loop.
 - Takes door and window height and width from their parameters or frame extent before the bounding box, and computes their host area from the coarse solids including non-visible geometry.

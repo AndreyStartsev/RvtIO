@@ -152,11 +152,13 @@ public partial class IfcExporter
 
     /// <summary>The IfcElementAssembly (BEAM_GRID, no representation) of every beam system whose beams were exported, and the
     /// IfcRelAggregates to those beams. The beams leave the storey and the assembly takes their place.
-    /// The assembly is not registered as an exported element: it gets no material or type relation (the later passes read that list).</summary>
-    private void WriteJoistAssemblies(StepWriter w, IReadOnlyList<Element> elements, int ownerHistId, int parentPlacementId, int axisId,
+    /// The assembly is not registered as an exported element: it gets no material or type relation (the later passes read that list).
+    /// Returns the ids of the beam systems written.</summary>
+    private List<int> WriteJoistAssemblies(StepWriter w, IReadOnlyList<Element> elements, int ownerHistId, int parentPlacementId, int axisId,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> exported, IReadOnlyDictionary<int, int> exportedStoreyIds,
         Dictionary<int, List<int>> storeyContents, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds)
     {
+        var written = new List<int>();
         foreach (var elem in elements.Where(e => e.JoistSystem != null).OrderBy(e => e.Id))
         {
             var data = elem.JoistSystem!;
@@ -178,6 +180,8 @@ public partial class IfcExporter
             foreach (var contents in storeyContents.Values) contents.RemoveAll(memberSet.Contains);
             if (!storeyContents.TryGetValue(storeyId, out var storey)) storeyContents[storeyId] = storey = [];
             storey.Add(entity);
+            written.Add(elem.Id);
         }
+        return written;
     }
 }

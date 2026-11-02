@@ -30,10 +30,59 @@ internal static partial class Program
             ResolveCurrentCopies = args.Contains("--resolve-current-copies"),
         };
 
+        // --report <json>: the machine-readable report of the run; --allow-partial: export a read that a reader limit cut (exit 0 instead of 3);
+        // --raise-limits: raise the limits that cut a damaged stream while it is recovered (very large models)
+        bool allowPartial = args.Contains("--allow-partial");
+        bool raiseLimits = args.Contains("--raise-limits");
+        string? reportPath = ValueOf(args, "--report");
+        if (args.Contains("--report") && (reportPath is null or "" || reportPath.StartsWith("--", StringComparison.Ordinal)))
+        {
+            Console.Error.WriteLine("--report requires one value: the path of the JSON report.");
+            return 1;
+        }
+        if (reportPath != null && (ExportReport.SameFile(reportPath, rvtPath) || ExportReport.SameFile(reportPath, outputPath)))
+        {
+            Console.Error.WriteLine("--report must not name the input file or the export output; nothing was read or written.");
+            return 1;
+        }
+        var readDiagnostics = new RvtReadDiagnostics();
+        options.RaiseLimits = raiseLimits;
+        options.Diagnostics = readDiagnostics;
+        string inputName = Path.GetFileName(rvtPath);
+        long inputBytes = File.Exists(rvtPath) ? new FileInfo(rvtPath).Length : 0;
+
         var reader = new RvtFileReader(options);
         var swRead = System.Diagnostics.Stopwatch.StartNew();
-        var rvtInfo = reader.Read(rvtPath);
+        RevitFileInfo rvtInfo;
+        try { rvtInfo = reader.Read(rvtPath); }
+        catch (RvtInputException ex)
+        {
+            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, ex.Kind, ex.Message, RvtExitCodes.InputError, readDiagnostics, raiseLimits, allowPartial),
+                $"error: {ex.Message} Nothing was exported (exit code {RvtExitCodes.InputError}).");
+        }
+        catch (RvtLimitException ex)
+        {
+            readDiagnostics.LimitHits.Add(ex.Hit);
+            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, "limit-exceeded", ex.Message, RvtExitCodes.LimitExceeded, readDiagnostics, raiseLimits, allowPartial),
+                $"error: {ex.Message}. The limit cannot be raised. Nothing was exported (exit code {RvtExitCodes.LimitExceeded}).");
+        }
+        // The container is readable, so this is a decoder failure on damaged or unsupported content: one line on the console, the stack trace in the report.
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            string message = $"The content of '{inputName}' could not be decoded: {ex.GetType().Name}: {ex.Message}";
+            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, "decode-failure", message, RvtExitCodes.DecodeError, readDiagnostics, raiseLimits, allowPartial, ex.ToString()),
+                $"error: {message}. Nothing was exported (exit code {RvtExitCodes.DecodeError}). The report (--report) holds the stack trace.");
+        }
         Console.Error.WriteLine($"Timing: read {swRead.Elapsed.TotalSeconds:F1}s");
+        var report = ExportReport.ForRead(inputName, inputBytes, readDiagnostics, raiseLimits, allowPartial,
+            reader.LastParsingState?.ElemTable.Keys.ToList() ?? [], rvtInfo);
+        foreach (var hit in readDiagnostics.LimitHits)
+            Console.Error.WriteLine($"warning: stream {hit.Stream} was cut by the reader limit {hit.Limit} ({hit.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}): {hit.Detail}");
+        if (report.ExitCode != RvtExitCodes.Success)
+            return EndRun(reportPath, report,
+                $"error: a stream exceeded a reader limit and the read was cut. Nothing was exported (exit code {report.ExitCode}). "
+                + (raiseLimits ? "The limits are already raised; use --allow-partial to export what was read."
+                    : "Use --raise-limits to raise the limits, or --allow-partial to export what was read."));
 
         if (outputPath.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
         {
@@ -64,11 +113,13 @@ internal static partial class Program
             if (rvtInfo.GeometryUndecoded)
                 RvtIO.Parsing.ValidatedElementNames.Apply(rvtInfo,
                     reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state."));
-            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities };
+            var skipLog = new SkipLog();
+            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
             exporter.Export(rvtInfo, outputPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
             Console.Error.WriteLine($"IFC written to {outputPath}");
+            report.SetExport("ifc", exporter.ExportedProducts, skipLog);
         }
         else if (compactJson)
         {
@@ -157,6 +208,7 @@ internal static partial class Program
             CompactJsonExporter.Export(rvtInfo, outputPath, compactSource, Console.Error, compactIdentity,
                 new CompactJsonExportOptions { JsonClassNamePrefix = jsonClassPrefix });
             compactSource.Builtin.WriteReport(Console.Error);
+            report.SetJsonExport(rvtInfo, full: false);
         }
         else
         {
@@ -187,8 +239,31 @@ internal static partial class Program
                 JsonSerializer.Serialize(fs, rvtInfo, jsonOpts);
             Console.Error.WriteLine($"JSON written to {outputPath} ({rvtInfo.Elements.Count} elements, " +
                 $"{rvtInfo.ParameterDefinitions?.Count ?? 0} param defs)");
+            report.SetJsonExport(rvtInfo, full: true);
         }
-        return 0;
+        return EndRun(reportPath, report, null);
+    }
+
+    // Ends a run: writes the report when asked (a failed write is a usage-level error), prints the message, returns the exit code of the report.
+    private static int EndRun(string? reportPath, ExportReport report, string? message)
+    {
+        if (message != null) Console.Error.WriteLine(message);
+        if (reportPath == null) return report.ExitCode;
+        // Written beside the target and moved over it: a hard link to the input or to the export output keeps its content.
+        string temporary = reportPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, report.ToJson(), new System.Text.UTF8Encoding(false));
+            File.Move(temporary, reportPath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+            Console.Error.WriteLine($"error: the report cannot be written to '{reportPath}': {ex.Message}");
+            return report.ExitCode != RvtExitCodes.Success ? report.ExitCode : RvtExitCodes.Usage;
+        }
+        Console.Error.WriteLine($"Report written to {reportPath}");
+        return report.ExitCode;
     }
 
     // --revit-localization <dir> reads the system family names from the resource DLLs of a Revit installation

@@ -12,6 +12,10 @@ internal class ChunkDecompressor
     private static readonly byte[] RvtGzipHeader =
         [0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B];
 
+    /// <summary>Members of the stream read by the last <see cref="DecompressAll"/>: all, decoded, left without output, rescued by a
+    /// structural relock, and kept although their gzip trailer did not match.</summary>
+    public (int Members, int Decoded, int Failed, int Recovered, int Unverified) LastStats { get; private set; }
+
     /// <summary>
     /// Find all GZIP markers in raw partition data and decompress each chunk.
     ///
@@ -48,8 +52,11 @@ internal class ChunkDecompressor
                 gs.CopyTo(ms);
                 if (ms.Length > 10)
                 {
-                    results[mi] = ms.ToArray();
-                    statuses[mi] = "gzip";
+                    var decoded = ms.ToArray();
+                    results[mi] = decoded;
+                    // GZipStream returns what it decoded of a cut member without an error: the trailer must be there and match.
+                    int header = ParseGzipHeader(raw, st, end - st);
+                    statuses[mi] = header >= 0 && TrailerMatches(raw, header, end, decoded, [], 0) ? "gzip" : "gzip-unverified";
                     Interlocked.Increment(ref gzipOk);
                 }
             }
@@ -152,7 +159,8 @@ internal class ChunkDecompressor
                             continue;
                         }
                         results[mi] = outBytes;
-                        statuses[mi] = d64 ? "window-deflate64" : "window-deflate";
+                        bool verified = TrailerMatches(raw, headerEnd, end, outBytes, dict, dictLen);
+                        statuses[mi] = (d64 ? "window-deflate64" : "window-deflate") + (verified ? "" : "-unverified");
                         windowOk++;
                         ok = true;
                         break;
@@ -185,7 +193,7 @@ internal class ChunkDecompressor
             if (dLegacy != null && dLegacy.Length > 10)
             {
                 results[mi] = dLegacy;
-                statuses[mi] = "legacy";
+                statuses[mi] = TrailerMatches(raw, headerEnd, end, dLegacy, dict, dictLen) ? "legacy" : "legacy-unverified";
                 windowOk++;
             }
             else
@@ -271,8 +279,48 @@ internal class ChunkDecompressor
             }
         }
 
+        int unverified = statuses.Count(IsUnverified);
+        int rescued = statuses.Count(status => status is "recovered-loss" or "recovered-corrupt");
+        LastStats = (markers.Count, chunks.Count, markers.Count - chunks.Count, rescued, unverified);
         DiagnosticSink.WriteLine($"Decompression: {gzipOk} gzip, {pagedOk} paged-exact, {windowOk} window-carry, {failed} failed, {recovered} desync-recovered (of {markers.Count} markers)");
         return chunks;
+    }
+
+    /// <summary>True for a member without a confirmed checksum and length: a trailer that is missing or does not match, and the bytes a
+    /// structural recovery rebuilt or zero-filled, which no trailer was checked against.</summary>
+    internal static bool IsUnverified(string? status) =>
+        status is "window-corrupt" or "recovered-loss" or "recovered-corrupt" || status != null && status.EndsWith("-unverified", StringComparison.Ordinal);
+
+    /// <summary>True when the gzip trailer of the member [header end, <paramref name="end"/>) holds the CRC-32 and the size of
+    /// <paramref name="output"/>: at the fixed place of a member (40 bytes before its end), at the end of a plain gzip stream, or right
+    /// behind the final deflate block. A cut member, or one that the decoder did not read to its final block, has none.</summary>
+    private static bool TrailerMatches(byte[] raw, int headerEnd, int end, byte[] output, byte[] dict, int dictLen)
+    {
+        uint crc = Crc32(output);
+        foreach (int fromEnd in new[] { 40, 8 })
+            if (end - fromEnd >= headerEnd
+                && BitConverter.ToUInt32(raw, end - fromEnd) == crc && BitConverter.ToUInt32(raw, end - fromEnd + 4) == (uint)output.Length)
+                return true;
+        try
+        {
+            var inflater = new InflaterManaged(deflate64: false, uncompressedSize: -1);
+            if (dictLen > 0)
+                inflater.SetDictionary(dict, dict.Length - dictLen, dictLen);
+            inflater.SetInput(raw, headerEnd, end - headerEnd);
+            long total = 0;
+            var buf = new byte[65536];
+            while (!inflater.Finished())
+            {
+                int n = inflater.Inflate(buf, 0, buf.Length);
+                if (n == 0) break;
+                total += n;
+            }
+            if (!inflater.Finished() || total != output.Length) return false;
+            int trailer = end - inflater.UnconsumedInputBytes;
+            return trailer + 8 <= end && BitConverter.ToUInt32(raw, trailer) == crc && BitConverter.ToUInt32(raw, trailer + 4) == (uint)output.Length;
+        }
+        // an undecodable tail is a member without a verified trailer
+        catch (Exception ex) when (MalformedInput.Is(ex)) { return false; }
     }
 
     /// <summary>True when a page segment (<see cref="PagedGzipStream"/>: offsets 64896 + k * 65249, 353 bytes) lies in
