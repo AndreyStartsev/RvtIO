@@ -240,9 +240,16 @@ internal static partial class Program
     {
         if (message != null) Console.Error.WriteLine(message);
         if (reportPath == null) return report.ExitCode;
-        try { File.WriteAllText(reportPath, report.ToJson(), new System.Text.UTF8Encoding(false)); }
+        // Written beside the target and moved over it: a hard link to the input or to the export output keeps its content.
+        string temporary = reportPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, report.ToJson(), new System.Text.UTF8Encoding(false));
+            File.Move(temporary, reportPath, overwrite: true);
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            if (File.Exists(temporary)) File.Delete(temporary);
             Console.Error.WriteLine($"error: the report cannot be written to '{reportPath}': {ex.Message}");
             return report.ExitCode != RvtExitCodes.Success ? report.ExitCode : RvtExitCodes.Usage;
         }
