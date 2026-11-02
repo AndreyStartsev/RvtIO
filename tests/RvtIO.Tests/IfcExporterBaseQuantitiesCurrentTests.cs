@@ -437,6 +437,159 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", projection), ("Width", projection));
     }
 
+    private static IfcExporter HostAxes => new() { OpeningQuantitiesInHostAxes = true };
+
+    [Theory]
+    // The same door opening, 0.8 along the wall, 0.202 across, 2.1 up, in a wall of any direction: along the wall is Width.
+    [InlineData("(1.,0.,0.)", true)]
+    [InlineData("(0.,1.,0.)", true)]
+    [InlineData("(1.,1.,0.)", true)]
+    [InlineData("(-1.,0.,0.)", true)]
+    // A window opening with a depth of its own is measured the same way.
+    [InlineData("(0.,1.,0.)", false)]
+    public void HostAxes_FilledOpeningOfAStraightWall_WidthIsAlongTheWallHeightVerticalDepthAcross(string direction, bool depthIsWallWidth)
+    {
+        var (w, owner, _) = VerticalOpeningInWall(direction, wallWidth: depthIsWallWidth ? 0.202 : 0.3, filled: true);
+
+        Apply(w, owner, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
+    }
+
+    [Fact]
+    public void HostAxes_Off_KeepsTheModelFrameValues()
+    {
+        var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)", wallWidth: 0.3, filled: true);
+
+        Apply(w, owner, exporter: new IfcExporter());
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
+    }
+
+    [Fact]
+    public void HostAxes_OpeningExtrudedAcrossTheWall_WidthIsTheSideAlongTheWall()
+    {
+        var (w, owner, placement) = NewWriter();
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "1ZGD7y6S5209$mGLi_sPlj", owner, placement);
+        // 2.1 along X by 0.8 up (profile), extruded 0.202 along the placement Y: across the wall.
+        int opening = AddProduct(w, "IFCOPENINGELEMENT", "2ZGD7y6S5209$mGLi_sPlj", owner, placement,
+            AddExtrusionBody(w, 2.1, 0.8, 0.202, alongPlacementY: true));
+        int door = AddProduct(w, "IFCDOOR", "3ZGD7y6S5209$mGLi_sPlj", owner, placement);
+        w.Add("IFCRELVOIDSELEMENT", $"'4ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{wall},#{opening}");
+        w.Add("IFCRELFILLSELEMENT", $"'5ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{opening},#{door}");
+
+        Apply(w, owner, exporter: HostAxes);
+
+        // The default reading of this body is Height 2.1 along X, Width 0.8 up (see the test above); along the wall it is the wide side.
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
+    }
+
+    [Fact]
+    public void HostAxes_OpeningWithoutAFiller_IsMeasuredAsBefore()
+    {
+        var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)");
+
+        Apply(w, owner, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
+    }
+
+    [Fact]
+    public void HostAxes_OpeningOfACurvedWall_IsMeasuredAsBefore()
+    {
+        var (w, owner, wall) = VerticalOpeningInWall("(1.,0.,0.)", filled: true);
+        var element = new Element { Id = 40, Location = new LocationCurve { CurveType = "Arc", Length = 10 } };
+
+        Apply(w, owner, new() { [40] = element }, new() { [wall] = 40 }, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 2.1), ("Height", 0.8), ("Width", 0.202));
+    }
+
+    [Theory]
+    [InlineData("IFCDOOR", 0.8, 2.1)]
+    [InlineData("IFCSLAB", 2.1, 0.8)]
+    public void HostAxes_OnlyTheOpeningOfADoorOrWindowIsMeasuredAlongTheWall(string fillerType, double height, double width)
+    {
+        var (w, owner, placement) = NewWriter();
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "1ZGD7y6S5209$mGLi_sPlj", owner, placement);
+        int opening = AddProduct(w, "IFCOPENINGELEMENT", "2ZGD7y6S5209$mGLi_sPlj", owner, placement,
+            AddExtrusionBody(w, 2.1, 0.8, 0.202, alongPlacementY: true));
+        int filler = AddProduct(w, fillerType, "3ZGD7y6S5209$mGLi_sPlj", owner, placement);
+        w.Add("IFCRELVOIDSELEMENT", $"'4ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{wall},#{opening}");
+        w.Add("IFCRELFILLSELEMENT", $"'5ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{opening},#{filler}");
+
+        Apply(w, owner, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", height), ("Width", width));
+    }
+
+    /// <summary>A door in a wall along <paramref name="direction"/> whose opening body is a generic box (6 by 0.202 by 3) that has
+    /// nothing to do with the door; the door instance holds a Width of its own (2 ft), its type a Height (7 ft) and another Width (3 ft).</summary>
+    private static (StepWriter W, int Owner, int Wall, Dictionary<int, Element> Elements, Dictionary<int, int> ElementByEntity) DoorInGenericOpening(string direction)
+    {
+        var (w, owner, placement) = NewWriter();
+        int point = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int wallAxis = w.Add("IFCAXIS2PLACEMENT3D", $"#{point},$,#{w.Add("IFCDIRECTION", direction)}");
+        int wallPlacement = w.Add("IFCLOCALPLACEMENT", $"$,#{wallAxis}");
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "1ZGD7y6S5209$mGLi_sPlj", owner, wallPlacement);
+        int openingPlacement = w.Add("IFCLOCALPLACEMENT", $"#{wallPlacement},#{w.Add("IFCAXIS2PLACEMENT3D", $"#{point},$,$")}");
+        int opening = AddProduct(w, "IFCOPENINGELEMENT", "2ZGD7y6S5209$mGLi_sPlj", owner, openingPlacement, AddExtrusionBody(w, 6, 0.202, 3));
+        int door = AddProduct(w, "IFCDOOR", "3ZGD7y6S5209$mGLi_sPlj", owner, placement);
+        w.Add("IFCRELVOIDSELEMENT", $"'4ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{wall},#{opening}");
+        w.Add("IFCRELFILLSELEMENT", $"'5ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{opening},#{door}");
+        var instance = new Element { Id = 90, Parameters = [Dimension(-1001301, 2), TypeReference(30)] };
+        var type = new Element { Id = 30, Parameters = [Dimension(-1001300, 7), Dimension(-1001301, 3)] };
+        return (w, owner, wall, new() { [90] = instance, [30] = type }, new() { [door] = 90 });
+    }
+
+    [Theory]
+    [InlineData("(1.,0.,0.)")]
+    [InlineData("(0.,1.,0.)")]
+    [InlineData("(1.,1.,0.)")]
+    public void FillerDimensions_HostAxes_OpeningOfADoorIsAsWideAsTheInstanceAndAsHighAsTheTypeRatherThanTheBoxOfTheGenericOpening(string direction)
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening(direction);
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7 * 0.3048), ("Width", 2 * 0.3048));
+    }
+
+    [Fact]
+    public void FillerDimensions_Default_OpeningKeepsTheMeasureOfItsBody()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
+
+        Apply(w, owner, elements, elementByEntity, exporter: new IfcExporter());
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 6), ("Width", 3));
+    }
+
+    [Fact]
+    public void FillerDimensions_HostAxes_DoorWithoutDimensions_IsMeasuredAsTheExtentsOfItsSolid()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(0.,1.,0.)");
+        elements[90] = new Element { Id = 90, Parameters = [TypeReference(30)] };
+        elements[30] = new Element { Id = 30 };
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        // the box is 6 along the wall, 0.202 across it and 3 up
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 3), ("Width", 6));
+    }
+
+    [Fact]
+    public void FillerDimensions_HostAxes_OpeningOfACurvedWall_KeepsTheMeasuredBox()
+    {
+        var (w, owner, wall, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
+        elements[40] = new Element { Id = 40, Location = new LocationCurve { CurveType = "Arc", Length = 10 } };
+        elementByEntity[wall] = 40;
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 3), ("Height", 6), ("Width", 0.202));
+    }
+
     [Fact]
     public void Pass_OpeningOfACurvedWall_IsMeasuredAsWrittenWithTheVerticalSideAsItsDepth()
     {

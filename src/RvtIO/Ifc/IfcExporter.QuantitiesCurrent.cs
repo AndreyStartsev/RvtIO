@@ -22,6 +22,15 @@ public partial class IfcExporter
     /// valves, equipment, cables) are unaffected. Set it to false (CLI: --ifc-no-base-quantities) to leave the sets out.</summary>
     public bool BaseQuantities { get; init; } = true;
 
+    /// <summary>Give the opening of a door or window in a straight wall the quantities of the door or window: Width along the wall
+    /// (the Width of the instance, else of its type), Height vertical (its Height) and Depth across the wall, whatever the direction
+    /// of the wall in the model; an opening of a door or window that holds no dimension is measured as the extents of its solid in
+    /// the frame of the wall. By default the sides of the cut loop are named by the frame it is measured in (Height the side along
+    /// the wall, Width the vertical side), so a door 0.8 wide and 2.1 high gets Height 0.8 and Width 2.1, while Revit and the
+    /// IfcDoor say Width 0.8 and Height 2.1. Off by default, which keeps the default output unchanged
+    /// (CLI: --ifc-opening-host-axes).</summary>
+    public bool OpeningQuantitiesInHostAxes { get; init; }
+
     internal enum QuantityKind { Length, Area, Volume }
 
     internal readonly record struct QuantityValue(QuantityKind Kind, string Name, double Value);
@@ -116,11 +125,15 @@ public partial class IfcExporter
         public Dictionary<int, int> HostByOpening { get; } = new();
         /// <summary>The openings that a door or window fills (IfcRelFillsElement).</summary>
         public HashSet<int> FilledOpenings { get; } = new();
+        /// <summary>The entity that fills each opening.</summary>
+        public Dictionary<int, int> FillerByOpening { get; } = new();
         /// <summary>Placement ids of IFCSITE (excluded from building/project model quantities frame).</summary>
         public HashSet<int> SitePlacementIds { get; } = new();
         /// <summary>Storey entity of each storey placement, and the distance of each storey to the next one up (metres).</summary>
         public Dictionary<int, int> StoreyByPlacement { get; } = new();
         public IReadOnlyDictionary<int, double>? StoreyHeights { get; init; }
+        /// <summary>See <see cref="IfcExporter.OpeningQuantitiesInHostAxes"/>.</summary>
+        public bool OpeningsInHostAxes { get; init; }
         /// <summary>Parent container entity of each aggregated child (IfcRelAggregates).</summary>
         public Dictionary<int, int> ParentByChild { get; } = new();
     }
@@ -578,6 +591,55 @@ public partial class IfcExporter
         return null;
     }
 
+    /// <summary>The extents of the opening solid (its profile and the profile moved by the extrusion) in the frame of the wall:
+    /// Width along the wall, Height vertical, Depth across it. Null when the extrusion has no frame or a value is not finite.</summary>
+    private static List<QuantityValue>? HostAxisOpeningQuantitiesCurrent(FrameCurrent placement, FrameCurrent wall, ProfileExtrusion body)
+    {
+        if (body.Loop is not { Count: > 0 } loop || body.AxisZ == null) return null;
+        double[] shift = placement.Apply(body.AxisZ).Select(v => v * body.Depth).ToArray();
+        var points = loop.Select(placement.Apply).SelectMany(p => new[] { p, [p[0] + shift[0], p[1] + shift[1], p[2] + shift[2]] })
+            .Select(wall.ToLocal).ToList();
+        double Extent(int axis) => points.Max(p => p[axis]) - points.Min(p => p[axis]);
+        double along = Extent(0), across = Extent(1), vertical = Extent(2);
+        if (!double.IsFinite(along) || !double.IsFinite(across) || !double.IsFinite(vertical)) return null;
+        var result = new List<QuantityValue>();
+        if (across > 1e-9) result.Add(new(QuantityKind.Length, "Depth", across));
+        if (vertical > 1e-9)
+        {
+            result.Add(new(QuantityKind.Length, "Height", vertical));
+            result.Add(new(QuantityKind.Length, "Width", along));
+        }
+        return result.Count > 0 ? result : null;
+    }
+
+    /// <summary>Whether the opening is filled by a door or a window.</summary>
+    private static bool FilledByDoorOrWindowCurrent(QuantityContextCurrent context, int openingId) =>
+        context.FillerByOpening.TryGetValue(openingId, out int fillerEntity)
+        && context.IndexById.TryGetValue(fillerEntity, out int fillerIndex)
+        && context.W.EntityAt(fillerIndex).Type is "IFCDOOR" or "IFCWINDOW";
+
+    /// <summary>With <see cref="OpeningQuantitiesInHostAxes"/> the opening of a door or window in a straight wall is as wide and as
+    /// high as the door or window: Width the Width of the instance, else of the type, and Height its Height (the values the IfcDoor
+    /// or IfcWindow carries), whatever the box the opening was written as (a window 1.5 by 2.7 comes out of a generic opening as
+    /// 2.7 by 6.0). The Depth of <paramref name="measured"/> is kept, and so are its other values when the door or window holds no
+    /// dimension of its own.</summary>
+    private List<QuantityValue> FillerOpeningQuantitiesCurrent(QuantityContextCurrent context, int openingId, List<QuantityValue> measured)
+    {
+        if (!context.OpeningsInHostAxes || !FilledByDoorOrWindowCurrent(context, openingId)
+            || !context.ElementIdByEntity.TryGetValue(context.FillerByOpening[openingId], out int fillerElementId)
+            || !context.Elements.TryGetValue(fillerElementId, out var filler)
+            || StraightWallHostCurrent(context, openingId) is null)
+            return measured;
+        var dimensions = DoorWindowQuantitiesCurrent(context, filler);
+        double? height = dimensions.Where(q => q.Name == "Height").Select(q => (double?)q.Value).FirstOrDefault();
+        double? width = dimensions.Where(q => q.Name == "Width").Select(q => (double?)q.Value).FirstOrDefault();
+        if (!(height > 1e-9) || !(width > 1e-9)) return measured;
+        var result = measured.Where(q => q.Name == "Depth").ToList();
+        result.Add(new(QuantityKind.Length, "Height", height.Value));
+        result.Add(new(QuantityKind.Length, "Width", width.Value));
+        return result;
+    }
+
     /// <summary>The quantities of an opening. The loop is measured in the model frame, except for the opening of a door or window
     /// in a straight wall whose depth is the width of the wall: that one is made from the cut loops of the family instance
     /// (extruded over the whole wall) and measured in the frame of the host.
@@ -590,6 +652,9 @@ public partial class IfcExporter
         IReadOnlyList<double[]> loop = body.Loop?.Select(placement.Apply).ToList() ?? [];
         if (StraightWallHostCurrent(context, openingId) is { } host)
         {
+            if (context.OpeningsInHostAxes && FilledByDoorOrWindowCurrent(context, openingId)
+                && HostAxisOpeningQuantitiesCurrent(placement, host.Wall, body) is { } alongTheWall)
+                return alongTheWall;
             if (WallPlaneOpeningLoopCurrent(placement, host.Wall, body) is { } wallPlane)
             {
                 (depth, loop) = wallPlane;
@@ -625,7 +690,7 @@ public partial class IfcExporter
         var context = new QuantityContextCurrent
         {
             W = w, IndexById = indexById, Elements = elementsById, ElementIdByEntity = productElementIdByEntity, Products = products,
-            StoreyHeights = storeyHeights,
+            StoreyHeights = storeyHeights, OpeningsInHostAxes = OpeningQuantitiesInHostAxes,
         };
 
         for (int index = 0; index < entityCount; index++)
@@ -656,7 +721,11 @@ public partial class IfcExporter
             if (relationArgsArray.Length != 6) continue;
             if (relationType == "IFCRELFILLSELEMENT")
             {
-                if (TryEntityId(relationArgsArray[4], out int filledOpening)) context.FilledOpenings.Add(filledOpening);
+                if (TryEntityId(relationArgsArray[4], out int filledOpening))
+                {
+                    context.FilledOpenings.Add(filledOpening);
+                    if (TryEntityId(relationArgsArray[5], out int filler)) context.FillerByOpening[filledOpening] = filler;
+                }
             }
             else if (TryEntityId(relationArgsArray[4], out int host) && TryEntityId(relationArgsArray[5], out int opening))
                 context.HostByOpening[opening] = host;
@@ -708,7 +777,8 @@ public partial class IfcExporter
             case "IFCOPENINGELEMENT":
                 if (_ownCutPairOpeningQuantitiesCurrent.TryGetValue(productId, out var ownQuantities)) return ownQuantities;
                 return ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6]) is { } opening
-                    ? OpeningQuantitiesCurrent(context, productId, arguments, opening) : none;
+                    ? FillerOpeningQuantitiesCurrent(context, productId, OpeningQuantitiesCurrent(context, productId, arguments, opening))
+                    : none;
             case "IFCWALLSTANDARDCASE":
                 return element != null && ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6]) is { } wall
                     ? WallQuantitiesCurrent(wall, element) : none;

@@ -160,9 +160,10 @@ public partial class IfcExporter
                             if (qArgs.Length >= 4)
                             {
                                 string qName = qArgs[0].Trim('\'');
-                                if (qName == "Height")
+                                // (along the host axes the quantities are those of the door or window, see OpeningQuantitiesInHostAxes)
+                                if (qName == "Height" && !OpeningQuantitiesInHostAxes)
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Height)}");
-                                else if (qName == "Width")
+                                else if (qName == "Width" && !OpeningQuantitiesInHostAxes)
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Width)}");
                                 else if (qName == "Depth")
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Depth)}");
