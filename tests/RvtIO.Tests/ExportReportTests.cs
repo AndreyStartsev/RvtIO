@@ -37,6 +37,31 @@ public class ExportReportTests
     }
 
     [Fact]
+    public void SameFileComparesTheFullPathsAndTellsDifferentFilesApart()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "rvt-samefile-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string input = Path.Combine(folder, "a.rvt"), other = Path.Combine(folder, "b.json");
+            File.WriteAllText(input, "x");
+            string viaDots = Path.Combine(folder, "sub", "..", "a.rvt");
+
+            Assert.True(ExportReport.SameFile(input, input));
+            Assert.True(ExportReport.SameFile(input, viaDots));
+            Assert.False(ExportReport.SameFile(input, other));
+            if (OperatingSystem.IsWindows())
+                Assert.True(ExportReport.SameFile(input, input.ToUpperInvariant()));
+
+            string link = Path.Combine(folder, "link.rvt");
+            try { File.CreateSymbolicLink(link, input); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; } // no right to make links here
+            Assert.True(ExportReport.SameFile(link, input));
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
     public void FailedReportDropsSourcePathsFromTheStackTrace()
     {
         var report = ExportReport.Failed("a.rvt", 1, "decode-failure", "m", RvtExitCodes.DecodeError, null, false, false,

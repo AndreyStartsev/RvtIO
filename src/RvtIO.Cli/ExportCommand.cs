@@ -35,9 +35,14 @@ internal static partial class Program
         bool allowPartial = args.Contains("--allow-partial");
         bool raiseLimits = args.Contains("--raise-limits");
         string? reportPath = ValueOf(args, "--report");
-        if (args.Contains("--report") && (reportPath == null || reportPath.StartsWith("--", StringComparison.Ordinal)))
+        if (args.Contains("--report") && (reportPath is null or "" || reportPath.StartsWith("--", StringComparison.Ordinal)))
         {
             Console.Error.WriteLine("--report requires one value: the path of the JSON report.");
+            return 1;
+        }
+        if (reportPath != null && (ExportReport.SameFile(reportPath, rvtPath) || ExportReport.SameFile(reportPath, outputPath)))
+        {
+            Console.Error.WriteLine("--report must not name the input file or the export output; nothing was read or written.");
             return 1;
         }
         var readDiagnostics = new RvtReadDiagnostics();

@@ -218,6 +218,20 @@ public sealed class ExportReport
         public List<int> Examples { get; set; } = new();
     }
 
+    /// <summary>True when both paths name the same file: the same full path (case-insensitive on Windows and macOS), or the same
+    /// target behind a symbolic link. Used to refuse a report path that would overwrite the input or the export output.</summary>
+    internal static bool SameFile(string first, string second)
+    {
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(Resolve(first), Resolve(second), comparison);
+
+        static string Resolve(string path)
+        {
+            string full = Path.GetFullPath(path);
+            return File.Exists(full) && new FileInfo(full).ResolveLinkTarget(returnFinalTarget: true) is { } target ? target.FullName : full;
+        }
+    }
+
     // A stack trace names the source files of the build machine: keep the frames, drop the paths.
     internal static string StripSourcePaths(string trace) =>
         System.Text.RegularExpressions.Regex.Replace(trace, @" in [^\r\n]*?:line \d+", "");
