@@ -184,6 +184,84 @@ public class IfcExporterExportPhaseTests
         Assert.Equal(2, Ids(Export(info, new IfcExporter { Profile = IfcProfile.Legacy }), "IFCSPACE").Count);
     }
 
+    private static RevitFileInfo OrderedInfo(int[] order, params Element[] elements)
+    {
+        var info = Info(order, elements);
+        info.Elements.RemoveAll(element => element.CategoryId == -2000112);
+        foreach (int phase in order)
+            info.Elements.Add(new Element { Id = phase, CategoryId = -2000112, Name = $"Phase {phase}", NativeRootClassName = "ProjectPhase" });
+        return info;
+    }
+
+    // phase 0 first, last or in the middle of the order: each phase keeps exactly the room of that phase, the default keeps the last one
+    [Theory]
+    [InlineData(new[] { 0, 7, 31 })]
+    [InlineData(new[] { 7, 0, 31 })]
+    [InlineData(new[] { 7, 31, 0 })]
+    [InlineData(new[] { 31, 7, 0 })]
+    [InlineData(new[] { 0 })]
+    public void EveryPhaseOfTheOrder_KeepsExactlyItsRoom_AndTheDefaultTheLastOne(int[] order)
+    {
+        Element[] Rooms() => order.Select((phase, index) => Room(300 + index, phase)).ToArray();
+        foreach (int phase in order)
+        {
+            int expected = 300 + Array.IndexOf(order, phase);
+            foreach (var exporter in new[] { new IfcExporter { ExportPhaseId = phase }, new IfcExporter { RoomExportPhaseId = phase } })
+                Assert.Single(Ids(Export(OrderedInfo(order, Rooms()), exporter), "IFCSPACE"));
+            Assert.Single(Ids(Export(OrderedInfo(order, Room(expected, phase)), new IfcExporter { ExportPhaseId = phase }), "IFCSPACE"));
+        }
+        Assert.Single(Ids(Export(OrderedInfo(order, Rooms())), "IFCSPACE"));
+        Assert.Equal(order.Length, Ids(Export(OrderedInfo(order, Rooms()), new IfcExporter { ExportAllPhases = true }), "IFCSPACE").Count);
+        Assert.Equal(order.Length, Ids(Export(OrderedInfo(order, Rooms()), new IfcExporter { ExportRoomsOfAllPhases = true }), "IFCSPACE").Count);
+    }
+
+    // order [7, 0]: 0 is the last phase, so it is the default
+    [Fact]
+    public void ZeroAsLastPhase_IsTheDefault()
+    {
+        var info = OrderedInfo([First, 0], Room(300, 0), Room(301, First), Floor(100, First, 0), Floor(101, 0, -1), Floor(102, First, -1));
+        Assert.Equal([101, 102], Floors(Export(info)).Order());
+        Assert.Single(Ids(Export(info), "IFCSPACE"));
+        Assert.Equal([100, 102], Floors(Export(info, new IfcExporter { ExportPhaseId = First })).Order());
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(5)]
+    [InlineData(int.MaxValue)]
+    public void IdsThatAreNoPhaseOfTheOrder_AreRejected(int id)
+    {
+        var info = OrderedInfo([0, First], Room(300, 0));
+        Assert.Throws<InvalidOperationException>(() => Export(info, new IfcExporter { ExportPhaseId = id }));
+        if (id >= 0) Assert.Throws<InvalidOperationException>(() => Export(info, new IfcExporter { RoomExportPhaseId = id }));
+    }
+
+    [Fact]
+    public void ZeroPhase_IsRejectedWhenTheOrderHasNoZero()
+    {
+        var info = OrderedInfo([First, Second], Room(300, First));
+        Assert.Throws<InvalidOperationException>(() => Export(info, new IfcExporter { ExportPhaseId = 0 }));
+        Assert.Throws<InvalidOperationException>(() => Export(info, new IfcExporter { RoomExportPhaseId = 0 }));
+    }
+
+    [Fact]
+    public void RoomOfAStalePhase_IsKeptOnlyWithoutASelectedPhase()
+    {
+        // a room whose phase is no entry of the order, or negative, is not a room of the selected phase
+        var info = OrderedInfo([0, First], Room(300, 12345), Room(301, 0));
+        Assert.Single(Ids(Export(info, new IfcExporter { ExportPhaseId = 0 }), "IFCSPACE"));
+        Assert.Equal(2, Ids(Export(info, new IfcExporter { ExportRoomsOfAllPhases = true }), "IFCSPACE").Count);
+    }
+
+    [Fact]
+    public void ElementsCreatedOrDemolishedInPhaseZero_FollowTheOrder()
+    {
+        var info = OrderedInfo([First, 0, Second], Floor(100, 0, -1), Floor(101, 0, 0), Floor(102, First, 0), Floor(103, Second, -1));
+        Assert.Equal([102], Floors(Export(info, new IfcExporter { ExportPhaseId = First })));
+        Assert.Equal([100], Floors(Export(info, new IfcExporter { ExportPhaseId = 0 })));
+        Assert.Equal([100, 103], Floors(Export(info)).Order());
+    }
+
     [Fact]
     public void NegativeRoomPhase_IsRejected() =>
         Assert.Throws<ArgumentOutOfRangeException>(() => Export(ZeroPhaseInfo(Room(300, roomPhase: First)), new IfcExporter { RoomExportPhaseId = -1 }));
