@@ -61,6 +61,118 @@ public class ExportReportTests
         finally { Directory.Delete(folder, true); }
     }
 
+    private static string NewFolder()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "rvt-samefile-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        return folder;
+    }
+
+    // mklink /J needs no privilege; the junction is removed without touching its target.
+    private static string Junction(string link, string target)
+    {
+        if (!OperatingSystem.IsWindows()) throw new SkipException("junctions exist on Windows only");
+        var start = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        using var process = System.Diagnostics.Process.Start(start)!;
+        process.StandardOutput.ReadToEnd();
+        process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0 || !Directory.Exists(link)) throw new SkipException("junctions cannot be created here");
+        return link;
+    }
+
+    private static string DirectorySymlink(string link, string target)
+    {
+        try { Directory.CreateSymbolicLink(link, target); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new SkipException("symbolic links cannot be created here"); }
+        return link;
+    }
+
+    private static void Cleanup(string folder)
+    {
+        // remove the links first: a recursive delete must not follow them into the real directory
+        foreach (var dir in new DirectoryInfo(folder).EnumerateDirectories("*", SearchOption.AllDirectories).Where(d => d.LinkTarget != null).ToList())
+            dir.Delete();
+        Directory.Delete(folder, true);
+    }
+
+    [SkippableFact]
+    public void SameFileSeesThroughAJunctionToTheParentDirectory()
+    {
+        string folder = NewFolder();
+        try
+        {
+            string real = Path.Combine(folder, "real");
+            Directory.CreateDirectory(real);
+            string input = Path.Combine(real, "model.rvt");
+            File.WriteAllText(input, "x");
+            string alias = Junction(Path.Combine(folder, "alias"), real);
+
+            Assert.True(ExportReport.SameFile(Path.Combine(alias, "model.rvt"), input));
+            Assert.True(ExportReport.SameFile(input, Path.Combine(alias, "model.rvt")));
+            // a report that does not exist yet is resolved through its existing parent
+            Assert.True(ExportReport.SameFile(Path.Combine(alias, "out.ifc"), Path.Combine(real, "out.ifc")));
+            Assert.False(ExportReport.SameFile(Path.Combine(alias, "report.json"), input));
+            // a junction to a junction
+            string nested = Junction(Path.Combine(folder, "nested"), alias);
+            Assert.True(ExportReport.SameFile(Path.Combine(nested, "model.rvt"), input));
+        }
+        finally { Cleanup(folder); }
+    }
+
+    [SkippableFact]
+    public void SameFileSeesThroughADirectorySymbolicLinkToTheParentDirectory()
+    {
+        string folder = NewFolder();
+        try
+        {
+            string real = Path.Combine(folder, "real");
+            Directory.CreateDirectory(real);
+            string input = Path.Combine(real, "model.rvt");
+            File.WriteAllText(input, "x");
+            string alias = DirectorySymlink(Path.Combine(folder, "alias"), real);
+
+            Assert.True(ExportReport.SameFile(Path.Combine(alias, "model.rvt"), input));
+            Assert.True(ExportReport.SameFile(Path.Combine(alias, "out.ifc"), Path.Combine(real, "out.ifc")));
+            Assert.False(ExportReport.SameFile(Path.Combine(alias, "report.json"), input));
+        }
+        finally { Cleanup(folder); }
+    }
+
+    [SkippableFact]
+    public void SameFileSeesAHardLinkOnWindows()
+    {
+        if (!OperatingSystem.IsWindows()) throw new SkipException("hard links are compared by file identity on Windows only");
+        string folder = NewFolder();
+        try
+        {
+            string input = Path.Combine(folder, "model.rvt"), hard = Path.Combine(folder, "hard.rvt"), copy = Path.Combine(folder, "copy.rvt");
+            File.WriteAllText(input, "x");
+            File.Copy(input, copy);
+            var start = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /H \"{hard}\" \"{input}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            using (var process = System.Diagnostics.Process.Start(start)!)
+            {
+                process.StandardOutput.ReadToEnd();
+                process.StandardError.ReadToEnd();
+                process.WaitForExit();
+                if (process.ExitCode != 0 || !File.Exists(hard)) throw new SkipException("hard links cannot be created here");
+            }
+
+            Assert.True(ExportReport.SameFile(hard, input));
+            Assert.False(ExportReport.SameFile(copy, input));
+        }
+        finally { Cleanup(folder); }
+    }
+
+    [Fact]
+    public void RealPathKeepsAPathWithoutLinksAndTheComponentsThatDoNotExist()
+    {
+        string folder = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "rvt-realpath-" + Guid.NewGuid().ToString("N"), "a", "b.json"));
+        Assert.Equal(folder, ExportReport.RealPath(folder));
+        string root = Path.GetPathRoot(folder)!;
+        Assert.Equal(root, ExportReport.RealPath(root));
+    }
+
     [Fact]
     public void FailedReportDropsSourcePathsFromTheStackTrace()
     {
