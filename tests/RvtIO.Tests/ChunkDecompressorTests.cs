@@ -285,5 +285,42 @@ public class ChunkDecompressorTests
 
         Assert.Equal(payload, ChunkDecompressor.DecompressTolerant(buffer, 17, member.Length));
     }
+
+    private static ExportReport ReportOf(ChunkDecompressor decompressor)
+    {
+        var (members, decoded, failed, recovered, unverified) = decompressor.LastStats;
+        var diagnostics = new RvtReadDiagnostics();
+        diagnostics.Streams.Add(new StreamRecord("Partitions/0", 0, members, decoded, failed, recovered, unverified));
+        return ExportReport.ForRead("a.rvt", 1, diagnostics, false, false, [1], new RvtIO.Model.RevitFileInfo());
+    }
+
+    [Fact]
+    public void AMemberWithItsTrailerIsVerifiedAndTheReportIsComplete()
+    {
+        byte[] payload = new byte[2048];
+        new Random(3).NextBytes(payload);
+        var decompressor = new ChunkDecompressor();
+
+        var chunks = decompressor.DecompressAll(GzipMember(payload));
+
+        Assert.Equal(payload, Assert.Single(chunks));
+        Assert.Equal((1, 1, 0, 0, 0), decompressor.LastStats);
+        Assert.Equal("complete", ReportOf(decompressor).Status);
+    }
+
+    [Fact]
+    public void AMemberWithItsLast100BytesCutIsUnverifiedAndTheReportIsPartial()
+    {
+        byte[] payload = new byte[2048];
+        new Random(3).NextBytes(payload);
+        byte[] member = GzipMember(payload);
+        var decompressor = new ChunkDecompressor();
+
+        var chunks = decompressor.DecompressAll(member[..^100]);
+
+        Assert.True(Assert.Single(chunks).Length < payload.Length);
+        Assert.Equal((1, 1, 0, 0, 1), decompressor.LastStats);
+        Assert.Equal("partial", ReportOf(decompressor).Status);
+    }
 }
 
