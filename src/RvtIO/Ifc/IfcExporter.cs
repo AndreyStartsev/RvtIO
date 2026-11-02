@@ -277,6 +277,16 @@ public partial class IfcExporter
     /// <summary>Receives the diagnostic messages of the export and of the parsers it runs; null (the default) is silent.</summary>
     public TextWriter? DiagnosticOutput { get => _diag; set => _diag = value; }
 
+    /// <summary>The phase whose state is exported: a project phase ID of the known phase order. Elements demolished at or before it, or
+    /// created after it, are left out, and rooms follow it unless <see cref="RoomExportPhaseId"/> names another one. Null keeps the
+    /// default of the profile: the last phase of the project for <see cref="IfcProfile.Current"/> (see <see cref="ResolveActivePhase"/>),
+    /// no phase selection for <see cref="IfcProfile.Legacy"/>.</summary>
+    public int? ExportPhaseId { get; init; }
+
+    /// <summary>Exports the elements and the rooms of every phase, whatever the default of the profile (the elements of a demolished
+    /// phase included). Ignored when <see cref="ExportPhaseId"/> is set.</summary>
+    public bool ExportAllPhases { get; init; }
+
     /// <summary>Optional native project phase ID for room selection only.</summary>
     public int? RoomExportPhaseId { get; init; }
 
@@ -308,9 +318,11 @@ public partial class IfcExporter
 
     private void ValidateRoomExportPhase(RevitFileInfo info)
     {
+        if (ExportPhaseId != null && info.SerializedProjectPhaseIds?.Contains(ExportPhaseId.Value) != true)
+            throw new InvalidOperationException("The requested export phase is not in a validated project phase order.");
         if (RoomExportPhaseId == null) return;
-        if (RoomExportPhaseId <= 0)
-            throw new ArgumentOutOfRangeException(nameof(RoomExportPhaseId), "A room export phase ID must be positive.");
+        if (RoomExportPhaseId < 0)
+            throw new ArgumentOutOfRangeException(nameof(RoomExportPhaseId), "A room export phase ID must not be negative.");
         if (info.SerializedProjectPhaseIds?.Contains(RoomExportPhaseId.Value) != true)
             throw new InvalidOperationException("The requested room export phase is not in a validated project phase order.");
     }
@@ -343,7 +355,12 @@ public partial class IfcExporter
         // Revit's IFC export holds the main model and the primary option of each design option set: the elements of another option are left out
         var allElements = info.Elements;
         var designOptions = DesignOptions.Of(allElements);
-        info.Elements = allElements.Where(element => designOptions.InNonPrimaryOption(element) != true).ToList();
+        // ... and the elements that do not exist in the export phase (demolished before it, created after it)
+        var phaseFilter = BuildExportPhaseFilter(info);
+        info.Elements = allElements.Where(element => designOptions.InNonPrimaryOption(element) != true
+            && phaseFilter?.Excludes(element) != true).ToList();
+        if (phaseFilter != null)
+            _diag?.WriteLine($"IFC export phase filter: {allElements.Count(phaseFilter.Excludes)} elements outside the export phase left out");
         try { ExportDocument(info, output); }
         finally
         {
@@ -68050,10 +68067,10 @@ public partial class IfcExporter
         {
             // Apply only an explicitly selected phase.
             bool phased = elem.CategoryId == RoomCategoryId || (_geometryUndecoded || CurrentProfile) && elem.CategoryId == MepSpaceCategoryId;
-            if (phased && elem.SerializedRoomPhaseId is > 0)
+            if (phased && elem.SerializedRoomPhaseId is >= 0)
                 roomsByPhase[elem.SerializedRoomPhaseId.Value] = roomsByPhase.GetValueOrDefault(elem.SerializedRoomPhaseId.Value) + 1;
-            if (phased && exportPhaseId is > 0
-                && elem.SerializedRoomPhaseId is > 0
+            if (phased && exportPhaseId is >= 0
+                && elem.SerializedRoomPhaseId is >= 0
                 && elem.SerializedRoomPhaseId != exportPhaseId)
             {
                 roomsOutOfPhase++;
@@ -68193,7 +68210,7 @@ public partial class IfcExporter
         }
 
         _diag?.WriteLine(
-            $"IFC rooms: {spaceEntityIdByRoomId.Count} spaces written, active room phase {(exportPhaseId is > 0 ? exportPhaseId.ToString() : "none")}, "
+            $"IFC rooms: {spaceEntityIdByRoomId.Count} spaces written, active room phase {(exportPhaseId is >= 0 ? exportPhaseId.ToString() : "none")}, "
             + $"{roomsOutOfPhase} rooms of another phase and {roomsLocationless} locationless rooms skipped; room phases: "
             + string.Join(", ", roomsByPhase.Select(entry => $"{entry.Key}={entry.Value}")));
         if (CurrentProfile)
@@ -68226,8 +68243,17 @@ public partial class IfcExporter
     private int? ResolveActiveRoomPhase(RevitFileInfo info)
     {
         if (RoomExportPhaseId != null) return RoomExportPhaseId;
-        if (!CurrentProfile || ExportRoomsOfAllPhases || info.SerializedProjectPhaseIds is not { Length: > 0 } order) return null;
-        var phases = info.Elements.Where(element => element.CategoryId == PhaseCategoryId
+        return ExportRoomsOfAllPhases ? null : ResolveActivePhase(info);
+    }
+
+    /// <summary>The export phase of the elements: <see cref="ExportPhaseId"/>, else (current profile without <see cref="ExportAllPhases"/>)
+    /// the last project phase that is a phase element of the document.</summary>
+    private int? ResolveActivePhase(RevitFileInfo info)
+    {
+        if (ExportPhaseId != null) return ExportPhaseId;
+        if (!CurrentProfile || ExportAllPhases || info.SerializedProjectPhaseIds is not { Length: > 0 } order) return null;
+        // a 64-bit-id file can have a phase whose category is not resolved, so the class counts too
+        var phases = info.Elements.Where(element => (element.CategoryId == PhaseCategoryId || element.RootClassName == "ProjectPhase")
                 && !(info.ElemTableIsExact && element.IsDiscovered))
             .Select(element => element.Id).ToHashSet();
         for (int index = order.Length - 1; index >= 0; index--)

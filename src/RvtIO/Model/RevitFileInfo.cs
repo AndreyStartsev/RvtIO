@@ -50,7 +50,7 @@ namespace RvtIO.Model
         internal Parsing.UserParameterCatalog? UserParameters { get; set; }
 
         /// <summary>Last authored project phase, when the unique ordered source is known.
-        /// Used only by the default room export policy, not physical element filtering.</summary>
+        /// The phase of the command line option <c>--ifc-phase last</c>; the exporter's own default is the last phase that is a phase element (<see cref="Ifc.IfcExporter.ExportPhaseId"/>).</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal int? SerializedDefaultExportPhaseId { get; set; }
 

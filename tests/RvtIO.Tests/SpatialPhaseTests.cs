@@ -109,6 +109,21 @@ public class SpatialPhaseTests
         Assert.Null(duplicate.SerializedRoomPhaseId);
     }
 
+    [Theory]
+    [InlineData(true, 0, 0)]
+    [InlineData(true, 7, 7)]
+    [InlineData(false, 0, null)]
+    public void Builder_ReadsPhaseZeroOfARoomOnlyInAWideIdFile(bool wide, int phase, int? expected)
+    {
+        var state = new ParsingState { WideSchema = wide ? new FileSchema(new SchemaDocument()) : null };
+        var room = new Element { Id = 100, CategoryId = -2000160 };
+        var info = new RevitFileInfo { Elements = [room] };
+        state.RoomNameSource[100] = (1, "Room");
+        state.ExactRoomPhaseIds[100] = phase;
+        ElementBuilder.ApplySerializedSpatialPhases(info, state);
+        Assert.Equal(expected, room.SerializedRoomPhaseId);
+    }
+
     private static uint Size(byte[] block) => BitConverter.ToUInt32(block, 8);
 
     private static byte[] Block(int[] phases, string? mutation = null)

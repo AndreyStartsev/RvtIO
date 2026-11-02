@@ -34,7 +34,7 @@ extension and label helpers carry the ids and names stored in the file format.
 
 | Type | Use |
 |---|---|
-| `IfcExporter` | Writes IFC from a `RevitFileInfo` (`Export`). Properties: `Profile`, `BaseQuantities`, `RoomExportPhaseId`, `ExportRoomsOfAllPhases`, `RevitParameterGroups`, `SkipLog`, `ExportedProducts`, `DiagnosticOutput`. |
+| `IfcExporter` | Writes IFC from a `RevitFileInfo` (`Export`). Properties: `Profile`, `BaseQuantities`, `ExportPhaseId`, `ExportAllPhases`, `RoomExportPhaseId`, `ExportRoomsOfAllPhases`, `RevitParameterGroups`, `SkipLog`, `ExportedProducts`, `DiagnosticOutput`. |
 | `IfcProfile` | `Legacy` or `Current` (the default) output profile. |
 | `IfcUnitFamily` | The length unit family an export declares. |
 | `CompactJsonExporter` | `Export(rvtPath, outputPath, readerOptions, options)` reads a file and writes the compact JSON. |
