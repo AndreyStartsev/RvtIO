@@ -14,6 +14,7 @@ API between minor releases.
 - Adds the opt-in `ResolveCurrentCopies` reader option and `--resolve-current-copies` command line option, which keep only the current copy of an element that several partition streams hold. It is off by default and the default output does not change.
 - Fixes the partition framing check so that a damaged or truncated partition stream is rejected instead of read past its end.
 - Reads the project length unit in every file layout (including the Revit 2020 display unit layout and family documents) for the IFC length unit, and reports the reason through diagnostics when it falls back to millimetres.
+- Leaves out of the IFC the elements that are demolished in the export phase or an earlier one, or created in a later one. The current profile exports the last project phase by default; the new `--ifc-phase <last|all|id>` command line option and the `IfcExporter.ExportPhaseId` and `ExportAllPhases` properties select another phase or every phase, and rooms follow the export phase unless a room phase is given. The legacy profile and the JSON output are not filtered by default.
 
 ## [0.1.0] - first public preview
 

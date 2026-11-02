@@ -55,6 +55,16 @@ rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 
 A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. If the output path is omitted, the tool writes `output.json`. Diagnostics go to standard error.
 
+Export the state of one project phase:
+
+```sh
+rvtio project.rvt project.ifc --ifc-phase last
+rvtio project.rvt project.ifc --ifc-phase 12345
+rvtio project.rvt project.ifc --ifc-phase all
+```
+
+An element is left out of the IFC when it is demolished in the export phase or an earlier one, or created in a later one. Without the option the current profile exports the last project phase and the legacy profile every phase; `all` keeps every element and room, and an id selects that phase (it must occur in the project's phase order, or the tool exits with code 1). Rooms follow the export phase unless `--ifc-room-phase` names another one. The compact and full JSON are not filtered. In the library the same choices are `IfcExporter.ExportPhaseId` and `IfcExporter.ExportAllPhases`.
+
 Use `--ifc-revit-parameter-groups` for one property set per parameter group. Use `--resolve-current-copies` for a file saved in several increments: it keeps only the current copy of an element that more than one partition stream holds; without it every copy is decoded as before. Run `rvtio --help` for all options. Unknown options exit with code 1; options starting with `--dev-` are not a stable interface.
 
 ## Library

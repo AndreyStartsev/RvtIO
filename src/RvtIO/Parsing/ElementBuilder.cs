@@ -2489,7 +2489,7 @@ internal static partial class ElementBuilder
             element.SerializedRoomPhaseId = (element.CategoryId == -2000160 || wide && element.CategoryId == -2003600) && element.Id > 0
                 && (wide || state.RoomNameSource.TryGetValue((uint)element.Id, out var root)
                     && root.BlockCount == 1 && !string.IsNullOrEmpty(root.Name))
-                && state.ExactRoomPhaseIds.TryGetValue((uint)element.Id, out int phase) && phase > 0
+                && state.ExactRoomPhaseIds.TryGetValue((uint)element.Id, out int phase) && (wide ? phase >= 0 : phase > 0)
                     ? phase : null;
             if (element.CategoryId == -2000160 && element.Id > 0
                 && state.RoomNameSource.TryGetValue((uint)element.Id, out var validation)

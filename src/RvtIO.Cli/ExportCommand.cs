@@ -10,13 +10,13 @@ internal static partial class Program
 {
     /// <summary>The values of the command line that decide the export.</summary>
     private sealed record ExportArguments(string[] Args, string RvtPath, string OutputPath, string? ExternalDumpPath, string? ExternalDumpClassPrefix,
-        IfcProfile Profile, bool IsIfcOutput, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
+        IfcProfile Profile, bool IsIfcOutput, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
         string JsonClassPrefix, bool CompactJson);
 
     // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson) = arguments;
+        var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson) = arguments;
         var options = new RvtReaderOptions
         {
             DiagnosticOutput = Console.Error,
@@ -50,12 +50,21 @@ internal static partial class Program
                 return 1;
             }
             if (!roomPhaseValidated) roomPhase = null;
+            // The phase of the whole export (elements and rooms). Without the option the current profile exports the last phase and the legacy profile all of them.
+            int? exportPhase = exportPhaseOption is "last" ? rvtInfo.SerializedDefaultExportPhaseId
+                : exportPhaseOption is not (null or "all") ? int.Parse(exportPhaseOption, System.Globalization.CultureInfo.InvariantCulture) : null;
+            if (exportPhaseOption is not (null or "all") && (exportPhase == null || rvtInfo.SerializedProjectPhaseIds?.Contains(exportPhase.Value) != true))
+            {
+                Console.Error.WriteLine("Export phase cannot be resolved from the validated project phase order.");
+                return 1;
+            }
+            if (exportPhase != null) Console.Error.WriteLine($"IFC export phase: {exportPhase}");
             if (roomPhase != null) Console.Error.WriteLine($"IFC room export phase: {roomPhase}");
             // A 64-bit-id file has no scanned fallback names: the exporter reads the validated ones, as the JSON dump does.
             if (rvtInfo.GeometryUndecoded)
                 RvtIO.Parsing.ValidatedElementNames.Apply(rvtInfo,
                     reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state."));
-            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities };
+            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
             exporter.Export(rvtInfo, outputPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");

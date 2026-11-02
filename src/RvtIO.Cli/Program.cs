@@ -21,7 +21,10 @@ internal static partial class Program
           --ifc-revit-parameters            write the Revit parameters as IFC property sets
           --ifc-revit-parameter-groups      write them as one property set per parameter group (implies --ifc-revit-parameters)
           --ifc-no-base-quantities          leave out the base quantity sets
-          --ifc-room-phase <last|all|id>    rooms to export: the last phase, every phase or one positive native phase id (IFC only)
+          --ifc-phase <last|all|id>         phase whose state is exported: elements demolished at or before it or created after it and, unless
+                                            --ifc-room-phase says otherwise, rooms of other phases are left out. Default: the last phase for the
+                                            current profile, every phase for the legacy profile (IFC only)
+          --ifc-room-phase <last|all|id>    rooms to export: the last phase, every phase or one native phase id (IFC only)
           --revit-localization <dir>        read the system family names from the resource DLLs of a Revit installation
           --r22-layout                      read the Revit 2022 layout for a JSON export too (an IFC export does it by default)
           --no-r22-layout                   keep the 64-bit schema path alone in an IFC export
@@ -63,7 +66,7 @@ internal static partial class Program
     // Options that take one value, and options that take two; every other option starting with "--" is a switch.
     private static readonly HashSet<string> OneValueOptions =
     [
-        "--ifc-profile", "--ifc-room-phase", "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
+        "--ifc-profile", "--ifc-phase", "--ifc-room-phase", "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
         "--sketch-owner-dump", "--dev-external-dump", "--dev-external-dump-prefix", "--dev-candidates", "--dev-trace", "--dev-facts",
         "--dev-fact-names", "--dev-user-params", "--dev-collisions", "--dev-solids", "--dev-native", "--class-census", "--episode-check",
         "--test-decoders", "--dump-chunks", "--block-dump", "--search-global", "--hex-search", "--chunk-dump", "--block-scan", "--rec-dump",
@@ -130,12 +133,25 @@ internal static partial class Program
             if (roomPhaseOption != null || i + 1 >= args.Length
                 || (args[i + 1] is not ("last" or "all") && (!int.TryParse(args[i + 1],
                     System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
-                    out int phase) || phase <= 0)))
+                    out int phase) || phase < 0)))
             {
-                Console.Error.WriteLine("--ifc-room-phase requires one value: last, all or a positive native phase ID.");
+                Console.Error.WriteLine("--ifc-room-phase requires one value: last, all or a native phase ID.");
                 return 1;
             }
             roomPhaseOption = args[++i];
+        }
+        string? exportPhaseOption = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] != "--ifc-phase") continue;
+            if (exportPhaseOption != null || i + 1 >= args.Length
+                || (args[i + 1] is not ("last" or "all") && !int.TryParse(args[i + 1],
+                    System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _)))
+            {
+                Console.Error.WriteLine("--ifc-phase requires one value: last, all or a native phase ID.");
+                return 1;
+            }
+            exportPhaseOption = args[++i];
         }
         var profile = RvtIO.Ifc.IfcProfile.Current;
         for (int i = 0; i < args.Length; i++)
@@ -168,6 +184,11 @@ internal static partial class Program
             return 1;
         }
         bool compactJson = !jsonFull && !isIfcOutput;
+        if (exportPhaseOption != null && !isIfcOutput)
+        {
+            Console.Error.WriteLine("--ifc-phase requires IFC output.");
+            return 1;
+        }
         if (roomPhaseOption != null && !outputPath.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
         {
             Console.Error.WriteLine("--ifc-room-phase requires IFC output.");
@@ -239,7 +260,7 @@ internal static partial class Program
         if (listCategoryOutPath != null) return ListCategory(rvtPath, listCategoryId, listCategoryOutPath);
 
         return Export(new ExportArguments(args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput,
-            roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson));
+            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>

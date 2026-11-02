@@ -116,7 +116,7 @@ public partial class IfcExporter
         IReadOnlyDictionary<int, double> levelElevations)
     {
         var volumesByPhase = new Dictionary<int, List<RoomVolumeCurrent>>();
-        foreach (var room in allElements.Where(element => element.CategoryId == RoomCategoryId && element.SerializedRoomPhaseId is > 0
+        foreach (var room in allElements.Where(element => element.CategoryId == RoomCategoryId && element.SerializedRoomPhaseId is >= 0
                      && element.SerializedRoomIsLocationless != true).OrderBy(element => element.Id))
             if (RoomVolumeCurrent.Create(room) is { } volume)
             {
