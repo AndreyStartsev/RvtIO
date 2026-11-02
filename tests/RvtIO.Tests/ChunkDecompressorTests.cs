@@ -322,5 +322,37 @@ public class ChunkDecompressorTests
         Assert.Equal((1, 1, 0, 0, 1), decompressor.LastStats);
         Assert.Equal("partial", ReportOf(decompressor).Status);
     }
-}
 
+    [Theory]
+    [InlineData("recovered-loss")]
+    [InlineData("recovered-corrupt")]
+    [InlineData("window-corrupt")]
+    [InlineData("gzip-unverified")]
+    [InlineData("legacy-unverified")]
+    public void AMemberWithoutAConfirmedChecksumIsUnverified(string status) => Assert.True(ChunkDecompressor.IsUnverified(status));
+
+    [Theory]
+    [InlineData("gzip")]
+    [InlineData("legacy")]
+    [InlineData("window-deflate")]
+    [InlineData("paged-exact")]
+    [InlineData("stripped-exact")]
+    [InlineData("failed")]
+    [InlineData(null)]
+    public void AMemberWithAConfirmedChecksumOrNoDataIsNotCountedUnverified(string? status) => Assert.False(ChunkDecompressor.IsUnverified(status));
+
+    [Fact]
+    public void ARecoveredStreamWithALostRangeIsNotCompleteBecauseItsChecksumWasNeverConfirmed()
+    {
+        // one intact member and one rebuilt after a lost range (zero-filled)
+        string?[] statuses = ["gzip", "recovered-loss"];
+        var diagnostics = new RvtReadDiagnostics();
+        diagnostics.Streams.Add(new StreamRecord("Partitions/0", 0, 2, 2, 0, 1, statuses.Count(ChunkDecompressor.IsUnverified)));
+
+        var report = ExportReport.ForRead("a.rvt", 1, diagnostics, false, false, [1], new RvtIO.Model.RevitFileInfo());
+
+        Assert.Equal("partial", report.Status);
+        Assert.Equal(1, report.Streams[0].Recovered);
+        Assert.Equal(1, report.Streams[0].Unverified);
+    }
+}

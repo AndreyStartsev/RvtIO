@@ -279,12 +279,17 @@ internal class ChunkDecompressor
             }
         }
 
-        int unverified = statuses.Count(status => status is "window-corrupt" || status != null && status.EndsWith("-unverified", StringComparison.Ordinal));
+        int unverified = statuses.Count(IsUnverified);
         int rescued = statuses.Count(status => status is "recovered-loss" or "recovered-corrupt");
         LastStats = (markers.Count, chunks.Count, markers.Count - chunks.Count, rescued, unverified);
         DiagnosticSink.WriteLine($"Decompression: {gzipOk} gzip, {pagedOk} paged-exact, {windowOk} window-carry, {failed} failed, {recovered} desync-recovered (of {markers.Count} markers)");
         return chunks;
     }
+
+    /// <summary>True for a member without a confirmed checksum and length: a trailer that is missing or does not match, and the bytes a
+    /// structural recovery rebuilt or zero-filled, which no trailer was checked against.</summary>
+    internal static bool IsUnverified(string? status) =>
+        status is "window-corrupt" or "recovered-loss" or "recovered-corrupt" || status != null && status.EndsWith("-unverified", StringComparison.Ordinal);
 
     /// <summary>True when the gzip trailer of the member [header end, <paramref name="end"/>) holds the CRC-32 and the size of
     /// <paramref name="output"/>: at the fixed place of a member (40 bytes before its end), at the end of a plain gzip stream, or right
