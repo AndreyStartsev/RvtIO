@@ -193,6 +193,28 @@ public class RebarReaderTests
     }
 
     [Fact]
+    public void Export_CountsEveryWrittenReinforcingBarAsAnExportedProduct()
+    {
+        var info = new RevitFileInfo();
+        info.Elements.AddRange([Bar(500, 600), Bar(501, 600), new Element { Id = 600, CategoryId = -2009003, Name = "Area Reinforcement 1" }]);
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-rebar-{Guid.NewGuid():N}.ifc");
+        var skipLog = new SkipLog();
+        var exporter = new IfcExporter { Profile = IfcProfile.Current, SkipLog = skipLog };
+        try
+        {
+            exporter.Export(info, path);
+            int bars = File.ReadAllText(path).Split('\n').Count(l => l.Contains("IFCREINFORCINGBAR("));
+            Assert.Equal(2, bars);
+            Assert.Equal(bars, exporter.ExportedProducts);
+            Assert.Equal(info.Elements.Count, exporter.ExportedProducts + skipLog.Total);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Export_WritesNoGroupForTheBarsOfASystemThatAreAssemblyMembers()
     {
         string ifc = Export(Bar(500, 600, inAssembly: true), Bar(501, 600, inAssembly: true), new Element { Id = 600, CategoryId = -2009003, Name = "Area Reinforcement 1" });

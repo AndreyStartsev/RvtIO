@@ -1597,6 +1597,8 @@ public partial class IfcExporter
                 if (!WriteRebarProduct(w, elem, elemById, ownerHistId, axisId, bldgLocalPlacementId, bodySubCtxId, propertySingleValueIds,
                         int.TryParse(info.Metadata?.RevitVersion, out int revitRelease) && revitRelease >= 2026, storeyIds, defaultStoreyId, storeyContents))
                     Skip(elem, "rebar-product-not-written");
+                else
+                    exportedCount++;
                 continue;
             }
             if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
