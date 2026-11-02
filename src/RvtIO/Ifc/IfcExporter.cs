@@ -321,8 +321,8 @@ public partial class IfcExporter
         if (ExportPhaseId != null && info.SerializedProjectPhaseIds?.Contains(ExportPhaseId.Value) != true)
             throw new InvalidOperationException("The requested export phase is not in a validated project phase order.");
         if (RoomExportPhaseId == null) return;
-        if (RoomExportPhaseId <= 0)
-            throw new ArgumentOutOfRangeException(nameof(RoomExportPhaseId), "A room export phase ID must be positive.");
+        if (RoomExportPhaseId < 0)
+            throw new ArgumentOutOfRangeException(nameof(RoomExportPhaseId), "A room export phase ID must not be negative.");
         if (info.SerializedProjectPhaseIds?.Contains(RoomExportPhaseId.Value) != true)
             throw new InvalidOperationException("The requested room export phase is not in a validated project phase order.");
     }
@@ -68049,10 +68049,10 @@ public partial class IfcExporter
         {
             // Apply only an explicitly selected phase.
             bool phased = elem.CategoryId == RoomCategoryId || (_geometryUndecoded || CurrentProfile) && elem.CategoryId == MepSpaceCategoryId;
-            if (phased && elem.SerializedRoomPhaseId is > 0)
+            if (phased && elem.SerializedRoomPhaseId is >= 0)
                 roomsByPhase[elem.SerializedRoomPhaseId.Value] = roomsByPhase.GetValueOrDefault(elem.SerializedRoomPhaseId.Value) + 1;
-            if (phased && exportPhaseId is > 0
-                && elem.SerializedRoomPhaseId is > 0
+            if (phased && exportPhaseId is >= 0
+                && elem.SerializedRoomPhaseId is >= 0
                 && elem.SerializedRoomPhaseId != exportPhaseId)
             {
                 roomsOutOfPhase++;
@@ -68192,7 +68192,7 @@ public partial class IfcExporter
         }
 
         _diag?.WriteLine(
-            $"IFC rooms: {spaceEntityIdByRoomId.Count} spaces written, active room phase {(exportPhaseId is > 0 ? exportPhaseId.ToString() : "none")}, "
+            $"IFC rooms: {spaceEntityIdByRoomId.Count} spaces written, active room phase {(exportPhaseId is >= 0 ? exportPhaseId.ToString() : "none")}, "
             + $"{roomsOutOfPhase} rooms of another phase and {roomsLocationless} locationless rooms skipped; room phases: "
             + string.Join(", ", roomsByPhase.Select(entry => $"{entry.Key}={entry.Value}")));
         if (CurrentProfile)

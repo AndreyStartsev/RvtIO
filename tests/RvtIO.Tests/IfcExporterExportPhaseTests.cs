@@ -142,6 +142,52 @@ public class IfcExporterExportPhaseTests
         Assert.Single(Ids(Export(info, exporter), "IFCSPACE"));
     }
 
+    // a 64-bit-id file can have a phase element with id 0: it is a phase like any other, "no phase" is a null id
+    private static RevitFileInfo ZeroPhaseInfo(params Element[] elements)
+    {
+        var info = Info([0, First], elements);
+        info.Elements.RemoveAll(element => element.CategoryId == -2000112);
+        foreach (int phase in new[] { 0, First })
+            info.Elements.Add(new Element { Id = phase, CategoryId = -2000112, Name = $"Phase {phase}", NativeRootClassName = "ProjectPhase" });
+        return info;
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(First)]
+    public void ExplicitPhase_KeepsOnlyTheRoomsOfThatPhase_AlsoWhenItsIdIsZero(int phase)
+    {
+        var info = ZeroPhaseInfo(Room(300, roomPhase: First), Room(301, roomPhase: 0));
+        Assert.Single(Ids(Export(info, new IfcExporter { ExportPhaseId = phase }), "IFCSPACE"));
+        Assert.Single(Ids(Export(info, new IfcExporter { RoomExportPhaseId = phase }), "IFCSPACE"));
+        // the one kept is the room of the selected phase
+        int other = phase == 0 ? First : 0;
+        Assert.Empty(Ids(Export(ZeroPhaseInfo(Room(300, roomPhase: other)), new IfcExporter { ExportPhaseId = phase }), "IFCSPACE"));
+        Assert.Single(Ids(Export(ZeroPhaseInfo(Room(300, roomPhase: phase)), new IfcExporter { ExportPhaseId = phase }), "IFCSPACE"));
+    }
+
+    [Fact]
+    public void ZeroExportPhase_AlsoSelectsTheElementsOfThatPhase()
+    {
+        var info = ZeroPhaseInfo(Floor(100, 0, -1), Floor(101, First, -1), Floor(102, 0, 0));
+        Assert.Equal([100], Floors(Export(info, new IfcExporter { ExportPhaseId = 0 })));
+        Assert.Equal([100, 101], Floors(Export(info, new IfcExporter { ExportPhaseId = First })).Order());
+    }
+
+    [Fact]
+    public void ZeroRoomPhase_DefaultAndAllPhasesAreUnchanged()
+    {
+        var info = ZeroPhaseInfo(Room(300, roomPhase: First), Room(301, roomPhase: 0));
+        Assert.Single(Ids(Export(info), "IFCSPACE"));                                                      // the last phase only
+        Assert.Equal(2, Ids(Export(info, new IfcExporter { ExportAllPhases = true }), "IFCSPACE").Count);
+        Assert.Equal(2, Ids(Export(info, new IfcExporter { ExportRoomsOfAllPhases = true }), "IFCSPACE").Count);
+        Assert.Equal(2, Ids(Export(info, new IfcExporter { Profile = IfcProfile.Legacy }), "IFCSPACE").Count);
+    }
+
+    [Fact]
+    public void NegativeRoomPhase_IsRejected() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => Export(ZeroPhaseInfo(Room(300, roomPhase: First)), new IfcExporter { RoomExportPhaseId = -1 }));
+
     private static List<int> Floors(string ifc) =>
         Ids(ifc, "IFCSLAB").Select(id => Regex.Match(ifc, $@"#{id}=IFCSLAB\('[^']*',#\d+,'[^']*',[^;]*,'(\d+)'", RegexOptions.None))
             .Where(match => match.Success).Select(match => int.Parse(match.Groups[1].Value)).ToList();

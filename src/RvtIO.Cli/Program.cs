@@ -24,7 +24,7 @@ internal static partial class Program
           --ifc-phase <last|all|id>         phase whose state is exported: elements demolished at or before it or created after it and, unless
                                             --ifc-room-phase says otherwise, rooms of other phases are left out. Default: the last phase for the
                                             current profile, every phase for the legacy profile (IFC only)
-          --ifc-room-phase <last|all|id>    rooms to export: the last phase, every phase or one positive native phase id (IFC only)
+          --ifc-room-phase <last|all|id>    rooms to export: the last phase, every phase or one native phase id (IFC only)
           --revit-localization <dir>        read the system family names from the resource DLLs of a Revit installation
           --r22-layout                      read the Revit 2022 layout for a JSON export too (an IFC export does it by default)
           --no-r22-layout                   keep the 64-bit schema path alone in an IFC export
@@ -133,9 +133,9 @@ internal static partial class Program
             if (roomPhaseOption != null || i + 1 >= args.Length
                 || (args[i + 1] is not ("last" or "all") && (!int.TryParse(args[i + 1],
                     System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
-                    out int phase) || phase <= 0)))
+                    out int phase) || phase < 0)))
             {
-                Console.Error.WriteLine("--ifc-room-phase requires one value: last, all or a positive native phase ID.");
+                Console.Error.WriteLine("--ifc-room-phase requires one value: last, all or a native phase ID.");
                 return 1;
             }
             roomPhaseOption = args[++i];
