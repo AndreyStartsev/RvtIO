@@ -403,8 +403,10 @@ public class IfcExporterBeamCommonPropertySetTests
         }
     }
 
-    [Fact]
-    public void BeamSystemAssembly_IsCountedAsExportedAndTakenOutOfTheSkippedElements()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BeamSystemAssembly_IsCountedAsExportedAndTakenOutOfTheSkippedElements(bool withSkipLog)
     {
         var system = new Element
         {
@@ -417,7 +419,7 @@ public class IfcExporterBeamCommonPropertySetTests
         info.Elements.AddRange(elements);
         string path = Path.Combine(Path.GetTempPath(), $"rvtio-joist-{Guid.NewGuid():N}.ifc");
         var skipLog = new SkipLog();
-        var exporter = new IfcExporter { Profile = IfcProfile.Current, SkipLog = skipLog };
+        var exporter = new IfcExporter { Profile = IfcProfile.Current, SkipLog = withSkipLog ? skipLog : null };
         try
         {
             exporter.Export(info, path);

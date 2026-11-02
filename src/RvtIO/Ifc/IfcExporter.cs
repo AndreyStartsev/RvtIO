@@ -4785,7 +4785,12 @@ public partial class IfcExporter
             // the main loop left the beam system out; its assembly is a product of the file
             foreach (int systemId in WriteJoistAssemblies(w, info.Elements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
                          storeyContents, propertySingleValueIds))
-                if (SkipLog?.Remove(systemId) == true) { skippedCount--; exportedCount++; }
+            {
+                // counted with or without a skip log; the log entry is only there to be taken out
+                exportedCount++;
+                skippedCount--;
+                SkipLog?.Remove(systemId);
+            }
 
         // Resolve decomposition AFTER normal product emission.
         foreach (var pending in pendingCurtainParents.Values.OrderBy(item => item.Element.Id))
