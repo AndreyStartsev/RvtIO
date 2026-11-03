@@ -22,14 +22,18 @@ public partial class IfcExporter
     /// valves, equipment, cables) are unaffected. Set it to false (CLI: --ifc-no-base-quantities) to leave the sets out.</summary>
     public bool BaseQuantities { get; init; } = true;
 
-    /// <summary>Give the opening of a door or window in a straight wall the quantities of the door or window: Width along the wall
-    /// (the Width of the instance, else of its type), Height vertical (its Height) and Depth across the wall, whatever the direction
-    /// of the wall in the model; an opening of a door or window that holds no dimension is measured as the extents of its solid in
-    /// the frame of the wall. By default the sides of the cut loop are named by the frame it is measured in (Height the side along
-    /// the wall, Width the vertical side), so a door 0.8 wide and 2.1 high gets Height 0.8 and Width 2.1, while Revit and the
-    /// IfcDoor say Width 0.8 and Height 2.1. Off by default, which keeps the default output unchanged
-    /// (CLI: --ifc-opening-host-axes).</summary>
-    public bool OpeningQuantitiesInHostAxes { get; init; }
+    /// <summary>Write the legacy (swapped) Width and Height quantities of the opening of a door or window: Height the side of the cut
+    /// loop along the wall and Width the vertical side, named by the frame they are measured in, so a door 0.8 wide and 2.1 high
+    /// gets Height 0.8 and Width 2.1. Off by default: the opening of a door or window in a straight wall gets the quantities of the
+    /// door or window as Revit has them, Width along the wall (the Width of the instance, else of its type), Height vertical (its
+    /// Height) and Depth across the wall, whatever the direction of the wall in the model; an opening of a door or window that holds
+    /// no dimension is measured as the extents of its solid in the frame of the wall (CLI: --ifc-opening-legacy-axes).</summary>
+    public bool OpeningQuantitiesSwapped { get; init; }
+
+    /// <summary>The opposite of <see cref="OpeningQuantitiesSwapped"/>, kept so that code written against the earlier opt-in keeps
+    /// compiling. True by default; set it to false to get the legacy swapped quantities (CLI: --ifc-opening-host-axes is accepted
+    /// and does nothing).</summary>
+    public bool OpeningQuantitiesInHostAxes { get => !OpeningQuantitiesSwapped; init => OpeningQuantitiesSwapped = !value; }
 
     /// <summary>The Height and Width quantities of openings that the quantity pass took from the door or window (the door and window
     /// opening pass leaves those and writes the others from the outline it builds).</summary>

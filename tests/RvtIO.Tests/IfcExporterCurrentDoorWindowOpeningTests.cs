@@ -178,7 +178,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     }
 
     [Fact]
-    public void BaseQuantities_UpdatedWithCutLoopModelFrameExtents()
+    public void BaseQuantities_Legacy_UpdatedWithCutLoopModelFrameExtents()
     {
         var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607]);
         int qDepth = f.W.Add("IFCQUANTITYLENGTH", "'Depth','',$,0.1");
@@ -187,7 +187,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         int qSet = f.W.Add("IFCELEMENTQUANTITY", $"'qset',#1,'BaseQuantities',$,$,(#{qDepth},#{qHeight},#{qWidth})");
         f.W.Add("IFCRELDEFINESBYPROPERTIES", $"'rel',#1,$,$,(#{opening}),#{qSet}");
 
-        Assert.Equal(1, new IfcExporter().ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+        Assert.Equal(1, new IfcExporter { OpeningQuantitiesSwapped = true }.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
 
         var depthArgs = f.Attributes(qDepth);
         var heightArgs = f.Attributes(qHeight);
@@ -200,7 +200,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         Assert.Equal(2.1, w, 3);
     }
 
-    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool hostAxes, double turnDegrees, string fillerType, params string[] fromTheFiller)
+    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool swapped, double turnDegrees, string fillerType, params string[] fromTheFiller)
     {
         var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607], turnDegrees, fillerType);
         int qDepth = f.W.Add("IFCQUANTITYLENGTH", "'Depth','',$,0.1");
@@ -209,7 +209,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         int qSet = f.W.Add("IFCELEMENTQUANTITY", $"'qset',#1,'BaseQuantities',$,$,(#{qDepth},#{qHeight},#{qWidth})");
         f.W.Add("IFCRELDEFINESBYPROPERTIES", $"'rel',#1,$,$,(#{opening}),#{qSet}");
 
-        var exporter = new IfcExporter { OpeningQuantitiesInHostAxes = hostAxes };
+        var exporter = new IfcExporter { OpeningQuantitiesSwapped = swapped };
         // (what the quantity pass records for a dimension that it took from the door or window)
         foreach (string name in fromTheFiller) exporter._openingQuantitiesFromFiller.Add((opening, name));
         Assert.Equal(1, exporter.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
@@ -219,12 +219,12 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     }
 
     [Theory]
-    // Default: the loop measured in the frame of the wall, X along the placement (Height) and the vertical side as Width.
-    [InlineData(false, 0, 0.8, 2.1)]
-    [InlineData(false, 37, 0.8, 2.1)]
-    public void BaseQuantities_Default_NamesTheSidesOfTheLoopByTheFrame(bool hostAxes, double turnDegrees, double height, double width)
+    // Legacy: the loop measured in the frame of the wall, X along the placement (Height) and the vertical side as Width.
+    [InlineData(0, 0.8, 2.1)]
+    [InlineData(37, 0.8, 2.1)]
+    public void BaseQuantities_Legacy_NamesTheSidesOfTheLoopByTheFrame(double turnDegrees, double height, double width)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(hostAxes, turnDegrees, "IFCDOOR");
+        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, "IFCDOOR");
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);
@@ -232,7 +232,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     }
 
     [Theory]
-    // Along the host axes a dimension that the quantity pass took from the door or window (here 0.885 and 2.135) stays, in a wall of
+    // By default (along the host axes) a dimension that the quantity pass took from the door or window (here 0.885 and 2.135) stays, in a wall of
     // any direction; one it could not take is written from the new outline: Height the vertical side (2.1), Width the side along the wall (0.8).
     [InlineData(0, "Height,Width", 0.885, 2.135)]
     [InlineData(37, "Height,Width", 0.885, 2.135)]
@@ -243,10 +243,10 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     [InlineData(90, "", 2.1, 0.8)]
     [InlineData(0, "Width", 2.1, 2.135)]
     [InlineData(0, "Height", 0.885, 0.8)]
-    public void BaseQuantities_HostAxesOption_KeepsWhatCameFromTheDoorOrWindow_AndWritesTheOtherFromTheNewOutline(
+    public void BaseQuantities_Default_KeepsWhatCameFromTheDoorOrWindow_AndWritesTheOtherFromTheNewOutline(
         double turnDegrees, string fromTheFiller, double height, double width)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, "IFCDOOR", fromTheFiller.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        var (depth, h, w) = QuantitiesAfterTheRewrite(false, turnDegrees, "IFCDOOR", fromTheFiller.Split(',', StringSplitOptions.RemoveEmptyEntries));
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);
@@ -256,12 +256,23 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     [Theory]
     [InlineData("IFCWINDOW", 2.1, 0.8)]
     [InlineData("IFCBUILDINGELEMENTPROXY", 0.8, 2.1)]
-    public void BaseQuantities_HostAxesOption_ChangesOnlyTheOpeningOfADoorOrWindow(string fillerType, double height, double width)
+    public void BaseQuantities_Default_ChangesOnlyTheOpeningOfADoorOrWindow(string fillerType, double height, double width)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(true, 0, fillerType);
+        var (depth, h, w) = QuantitiesAfterTheRewrite(false, 0, fillerType);
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);
         Assert.Equal(width, w, 3);
+    }
+
+    [Fact]
+    public void TheTwoProperties_AreTheOppositeOfEachOther_AndTheRevitMeaningIsTheDefault()
+    {
+        Assert.False(new IfcExporter().OpeningQuantitiesSwapped);
+        Assert.True(new IfcExporter().OpeningQuantitiesInHostAxes);
+        Assert.True(new IfcExporter { OpeningQuantitiesSwapped = true }.OpeningQuantitiesSwapped);
+        Assert.False(new IfcExporter { OpeningQuantitiesSwapped = true }.OpeningQuantitiesInHostAxes);
+        Assert.True(new IfcExporter { OpeningQuantitiesInHostAxes = false }.OpeningQuantitiesSwapped);
+        Assert.False(new IfcExporter { OpeningQuantitiesInHostAxes = true }.OpeningQuantitiesSwapped);
     }
 }

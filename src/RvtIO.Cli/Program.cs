@@ -21,8 +21,10 @@ internal static partial class Program
           --ifc-revit-parameters            write the Revit parameters as IFC property sets
           --ifc-revit-parameter-groups      write them as one property set per parameter group (implies --ifc-revit-parameters)
           --ifc-no-base-quantities          leave out the base quantity sets
-          --ifc-opening-host-axes           give the opening of a door or window the Width (along the wall) and Height of the door or
-                                            window, instead of the sides of its cut loop named by the frame they are measured in
+          --ifc-opening-legacy-axes         name the sides of the opening of a door or window by the frame they are measured in (Height
+                                            along the wall, Width vertical), as earlier releases did; by default the opening has the Width
+                                            (along the wall) and Height of the door or window, as Revit has them
+          --ifc-opening-host-axes           accepted and ignored: this is now the default
           --ifc-phase <last|all|id>         phase whose state is exported: elements demolished at or before it or created after it and, unless
                                             --ifc-room-phase says otherwise, rooms of other phases are left out. Default: the last phase for the
                                             current profile, every phase for the legacy profile (IFC only)
@@ -86,7 +88,7 @@ internal static partial class Program
 
     private static readonly HashSet<string> SwitchOptions =
     [
-        "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities", "--ifc-opening-host-axes", "--r22-layout",
+        "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities", ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
         "--no-r22-layout", "--resolve-current-copies", "--allow-partial", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
         "--decode-blocks", "--decode-catc", "--wide", "--blocks", "--no-recover", "--no-d64", "--trim", "--dump-partial",
     ];
@@ -135,7 +137,7 @@ internal static partial class Program
         bool revitParameterGroups = args.Contains("--ifc-revit-parameter-groups");
         bool includeIfcRevitParameters = args.Contains("--ifc-revit-parameters") || revitParameterGroups;
         bool baseQuantities = !args.Contains("--ifc-no-base-quantities");
-        bool openingHostAxes = args.Contains("--ifc-opening-host-axes");
+        bool openingLegacyAxes = RvtIO.Cli.OpeningAxesOption.Legacy(args);
         string? roomPhaseOption = null;
         for (int i = 0; i < args.Length; i++)
         {
@@ -270,7 +272,7 @@ internal static partial class Program
         if (listCategoryOutPath != null) return ListCategory(rvtPath, listCategoryId, listCategoryOutPath);
 
         return Export(new ExportArguments(args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput,
-            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingHostAxes));
+            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>
