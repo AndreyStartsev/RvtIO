@@ -348,7 +348,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         w.Add("IFCRELVOIDSELEMENT", $"'4ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{wall},#{opening}");
         w.Add("IFCRELFILLSELEMENT", $"'5ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{opening},#{door}");
 
-        Apply(w, owner);
+        Apply(w, owner, exporter: Legacy);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", depth), ("Height", height), ("Width", width));
     }
@@ -410,7 +410,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     {
         var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)", wallWidth: wallWidth, filled: filled);
 
-        Apply(w, owner);
+        Apply(w, owner, exporter: Legacy);
 
         var lengths = Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList();
         AssertQuantities(lengths, ("Depth", 0.202), ("Height", height), ("Width", width));
@@ -437,7 +437,9 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", projection), ("Width", projection));
     }
 
-    private static IfcExporter HostAxes => new() { OpeningQuantitiesInHostAxes = true };
+    private static IfcExporter HostAxes => new();
+
+    private static IfcExporter Legacy => new() { OpeningQuantitiesSwapped = true };
 
     [Theory]
     // The same door opening, 0.8 along the wall, 0.202 across, 2.1 up, in a wall of any direction: along the wall is Width.
@@ -457,11 +459,11 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void HostAxes_Off_KeepsTheModelFrameValues()
+    public void Legacy_KeepsTheModelFrameValues()
     {
         var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)", wallWidth: 0.3, filled: true);
 
-        Apply(w, owner, exporter: new IfcExporter());
+        Apply(w, owner, exporter: Legacy);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
     }
@@ -556,11 +558,11 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void FillerDimensions_Default_OpeningKeepsTheMeasureOfItsBody()
+    public void FillerDimensions_Legacy_OpeningKeepsTheMeasureOfItsBody()
     {
         var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
 
-        Apply(w, owner, elements, elementByEntity, exporter: new IfcExporter());
+        Apply(w, owner, elements, elementByEntity, exporter: Legacy);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 6), ("Width", 3));
     }
@@ -665,7 +667,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
             ]
         };
 
-        Apply(w, owner, new() { [41] = element }, new() { [wall] = 41 });
+        Apply(w, owner, new() { [41] = element }, new() { [wall] = 41 }, exporter: Legacy);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
     }
@@ -710,7 +712,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
             ]
         };
 
-        Apply(w, owner, new() { [42] = element }, new() { [wall] = 42 });
+        Apply(w, owner, new() { [42] = element }, new() { [wall] = 42 }, exporter: Legacy);
 
         double proj = 0.885 / Math.Sqrt(2);
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.1), ("Height", proj), ("Width", proj));

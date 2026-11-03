@@ -33,6 +33,7 @@
     <Compile Include="..\..\tools\RootProbe\ParameterInputProbe.cs" Link="RootProbe\ParameterInputProbe.cs" />
     <!-- The command line option parser of the CLI, compiled here to test it without starting the tool. -->
     <Compile Include="..\..\src\RvtIO.Cli\JsonClassPrefixOption.cs" Link="Cli\JsonClassPrefixOption.cs" />
+    <Compile Include="..\..\src\RvtIO.Cli\OpeningAxesOption.cs" Link="Cli\OpeningAxesOption.cs" />
   </ItemGroup>
 
 </Project>
