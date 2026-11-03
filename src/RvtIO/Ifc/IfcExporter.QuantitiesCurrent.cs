@@ -640,8 +640,8 @@ public partial class IfcExporter
             || StraightWallHostCurrent(context, openingId) is null)
             return measured;
         var dimensions = DoorWindowQuantitiesCurrent(context, filler);
-        double? height = dimensions.Where(q => q.Name == "Height" && q.Value > 1e-9).Select(q => (double?)q.Value).FirstOrDefault();
-        double? width = dimensions.Where(q => q.Name == "Width" && q.Value > 1e-9).Select(q => (double?)q.Value).FirstOrDefault();
+        double? height = dimensions.Where(q => q.Name == "Height" && q.Value > 1e-9 && double.IsFinite(q.Value)).Select(q => (double?)q.Value).FirstOrDefault();
+        double? width = dimensions.Where(q => q.Name == "Width" && q.Value > 1e-9 && double.IsFinite(q.Value)).Select(q => (double?)q.Value).FirstOrDefault();
         if (height is null && width is null) return measured;
         // shortcut: a body that could not be measured in the frame of the wall names its sides by the frame of the loop, so a missing
         // dimension has no value in the host axes there; it keeps the measure unless both are known.

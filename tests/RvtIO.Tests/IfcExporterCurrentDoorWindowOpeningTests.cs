@@ -11,7 +11,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     private const int WallElement = 30, DoorElement = 31, SymbolElement = 50;
 
     private static (IfcExporterCurrentWallExtrusionTests.Fixture Fixture, int Opening, Dictionary<int, Element> Elements, Dictionary<int, int> Products)
-        Scene(double[] symbolBox, double turnDegrees = 0)
+        Scene(double[] symbolBox, double turnDegrees = 0, string fillerType = "IFCDOOR")
     {
         // the whole scene turned about the vertical axis: the wall, its location line and the instance transform
         double cos = Math.Cos(turnDegrees * Math.PI / 180), sin = Math.Sin(turnDegrees * Math.PI / 180);
@@ -28,7 +28,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         int body = f.W.Add("IFCSHAPEREPRESENTATION", $"#{f.BodyContext},'Body','SweptSolid',($)");
         int shape = f.W.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{body})");
         int opening = f.W.Add("IFCOPENINGELEMENT", $"'g',#1,'Single-Flush:800 x 2100:31',$,'Opening',#{openingPlacement},#{shape},'31'");
-        int door = f.W.Add("IFCDOOR", $"'d',#1,'Single-Flush',$,$,#{openingPlacement},$,'31'");
+        int door = f.W.Add(fillerType, $"'d',#1,'Single-Flush',$,$,#{openingPlacement},$,'31'");
         f.W.Add("IFCRELVOIDSELEMENT", $"'v',#1,$,$,#{wall},#{opening}");
         f.W.Add("IFCRELFILLSELEMENT", $"'f',#1,$,$,#{opening},#{door}");
 
@@ -200,9 +200,9 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         Assert.Equal(2.1, w, 3);
     }
 
-    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool hostAxes, double turnDegrees, params string[] fromTheFiller)
+    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool hostAxes, double turnDegrees, string fillerType, params string[] fromTheFiller)
     {
-        var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607], turnDegrees);
+        var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607], turnDegrees, fillerType);
         int qDepth = f.W.Add("IFCQUANTITYLENGTH", "'Depth','',$,0.1");
         int qHeight = f.W.Add("IFCQUANTITYLENGTH", "'Height','',$,0.885");
         int qWidth = f.W.Add("IFCQUANTITYLENGTH", "'Width','',$,2.135");
@@ -224,7 +224,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     [InlineData(false, 37, 0.8, 2.1)]
     public void BaseQuantities_Default_NamesTheSidesOfTheLoopByTheFrame(bool hostAxes, double turnDegrees, double height, double width)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(hostAxes, turnDegrees);
+        var (depth, h, w) = QuantitiesAfterTheRewrite(hostAxes, turnDegrees, "IFCDOOR");
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);
@@ -246,7 +246,19 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     public void BaseQuantities_HostAxesOption_KeepsWhatCameFromTheDoorOrWindow_AndWritesTheOtherFromTheNewOutline(
         double turnDegrees, string fromTheFiller, double height, double width)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, fromTheFiller.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, "IFCDOOR", fromTheFiller.Split(',', StringSplitOptions.RemoveEmptyEntries));
+
+        Assert.Equal(0.202, depth, 3);
+        Assert.Equal(height, h, 3);
+        Assert.Equal(width, w, 3);
+    }
+
+    [Theory]
+    [InlineData("IFCWINDOW", 2.1, 0.8)]
+    [InlineData("IFCBUILDINGELEMENTPROXY", 0.8, 2.1)]
+    public void BaseQuantities_HostAxesOption_ChangesOnlyTheOpeningOfADoorOrWindow(string fillerType, double height, double width)
+    {
+        var (depth, h, w) = QuantitiesAfterTheRewrite(true, 0, fillerType);
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);

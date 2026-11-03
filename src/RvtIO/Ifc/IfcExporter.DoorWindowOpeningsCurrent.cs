@@ -142,6 +142,9 @@ public partial class IfcExporter
             openingAttributes[6] = StepWriter.Ref(newShape);
             w.ReplaceArgs(openingIndex, string.Join(",", openingAttributes));
 
+            // (only the opening of a door or window is measured along the host axes, as in the quantity pass)
+            bool hostAxes = OpeningQuantitiesInHostAxes && indexById.TryGetValue(fillingId, out int fillerIndex)
+                && w.EntityAt(fillerIndex).Type is "IFCDOOR" or "IFCWINDOW";
             if (psetByProduct.TryGetValue(openingId, out int psetId)
                 && indexById.TryGetValue(psetId, out int psetIndex)
                 && w.EntityAt(psetIndex).Type == "IFCELEMENTQUANTITY")
@@ -162,10 +165,10 @@ public partial class IfcExporter
                                 string qName = qArgs[0].Trim('\'');
                                 // (along the host axes Height is the vertical and Width the side along the wall of the new outline, and a
                                 // dimension that the quantity pass took from the door or window stays, see OpeningQuantitiesInHostAxes)
-                                bool own = OpeningQuantitiesInHostAxes && _openingQuantitiesFromFiller.Contains((openingId, qName));
-                                if (qName == "Height" && !own && (OpeningQuantitiesInHostAxes ? built.HostHeight : built.Height) is { } newHeight)
+                                bool own = hostAxes && _openingQuantitiesFromFiller.Contains((openingId, qName));
+                                if (qName == "Height" && !own && (hostAxes ? built.HostHeight : built.Height) is { } newHeight)
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newHeight)}");
-                                else if (qName == "Width" && !own && (OpeningQuantitiesInHostAxes ? built.HostWidth : built.Width) is { } newWidth)
+                                else if (qName == "Width" && !own && (hostAxes ? built.HostWidth : built.Width) is { } newWidth)
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newWidth)}");
                                 else if (qName == "Depth")
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Depth)}");
