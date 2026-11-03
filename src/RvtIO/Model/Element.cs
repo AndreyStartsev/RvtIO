@@ -288,6 +288,12 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal ushort? SerializedOwnElementClassId { get; set; }
 
+        /// <summary>True when the element class root was counted once by the schema-seeded table alone (<c>OwnedElementClassRoots</c>), the
+        /// count the stair source read before the walked count replaced it. The Length surrogate of a stair run was calibrated on the files
+        /// where this holds, so only those runs get it.</summary>
+        [JsonIgnore]
+        internal bool OwnClassRootSeededOnce { get; set; }
+
         /// <summary>ElementHeader.m_categroryId stored in the element's record
         /// (<see cref="Parsing.ElementHeaderCategory"/>; -1 is the null id). Unlike <see cref="CategoryId"/> it is never derived from
         /// other data. Null when the walk accepted no record of this id or its records disagree.</summary>

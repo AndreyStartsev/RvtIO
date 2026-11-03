@@ -215,7 +215,7 @@ public class IfcExporterStairOccurrenceCommonPropertySetTests
         return int.Parse(match.Groups[1].Value);
     }
 
-    private static Element Product(
+    internal static Element Product(
         int id, int typeId, int categoryId, string category, string? name,
         double centreX = 0) =>
         new()
