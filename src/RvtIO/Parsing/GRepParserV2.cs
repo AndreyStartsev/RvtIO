@@ -4555,6 +4555,23 @@ internal static partial class GRepParserV2
         return uMin <= uMax && vMin <= vMax;
     }
 
+    /// <summary>The largest absolute value of six numbers as <c>Select(Math.Abs).Max()</c> gives it: NaN counts as the smallest value, so it is the
+    /// result only when all six are NaN (then the last one).</summary>
+    internal static double MaxAbsIgnoringNaN(double a, double b, double c, double d, double e, double f)
+    {
+        Span<double> values = [Math.Abs(a), Math.Abs(b), Math.Abs(c), Math.Abs(d), Math.Abs(e), Math.Abs(f)];
+        int index = 0;
+        double value = values[0];
+        while (double.IsNaN(value))
+        {
+            if (++index == values.Length) return value;
+            value = values[index];
+        }
+        for (index++; index < values.Length; index++)
+            if (values[index] > value) value = values[index];
+        return value;
+    }
+
     private static double[] EvaluateTrimBoundaryChord(double u, double v,
         IReadOnlyList<(double U1, double V1, double U2, double V2)> authoredEdges,
         Func<double, double, double[]> evaluate,
@@ -4573,8 +4590,7 @@ internal static partial class GRepParserV2
             double fraction = ((u - edge.U1) * du + (v - edge.V1) * dv)
                 / lengthSquared;
             double parameterScale = Math.Max(1,
-                new[] { u, v, edge.U1, edge.V1, edge.U2, edge.V2 }
-                    .Select(Math.Abs).Max());
+                MaxAbsIgnoringNaN(u, v, edge.U1, edge.V1, edge.U2, edge.V2));
             double parameterTolerance = 128 * machineEpsilon * parameterScale;
             if (fraction < -parameterTolerance || fraction > 1 + parameterTolerance)
                 continue;
@@ -5004,84 +5020,6 @@ internal static partial class GRepParserV2
         var rings = OrderRingsW(uvSegments);
         if (rings.Count == 0 || rings.Any(ring => ring.Count < 3)) return null;
 
-        static List<double[]> ClipBoundary(
-            List<double[]> input, int axis, double value, bool keepGreater)
-        {
-            if (input.Count == 0) return input;
-            bool Inside(double[] point) => keepGreater
-                ? point[axis] >= value - 1e-12
-                : point[axis] <= value + 1e-12;
-            double[] Intersection(double[] first, double[] second)
-            {
-                // Adjacent clipped cells can traverse their shared source segment in opposite
-                // directions.
-                if (first[axis] > second[axis]
-                    || (first[axis] == second[axis]
-                        && first[1 - axis] > second[1 - axis]))
-                    (first, second) = (second, first);
-                double denominator = second[axis] - first[axis];
-                double fraction = Math.Abs(denominator) < 1e-20
-                    ? 0 : (value - first[axis]) / denominator;
-                fraction = Math.Clamp(fraction, 0, 1);
-                var intersection = new[]
-                {
-                    first[0] + (second[0] - first[0]) * fraction,
-                    first[1] + (second[1] - first[1]) * fraction,
-                };
-                intersection[axis] = value;
-                return intersection;
-            }
-
-            var output = new List<double[]>();
-            var previous = input[^1];
-            bool previousInside = Inside(previous);
-            foreach (var current in input)
-            {
-                bool currentInside = Inside(current);
-                if (currentInside)
-                {
-                    if (!previousInside) output.Add(Intersection(previous, current));
-                    output.Add(current);
-                }
-                else if (previousInside)
-                {
-                    output.Add(Intersection(previous, current));
-                }
-                previous = current;
-                previousInside = currentInside;
-            }
-            return output;
-        }
-
-        static List<double[]> CleanUv(List<double[]> polygon)
-        {
-            double span = polygon.Count == 0 ? 1 : Math.Max(
-                polygon.Max(point => point[0]) - polygon.Min(point => point[0]),
-                polygon.Max(point => point[1]) - polygon.Min(point => point[1]));
-            double epsilon = Math.Max(1e-12, span * 1e-10);
-            var clean = new List<double[]>();
-            foreach (var point in polygon)
-                if (clean.Count == 0 || Math.Abs(point[0] - clean[^1][0]) > epsilon
-                    || Math.Abs(point[1] - clean[^1][1]) > epsilon)
-                    clean.Add(point);
-            if (clean.Count > 1 && Math.Abs(clean[0][0] - clean[^1][0]) <= epsilon
-                && Math.Abs(clean[0][1] - clean[^1][1]) <= epsilon)
-                clean.RemoveAt(clean.Count - 1);
-            return clean;
-        }
-
-        static double SignedArea(IReadOnlyList<double[]> polygon)
-        {
-            double area = 0;
-            for (int index = 0; index < polygon.Count; index++)
-            {
-                var first = polygon[index];
-                var second = polygon[(index + 1) % polygon.Count];
-                area += first[0] * second[1] - second[0] * first[1];
-            }
-            return area / 2;
-        }
-
         List<List<double[]>>? sourcePolygons;
         if (rings.Count == 1)
         {
@@ -5098,30 +5036,202 @@ internal static partial class GRepParserV2
         }
         if (sourcePolygons == null || sourcePolygons.Count == 0) return null;
 
-        var result = new List<List<double[]>>();
-        foreach (var source in sourcePolygons)
+        return ClipGridCells(sourcePolygons, uSamples, vSamples, rings.Count == 1 || refineV, evaluate);
+    }
+
+    /// <summary>Scratch arrays of <see cref="ClipGridCells"/>, kept per thread so that the grid cells of a face allocate nothing
+    /// but their result. A point is two doubles (u, v) one after the other.</summary>
+    private sealed class GridClipBuffers
+    {
+        public double[] Source = [], UTemp = [], UClipped = [], VTemp = [], VClipped = [], Clean = [];
+        public bool InUse;
+    }
+
+    [ThreadStatic] private static GridClipBuffers? t_gridClipBuffers;
+
+    /// <summary>Clips every source polygon against every grid cell of the sample lines and evaluates the corners of what is left.
+    /// <paramref name="allVCells"/>: the cells are cut in V as well; otherwise one cell spans all of V.
+    /// The arithmetic and its order are those of the earlier per-cell implementation that built a list of arrays for every cell.</summary>
+    internal static List<List<double[]>> ClipGridCells(List<List<double[]>> sourcePolygons, List<double> uSamples, List<double> vSamples,
+        bool allVCells, Func<double, double, double[]> evaluate)
+    {
+        var buffers = t_gridClipBuffers ??= new GridClipBuffers();
+        if (buffers.InUse) buffers = new GridClipBuffers(); // evaluate called back into this method on the same thread
+        buffers.InUse = true;
+        try
         {
-            for (int uIndex = 0; uIndex + 1 < uSamples.Count; uIndex++)
+            var result = new List<List<double[]>>();
+            foreach (var source in sourcePolygons)
             {
-                var uClipped = ClipBoundary(source, 0, uSamples[uIndex], keepGreater: true);
-                uClipped = ClipBoundary(uClipped, 0, uSamples[uIndex + 1], keepGreater: false);
-                int vCellCount = rings.Count == 1 || refineV ? vSamples.Count - 1 : 1;
-                for (int vIndex = 0; vIndex < vCellCount; vIndex++)
+                int sourceCount = source.Count;
+                if (buffers.Source.Length < 2 * sourceCount) buffers.Source = new double[2 * sourceCount];
+                for (int index = 0; index < sourceCount; index++)
                 {
-                    var polygon = uClipped;
-                    if (vCellCount > 1)
+                    buffers.Source[2 * index] = source[index][0];
+                    buffers.Source[2 * index + 1] = source[index][1];
+                }
+                for (int uIndex = 0; uIndex + 1 < uSamples.Count; uIndex++)
+                {
+                    int uTempCount = ClipFlat(buffers.Source, sourceCount, 0, uSamples[uIndex], true, ref buffers.UTemp);
+                    int uCount = ClipFlat(buffers.UTemp, uTempCount, 0, uSamples[uIndex + 1], false, ref buffers.UClipped);
+                    int vCellCount = allVCells ? vSamples.Count - 1 : 1;
+                    for (int vIndex = 0; vIndex < vCellCount; vIndex++)
                     {
-                        polygon = ClipBoundary(polygon, 1, vSamples[vIndex], keepGreater: true);
-                        polygon = ClipBoundary(polygon, 1, vSamples[vIndex + 1], keepGreater: false);
+                        double[] polygon = buffers.UClipped;
+                        int count = uCount;
+                        if (vCellCount > 1)
+                        {
+                            int vTempCount = ClipFlat(buffers.UClipped, uCount, 1, vSamples[vIndex], true, ref buffers.VTemp);
+                            count = ClipFlat(buffers.VTemp, vTempCount, 1, vSamples[vIndex + 1], false, ref buffers.VClipped);
+                            polygon = buffers.VClipped;
+                        }
+                        count = CleanFlat(polygon, count, ref buffers.Clean);
+                        polygon = buffers.Clean;
+                        if (count < 3 || Math.Abs(SignedAreaFlat(polygon, count)) < 1e-14) continue;
+                        var world = new List<double[]>(count);
+                        for (int index = 0; index < count; index++)
+                            world.Add(evaluate(polygon[2 * index], polygon[2 * index + 1]));
+                        bool finite = true;
+                        foreach (var point in world)
+                        {
+                            foreach (double value in point)
+                                if (!IsFinite(value)) { finite = false; break; }
+                            if (!finite) break;
+                        }
+                        if (finite) result.Add(world);
                     }
-                    polygon = CleanUv(polygon);
-                    if (polygon.Count < 3 || Math.Abs(SignedArea(polygon)) < 1e-14) continue;
-                    var world = polygon.Select(point => evaluate(point[0], point[1])).ToList();
-                    if (world.All(point => point.All(IsFinite))) result.Add(world);
                 }
             }
+            return result;
         }
-        return result;
+        finally { buffers.InUse = false; }
+    }
+
+    /// <summary>One Sutherland-Hodgman step: keeps the part of the polygon (points from <paramref name="input"/>) on one side of the line
+    /// axis = value, and writes it to <paramref name="output"/>. Returns the number of points written.</summary>
+    private static int ClipFlat(double[] input, int count, int axis, double value, bool keepGreater, ref double[] output)
+    {
+        if (count == 0) return 0;
+        if (output.Length < 4 * count) output = new double[Math.Max(4 * count, 2 * output.Length)];
+        double[] target = output;
+        int written = 0;
+        int previousIndex = count - 1;
+        double previousX = input[2 * previousIndex], previousY = input[2 * previousIndex + 1];
+        bool previousInside = Inside(axis == 0 ? previousX : previousY);
+        for (int index = 0; index < count; index++)
+        {
+            double currentX = input[2 * index], currentY = input[2 * index + 1];
+            bool currentInside = Inside(axis == 0 ? currentX : currentY);
+            if (currentInside)
+            {
+                if (!previousInside) Intersect(previousX, previousY, currentX, currentY);
+                target[2 * written] = currentX; target[2 * written + 1] = currentY; written++;
+            }
+            else if (previousInside)
+            {
+                Intersect(previousX, previousY, currentX, currentY);
+            }
+            previousX = currentX; previousY = currentY;
+            previousInside = currentInside;
+        }
+        return written;
+
+        bool Inside(double coordinate) => keepGreater ? coordinate >= value - 1e-12 : coordinate <= value + 1e-12;
+
+        void Intersect(double firstX, double firstY, double secondX, double secondY)
+        {
+            // Adjacent clipped cells can traverse their shared source segment in opposite
+            // directions.
+            double firstAxis = axis == 0 ? firstX : firstY, secondAxis = axis == 0 ? secondX : secondY;
+            double firstOther = axis == 0 ? firstY : firstX, secondOther = axis == 0 ? secondY : secondX;
+            if (firstAxis > secondAxis || (firstAxis == secondAxis && firstOther > secondOther))
+            {
+                (firstX, secondX) = (secondX, firstX);
+                (firstY, secondY) = (secondY, firstY);
+                (firstAxis, secondAxis) = (secondAxis, firstAxis);
+            }
+            double denominator = secondAxis - firstAxis;
+            double fraction = Math.Abs(denominator) < 1e-20
+                ? 0 : (value - firstAxis) / denominator;
+            fraction = Math.Clamp(fraction, 0, 1);
+            double x = firstX + (secondX - firstX) * fraction;
+            double y = firstY + (secondY - firstY) * fraction;
+            if (axis == 0) x = value; else y = value;
+            target[2 * written] = x; target[2 * written + 1] = y; written++;
+        }
+    }
+
+    /// <summary>Drops the points that repeat their predecessor within a span-relative epsilon, and the closing repeat of the first point.</summary>
+    private static int CleanFlat(double[] polygon, int count, ref double[] clean)
+    {
+        double span = 1;
+        if (count != 0)
+        {
+            // LINQ Max/Min over doubles: Max ignores NaN unless every value is NaN, Min returns the first NaN.
+            span = Math.Max(
+                MaxIgnoringNaN(polygon, count, 0) - MinPropagatingNaN(polygon, count, 0),
+                MaxIgnoringNaN(polygon, count, 1) - MinPropagatingNaN(polygon, count, 1));
+        }
+        double epsilon = Math.Max(1e-12, span * 1e-10);
+        if (clean.Length < 2 * count) clean = new double[2 * count];
+        int kept = 0;
+        for (int index = 0; index < count; index++)
+        {
+            double x = polygon[2 * index], y = polygon[2 * index + 1];
+            if (kept == 0 || Math.Abs(x - clean[2 * kept - 2]) > epsilon
+                || Math.Abs(y - clean[2 * kept - 1]) > epsilon)
+            {
+                clean[2 * kept] = x; clean[2 * kept + 1] = y; kept++;
+            }
+        }
+        if (kept > 1 && Math.Abs(clean[0] - clean[2 * kept - 2]) <= epsilon
+            && Math.Abs(clean[1] - clean[2 * kept - 1]) <= epsilon)
+            kept--;
+        return kept;
+    }
+
+    private static double SignedAreaFlat(double[] polygon, int count)
+    {
+        double area = 0;
+        for (int index = 0; index < count; index++)
+        {
+            int next = (index + 1) % count;
+            area += polygon[2 * index] * polygon[2 * next + 1] - polygon[2 * next] * polygon[2 * index + 1];
+        }
+        return area / 2;
+    }
+
+    /// <summary>The value <c>Enumerable.Max</c> gives for doubles: NaN counts as the smallest value, so it is the result only when every value is NaN
+    /// (then the last one). <paramref name="count"/> must be above 0.</summary>
+    internal static double MaxIgnoringNaN(double[] points, int count, int component)
+    {
+        int index = 0;
+        double value = points[component];
+        while (double.IsNaN(value))
+        {
+            if (++index == count) return value;
+            value = points[2 * index + component];
+        }
+        for (index++; index < count; index++)
+        {
+            double next = points[2 * index + component];
+            if (next > value) value = next;
+        }
+        return value;
+    }
+
+    /// <summary>The value <c>Enumerable.Min</c> gives for doubles: the first NaN if there is one. <paramref name="count"/> must be above 0.</summary>
+    internal static double MinPropagatingNaN(double[] points, int count, int component)
+    {
+        double value = points[component];
+        if (double.IsNaN(value)) return value;
+        for (int index = 1; index < count; index++)
+        {
+            double next = points[2 * index + component];
+            if (next < value) value = next;
+            else if (double.IsNaN(next)) return next;
+        }
+        return value;
     }
 
     private static List<double> RefineAngularSamples(List<double> source, double radius)
@@ -5312,6 +5422,15 @@ internal static partial class GRepParserV2
         static (long X, long Y, long Z) Key(double[] p) =>
             ((long)Math.Round(p[0] / Tol), (long)Math.Round(p[1] / Tol), (long)Math.Round(p[2] / Tol));
 
+        // The key of an edge set: its sorted indices joined by commas.
+        static string SortedKey(HashSet<int> edgeSet)
+        {
+            var sorted = new int[edgeSet.Count];
+            edgeSet.CopyTo(sorted);
+            Array.Sort(sorted);
+            return string.Join(',', (IEnumerable<int>)sorted);
+        }
+
         // Build a geometric, undirected edge graph. The GRep can repeat the same segment through
         // several topology records; collapsing those duplicates prevents a valid loop from being
         // consumed by an arbitrary parallel copy.
@@ -5338,23 +5457,34 @@ internal static partial class GRepParserV2
         }
         if (graphEdges.Count < 3) return new();
 
-        var adjacent = Enumerable.Range(0, points.Count).Select(_ => new List<int>()).ToArray();
+        // The edges of node n are adjacentEdges[adjacentStart[n] .. adjacentStart[n + 1]), in ascending edge index.
+        var adjacentStart = new int[points.Count + 1];
+        foreach (var graphEdge in graphEdges)
+        {
+            adjacentStart[graphEdge.A + 1]++;
+            adjacentStart[graphEdge.B + 1]++;
+        }
+        for (int i = 0; i < points.Count; i++) adjacentStart[i + 1] += adjacentStart[i];
+        var adjacentEdges = new int[adjacentStart[points.Count]];
+        var adjacentFilled = new int[points.Count];
         for (int i = 0; i < graphEdges.Count; i++)
         {
-            adjacent[graphEdges[i].A].Add(i);
-            adjacent[graphEdges[i].B].Add(i);
+            adjacentEdges[adjacentStart[graphEdges[i].A] + adjacentFilled[graphEdges[i].A]++] = i;
+            adjacentEdges[adjacentStart[graphEdges[i].B] + adjacentFilled[graphEdges[i].B]++] = i;
         }
 
         // Peel open chains. They are common after a recovered stream gap, but can never participate
         // in a Face boundary. The remaining 2-core contains only cycles.
         var active = Enumerable.Repeat(true, graphEdges.Count).ToArray();
-        var degree = adjacent.Select(a => a.Count).ToArray();
+        var degree = new int[points.Count];
+        for (int i = 0; i < points.Count; i++) degree[i] = adjacentStart[i + 1] - adjacentStart[i];
         var peel = new Queue<int>(Enumerable.Range(0, points.Count).Where(i => degree[i] < 2));
         while (peel.Count > 0)
         {
             int node = peel.Dequeue();
-            foreach (int edgeIndex in adjacent[node])
+            for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
             {
+                int edgeIndex = adjacentEdges[slot];
                 if (!active[edgeIndex]) continue;
                 active[edgeIndex] = false;
                 var e = graphEdges[edgeIndex];
@@ -5375,8 +5505,9 @@ internal static partial class GRepParserV2
             while (queue.Count > 0)
             {
                 int node = queue.Dequeue();
-                foreach (int edgeIndex in adjacent[node])
+                for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
                 {
+                    int edgeIndex = adjacentEdges[slot];
                     if (!active[edgeIndex]) continue;
                     var edge = graphEdges[edgeIndex];
                     int other = edge.A == node ? edge.B : edge.A;
@@ -5393,42 +5524,46 @@ internal static partial class GRepParserV2
         // degree-2 loops every edge discovers the exact same boundary.
         var candidates = new List<(List<double[]> Ring, HashSet<int> Edges, double Area, int Component)>();
         var seenCycles = new HashSet<string>();
+        var pathPrevNode = new int[points.Count];
+        var pathPrevEdge = new int[points.Count];
+        var pathQueue = new Queue<int>();
         for (int excluded = 0; excluded < graphEdges.Count; excluded++)
         {
             if (!active[excluded]) continue;
             var target = graphEdges[excluded];
-            var prevNode = Enumerable.Repeat(-1, points.Count).ToArray();
-            var prevEdge = Enumerable.Repeat(-1, points.Count).ToArray();
-            var queue = new Queue<int>();
-            prevNode[target.A] = target.A;
-            queue.Enqueue(target.A);
-            while (queue.Count > 0 && prevNode[target.B] < 0)
+            Array.Fill(pathPrevNode, -1);
+            Array.Fill(pathPrevEdge, -1);
+            pathQueue.Clear();
+            pathPrevNode[target.A] = target.A;
+            pathQueue.Enqueue(target.A);
+            while (pathQueue.Count > 0 && pathPrevNode[target.B] < 0)
             {
-                int node = queue.Dequeue();
-                foreach (int edgeIndex in adjacent[node])
+                int node = pathQueue.Dequeue();
+                for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
                 {
+                    int edgeIndex = adjacentEdges[slot];
                     if (edgeIndex == excluded || !active[edgeIndex]) continue;
                     var edge = graphEdges[edgeIndex];
                     int other = edge.A == node ? edge.B : edge.A;
-                    if (prevNode[other] >= 0) continue;
-                    prevNode[other] = node;
-                    prevEdge[other] = edgeIndex;
-                    queue.Enqueue(other);
+                    if (pathPrevNode[other] >= 0) continue;
+                    pathPrevNode[other] = node;
+                    pathPrevEdge[other] = edgeIndex;
+                    pathQueue.Enqueue(other);
                 }
             }
-            if (prevNode[target.B] < 0) continue;
+            if (pathPrevNode[target.B] < 0) continue;
 
             var cycleNodes = new List<int>();
             var cycleEdges = new HashSet<int> { excluded };
-            for (int node = target.B; ; node = prevNode[node])
+            for (int node = target.B; ; node = pathPrevNode[node])
             {
                 cycleNodes.Add(node);
                 if (node == target.A) break;
-                cycleEdges.Add(prevEdge[node]);
+                cycleEdges.Add(pathPrevEdge[node]);
             }
             cycleNodes.Reverse();
             if (cycleNodes.Count < 3) continue;
-            string cycleKey = string.Join(',', cycleEdges.OrderBy(i => i));
+            string cycleKey = SortedKey(cycleEdges);
             if (!seenCycles.Add(cycleKey)) continue;
             var ring = cycleNodes.Select(i => points[i]).ToList();
             double area = NewellNormalArea(ring).Area;
@@ -5445,8 +5580,9 @@ internal static partial class GRepParserV2
             void SearchCycles(int start, int node, List<int> pathNodes, List<int> pathEdges)
             {
                 if (cycleBudget <= 0 || pathNodes.Count > 32) return;
-                foreach (int edgeIndex in adjacent[node])
+                for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
                 {
+                    int edgeIndex = adjacentEdges[slot];
                     if (!active[edgeIndex]) continue;
                     var edge = graphEdges[edgeIndex];
                     int other = edge.A == node ? edge.B : edge.A;
@@ -5454,7 +5590,7 @@ internal static partial class GRepParserV2
                     {
                         if (pathNodes.Count < 3) continue;
                         var cycleEdges = new HashSet<int>(pathEdges) { edgeIndex };
-                        string cycleKey = string.Join(',', cycleEdges.OrderBy(i => i));
+                        string cycleKey = SortedKey(cycleEdges);
                         if (!seenCycles.Add(cycleKey)) continue;
                         cycleBudget--;
                         var ring = pathNodes.Select(i => points[i]).ToList();
@@ -5487,16 +5623,21 @@ internal static partial class GRepParserV2
 
         if (!includeContainingCycles)
         {
-            var primary = new List<List<double[]>>();
-            foreach (var component in candidates.GroupBy(c => c.Component).OrderBy(group => group.Key))
-                primary.Add((preferLargestCyclePerComponent
-                        ? component.OrderByDescending(cycle => Math.Round(cycle.Area, 8))
-                            .ThenByDescending(cycle => ExtentScore(cycle.Ring))
-                            .ThenByDescending(cycle => cycle.Ring.Count)
-                        : component.OrderBy(cycle => Math.Round(cycle.Area, 8))
-                            .ThenBy(cycle => ExtentScore(cycle.Ring))
-                            .ThenBy(cycle => cycle.Ring.Count))
-                    .First().Ring);
+            // Per component, in ascending order, the first candidate in the order of discovery that no later one beats on
+            // (area rounded to 8 places, extent, ring size): what OrderBy(...).ThenBy(...).ThenBy(...).First() gives, ties keep the earlier.
+            bool Beats(int challenger, int best)
+            {
+                int order = Math.Round(candidates[challenger].Area, 8).CompareTo(Math.Round(candidates[best].Area, 8));
+                if (order == 0) order = ExtentScore(candidates[challenger].Ring).CompareTo(ExtentScore(candidates[best].Ring));
+                if (order == 0) order = candidates[challenger].Ring.Count.CompareTo(candidates[best].Ring.Count);
+                return (preferLargestCyclePerComponent ? -order : order) < 0;
+            }
+            var bestByComponent = new SortedDictionary<int, int>();
+            for (int index = 0; index < candidates.Count; index++)
+                if (!bestByComponent.TryGetValue(candidates[index].Component, out int best) || Beats(index, best))
+                    bestByComponent[candidates[index].Component] = index;
+            var primary = new List<List<double[]>>(bestByComponent.Count);
+            foreach (int best in bestByComponent.Values) primary.Add(candidates[best].Ring);
             return primary;
         }
 
