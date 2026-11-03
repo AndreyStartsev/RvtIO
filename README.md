@@ -65,6 +65,14 @@ rvtio project.rvt project.ifc --ifc-phase all
 
 An element is left out of the IFC when it is demolished in the export phase or an earlier one, or created in a later one. Without the option the current profile exports the last project phase and the legacy profile every phase; `all` keeps every element and room, and an id selects that phase (it must occur in the project's phase order, or the tool exits with code 1). Rooms follow the export phase unless `--ifc-room-phase` names another one. The compact and full JSON are not filtered. In the library the same choices are `IfcExporter.ExportPhaseId` and `IfcExporter.ExportAllPhases`.
 
+Name the sides of door and window openings after the door or window:
+
+```sh
+rvtio project.rvt project.ifc --ifc-opening-host-axes
+```
+
+By default the Width and Height quantities of the opening of a door or window name the sides of its cut loop by the frame they are measured in, so a door 0.8 wide and 2.1 high gets Height 0.8 and Width 2.1. With the option, an opening in a straight wall gets the Width (along the wall) and Height of the door or window (its instance value, else its type value; a side the door or window holds no value for is measured from the opening, vertical for Height and along the wall for Width); the depth and every other output stay the same. In the library this is `IfcExporter.OpeningQuantitiesInHostAxes`.
+
 Use `--ifc-revit-parameter-groups` for one property set per parameter group. Use `--resolve-current-copies` for a file saved in several increments: it keeps only the current copy of an element that more than one partition stream holds; without it every copy is decoded as before. Run `rvtio --help` for all options. Unknown options exit with code 1; options starting with `--dev-` are not a stable interface.
 
 ### Exit codes and the export report

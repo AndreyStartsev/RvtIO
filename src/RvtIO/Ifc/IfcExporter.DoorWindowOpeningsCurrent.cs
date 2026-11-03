@@ -142,6 +142,9 @@ public partial class IfcExporter
             openingAttributes[6] = StepWriter.Ref(newShape);
             w.ReplaceArgs(openingIndex, string.Join(",", openingAttributes));
 
+            // (only the opening of a door or window is measured along the host axes, as in the quantity pass)
+            bool hostAxes = OpeningQuantitiesInHostAxes && indexById.TryGetValue(fillingId, out int fillerIndex)
+                && w.EntityAt(fillerIndex).Type is "IFCDOOR" or "IFCWINDOW";
             if (psetByProduct.TryGetValue(openingId, out int psetId)
                 && indexById.TryGetValue(psetId, out int psetIndex)
                 && w.EntityAt(psetIndex).Type == "IFCELEMENTQUANTITY")
@@ -160,10 +163,13 @@ public partial class IfcExporter
                             if (qArgs.Length >= 4)
                             {
                                 string qName = qArgs[0].Trim('\'');
-                                if (qName == "Height")
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Height)}");
-                                else if (qName == "Width")
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Width)}");
+                                // (along the host axes Height is the vertical and Width the side along the wall of the new outline, and a
+                                // dimension that the quantity pass took from the door or window stays, see OpeningQuantitiesInHostAxes)
+                                bool own = hostAxes && _openingQuantitiesFromFiller.Contains((openingId, qName));
+                                if (qName == "Height" && !own && (hostAxes ? built.HostHeight : built.Height) is { } newHeight)
+                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newHeight)}");
+                                else if (qName == "Width" && !own && (hostAxes ? built.HostWidth : built.Width) is { } newWidth)
+                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newWidth)}");
                                 else if (qName == "Depth")
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Depth)}");
                             }
@@ -182,7 +188,8 @@ public partial class IfcExporter
 
     /// <summary>The opening placement, authored profile in its plane, extrusion axis and depth.</summary>
     private readonly record struct DoorWindowOpeningCurrent(double[] RelativeOrigin, List<double[]> ProfileLoop,
-        bool IsRectangle, double[] Axis, double Depth, double Height, double Width);
+        bool IsRectangle, double[] Axis, double Depth, double Height, double Width,
+        double? HostHeight, double? HostWidth);
 
     private static bool TryDoorWindowOpeningCurrent(StepWriter w, Dictionary<int, int> indexById,
         IReadOnlyDictionary<int, Element> elementsById, Element hosted, Element wall, string[] wallAttributes, out DoorWindowOpeningCurrent opening,
@@ -278,7 +285,13 @@ public partial class IfcExporter
         var wallLocalLoop = cut.Vertices.Select(v => wallPlacement.ToLocal(ToModel(v))).ToList();
         var (loopHeight, loopWidth) = CutLoopHeightWidthCurrent(wallLocalLoop);
 
-        opening = new DoorWindowOpeningCurrent(relative, projected, rectangle, axis, width, loopHeight, loopWidth);
+        // the loop in the frame of the wall: Width along the wall, Height vertical (null for a loop without that extent)
+        double? Extent(int axis)
+        {
+            double extent = wallLocalLoop.Max(p => p[axis]) - wallLocalLoop.Min(p => p[axis]);
+            return extent > 1e-9 ? extent : null;
+        }
+        opening = new DoorWindowOpeningCurrent(relative, projected, rectangle, axis, width, loopHeight, loopWidth, Extent(2), Extent(0));
         return true;
 
         static double LoopAreaOf(IReadOnlyList<double[]> vertices)
