@@ -1733,18 +1733,18 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Theory]
-    [InlineData("'Monolithic Run:190mm Depth'", "3,3", true)]
-    [InlineData("'Non-Monolithic Run:50mm Tread 13mm Riser'", "3,3", false)]
-    // The object type still the category: a run that counts treads is monolithic, an assembled one counts none.
-    [InlineData("'OST_StairsRuns:190mm Depth'", "3,3", true)]
-    [InlineData("'OST_StairsRuns:50mm Tread 13mm Riser'", "$,$", false)]
-    public void Pass_StairFlight_LengthIsTreadsTimesTreadLengthOfAMonolithicRunOnly(string objectType, string counts, bool hasLength)
+    [InlineData(true, "3,3", true)]
+    [InlineData(false, "3,3", false)]
+    [InlineData(true, "$,$", false)]
+    public void Pass_StairFlight_LengthIsTreadsTimesTreadLengthOfARunThatTakesTheSurrogate(bool takesTheSurrogate, string counts, bool hasLength)
     {
         var (w, owner, placement) = NewWriter();
-        int flight = w.Add("IFCSTAIRFLIGHT", $"'KZGD7y6S5209$mGLi_sPlj',#{owner},'Run',$,{objectType},#{placement},$,'1',{counts},0.1805,0.3");
+        int flight = w.Add("IFCSTAIRFLIGHT", $"'KZGD7y6S5209$mGLi_sPlj',#{owner},'Run',$,'Monolithic Run:190mm Depth',#{placement},$,'1',{counts},0.1805,0.3");
         var element = new Element { Id = 19, CategoryId = -2000120, Geometry = Box(1, 1, 2) };
+        var exporter = new IfcExporter();
+        if (takesTheSurrogate) exporter.LengthRuleRunsCurrent.Add(19);
 
-        Apply(w, owner, new() { [19] = element }, new() { [flight] = 19 });
+        Apply(w, owner, new() { [19] = element }, new() { [flight] = 19 }, exporter: exporter);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 2 * CubicFeet));
         if (hasLength) AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Length", 0.9));

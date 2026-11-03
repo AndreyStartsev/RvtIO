@@ -425,6 +425,16 @@ internal class ParsingState
     public Dictionary<uint, int>? ElemRecOwningElementIds { get; set; }
     public Dictionary<uint, StairComponentSource.MembershipRoot> StairMembershipRoots { get; } = new();
     public Dictionary<uint, StairComponentSource.ElementClassRoot> OwnedElementClassRoots { get; } = new();
+
+    /// <summary>The same root count as <see cref="OwnedElementClassRoots"/>, taken from the stream walk alone. A file with its own
+    /// class schema is seeded in <see cref="OwnedElementClassRoots"/> by the schema index and the walk then counts the same block a
+    /// second time, so every id there reads as a duplicate; the stair source reads this table instead.</summary>
+    public Dictionary<uint, StairComponentSource.ElementClassRoot> WalkedElementClassRoots { get; } = new();
+
+    /// <summary>The root count of the stair source: the stream walk's own count when the walk saw the element, else the seeded one.</summary>
+    internal StairComponentSource.ElementClassRoot? StairClassRoot(uint id) =>
+        WalkedElementClassRoots.TryGetValue(id, out var walked) ? walked
+        : OwnedElementClassRoots.TryGetValue(id, out var seeded) ? seeded : null;
     internal bool IsParameterElement(uint id) => OwnedElementClassRoots.TryGetValue(id, out var root)
         && root.BlockCount == 1 && root.ClassId is ushort cls && TfBlockDeserializer.IsSubclassOf(cls, 2870);
     public Dictionary<uint, (int BlockCount, int? StairId)> RailingStairHostRoots { get; } = new();

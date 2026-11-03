@@ -47,6 +47,16 @@ public class StairShapeTests
         }
     }
 
+    [Fact]
+    public void ASketchedRunIsNotAFlightInTheCurrentProfile()
+    {
+        var sketched = Run(200, new Direction(1, 0, 0)) with { Style = TfBlockDeserializer.StairRunStyle.Sketched };
+        Assert.Equal("STRAIGHT_RUN_STAIR", StairShape.Classify([sketched], 0));
+        Assert.Null(StairShape.Classify([sketched], 0, sketchedIsFlight: false));
+        Assert.Null(StairShape.Classify([Run(201, new Direction(1, 0, 0)), sketched], 1, sketchedIsFlight: false));
+        Assert.Equal("STRAIGHT_RUN_STAIR", StairShape.Classify([Run(201, new Direction(1, 0, 0))], 0, sketchedIsFlight: false));
+    }
+
     [Theory]
     [InlineData("empty")] [InlineData("style")] [InlineData("nan")]
     [InlineData("inf")] [InlineData("zero")] [InlineData("vertical")] [InlineData("negative_landings")]
@@ -81,6 +91,15 @@ public class StairShapeTests
             elements.Add(id, new() { Id = id, SerializedOwnElementClassId = cls, SerializedOwningElementId = 100, SerializedStairRunInput = input });
             counts.Add(id, 1);
         }
+    }
+
+    [Fact]
+    public void TheCurrentProfileLeavesAStairWithASketchedRunUndefined()
+    {
+        var (parent, elements, counts) = Fixture();
+        elements[200].SerializedStairRunInput = elements[200].SerializedStairRunInput! with { Style = TfBlockDeserializer.StairRunStyle.Sketched };
+        Assert.Equal("STRAIGHT_RUN_STAIR", IfcExporter.ResolveNativeStairShape(parent, null, elements, counts));
+        Assert.Equal("NOTDEFINED", IfcExporter.ResolveNativeStairShape(parent, null, elements, counts, currentProfile: true));
     }
 
     [Theory]

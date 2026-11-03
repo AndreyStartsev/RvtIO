@@ -1258,6 +1258,22 @@ public partial class IfcExporter
         return result;
     }
 
+    /// <summary>Runs whose flight takes the Length surrogate (<see cref="IsRunLengthRuleCurrent"/>), by element id.</summary>
+    internal readonly HashSet<int> LengthRuleRunsCurrent = new();
+
+    /// <summary>The inputs of the Length surrogate of a run are the ones it was calibrated on: the family of the run before its type was
+    /// resolved through TypeId (a "Monolithic Run", or the category where no family was known; an assembled run counted none), and the run
+    /// input of a file whose class root was counted once. A run that only gained its type or its run input through the class count fix keeps
+    /// the Length it had.</summary>
+    internal static bool IsRunLengthRuleCurrent(Element run, string ifcType,
+        IReadOnlyDictionary<int, Element> elementsById, IReadOnlyDictionary<int, int> occurrenceCounts)
+    {
+        if (ifcType != "IFCSTAIRFLIGHT" || !run.OwnClassRootSeededOnce) return false;
+        string objectType = ResolveProductFamilyAndTypeName(run, ifcType, elementsById, occurrenceCounts, currentProfile: true, resolveComponentType: false);
+        return objectType.StartsWith("Monolithic Run", StringComparison.Ordinal)
+            || objectType.StartsWith("OST_StairsRuns:", StringComparison.Ordinal);
+    }
+
     /// <summary>The StairFlight description: NetVolume is the volume of the run solids; Length is the 2D length of the run
     /// (the base lines of its cells), which is the number of treads times the tread length for
     /// a monolithic run and empty for an assembled one.</summary>
@@ -1265,10 +1281,8 @@ public partial class IfcExporter
     {
         var result = new List<QuantityValue>();
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", SolidTotalsCurrent(ShellsOfCurrent(element.Geometry))?.Volume);
-        // The run kind: "Monolithic Run:" in the object type; where the type is still the category ("OST_StairsRuns:") the
-        // flight is monolithic exactly when it counts treads (an assembled run has none).
-        if (flight.Length == 12 && (flight[4].StartsWith("'Monolithic Run", StringComparison.Ordinal)
-                || flight[4].StartsWith("'OST_StairsRuns:", StringComparison.Ordinal))
+        // The surrogate is decided by the inputs it was calibrated on (IsRunLengthRuleCurrent), not by the type resolved through TypeId.
+        if (flight.Length == 12 && LengthRuleRunsCurrent.Contains(element.Id)
             && int.TryParse(flight[9], NumberStyles.None, CultureInfo.InvariantCulture, out int treads)
             && TryParseStepReal(flight[11], out double treadLength))
             AddIfPositive(result, QuantityKind.Length, "Length", treads * treadLength);
