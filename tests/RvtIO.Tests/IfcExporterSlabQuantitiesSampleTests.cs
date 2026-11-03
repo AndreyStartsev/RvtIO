@@ -24,26 +24,30 @@ public class IfcExporterSlabQuantitiesSampleTests
         finally { File.Delete(output); }
     }
 
-    /// <summary>The BaseQuantities of the IfcSlab with this Tag, by quantity name.</summary>
-    private static Dictionary<string, double> SlabQuantities(string ifc, string tag)
+    /// <summary>The BaseQuantities, by quantity name, of every IfcSlab whose ObjectType starts with <paramref name="objectTypePrefix"/>.</summary>
+    private static List<Dictionary<string, double>> SlabQuantities(string ifc, string objectTypePrefix)
     {
-        var slab = Regex.Match(ifc, @"^#(\d+)=IFCSLAB\('[^']*',#\d+,'(?:[^']|'')*',[^;]*,'" + tag + @"',", RegexOptions.Multiline);
-        Assert.True(slab.Success, $"no IfcSlab with the tag {tag}");
-        Match quantitySet = Match.Empty;
-        foreach (Match relation in Regex.Matches(ifc, @"^#\d+=IFCRELDEFINESBYPROPERTIES\('[^']*',#\d+,[^;]*,\(#" + slab.Groups[1].Value + @"\),#(\d+)\);", RegexOptions.Multiline))
+        var slabs = new List<Dictionary<string, double>>();
+        foreach (Match slab in Regex.Matches(ifc, @"^#(\d+)=IFCSLAB\('[^']*',#\d+,'(?:[^']|'')*','(?:[^']|'')*','((?:[^']|'')*)',", RegexOptions.Multiline))
         {
-            quantitySet = Regex.Match(ifc, @"^#" + relation.Groups[1].Value + @"=IFCELEMENTQUANTITY\('[^']*',#\d+,'BaseQuantities',[^;]*,\(([^)]*)\)\);", RegexOptions.Multiline);
-            if (quantitySet.Success) break;
+            if (!slab.Groups[2].Value.Replace("''", "'").StartsWith(objectTypePrefix, StringComparison.Ordinal)) continue;
+            Match quantitySet = Match.Empty;
+            foreach (Match relation in Regex.Matches(ifc, @"^#\d+=IFCRELDEFINESBYPROPERTIES\('[^']*',#\d+,[^;]*,\(#" + slab.Groups[1].Value + @"\),#(\d+)\);", RegexOptions.Multiline))
+            {
+                quantitySet = Regex.Match(ifc, @"^#" + relation.Groups[1].Value + @"=IFCELEMENTQUANTITY\('[^']*',#\d+,'BaseQuantities',[^;]*,\(([^)]*)\)\);", RegexOptions.Multiline);
+                if (quantitySet.Success) break;
+            }
+            var result = new Dictionary<string, double>();
+            if (quantitySet.Success)
+                foreach (Match item in Regex.Matches(quantitySet.Groups[1].Value, @"#(\d+)"))
+                {
+                    var quantity = Regex.Match(ifc, @"^#" + item.Groups[1].Value + @"=IFCQUANTITY\w+\('(\w+)','[^']*',\$,([-0-9.E+]+)\);", RegexOptions.Multiline);
+                    Assert.True(quantity.Success);
+                    result[quantity.Groups[1].Value] = double.Parse(quantity.Groups[2].Value, CultureInfo.InvariantCulture);
+                }
+            slabs.Add(result);
         }
-        Assert.True(quantitySet.Success, $"the slab {tag} has no BaseQuantities");
-        var result = new Dictionary<string, double>();
-        foreach (Match item in Regex.Matches(quantitySet.Groups[1].Value, @"#(\d+)"))
-        {
-            var quantity = Regex.Match(ifc, @"^#" + item.Groups[1].Value + @"=IFCQUANTITY\w+\('(\w+)','[^']*',\$,([-0-9.E+]+)\);", RegexOptions.Multiline);
-            Assert.True(quantity.Success);
-            result[quantity.Groups[1].Value] = double.Parse(quantity.Groups[2].Value, CultureInfo.InvariantCulture);
-        }
-        return result;
+        return slabs;
     }
 
     [SkippableFact]
@@ -52,7 +56,9 @@ public class IfcExporterSlabQuantitiesSampleTests
         string ifc = ExportIfc("rstbasicsampleproject.rvt");
 
         // the reference output and 0.1.0 give 400 (mm); the vertical side is 900
-        Assert.Equal(400, SlabQuantities(ifc, "1381287")["Width"], 6);
+        var caps = SlabQuantities(ifc, "Pile Cap-Rectangular:400 x 400 x 900mm");
+        Assert.NotEmpty(caps);
+        Assert.All(caps, cap => Assert.Equal(400, cap["Width"], 6));
     }
 
     [SkippableFact]
@@ -60,10 +66,14 @@ public class IfcExporterSlabQuantitiesSampleTests
     {
         string ifc = ExportIfc("struct25.rvt");
 
-        // a pile cap 36 x 36 x 24 inch: 3 feet in the reference output (2 feet is the vertical side)
-        Assert.Equal(3, SlabQuantities(ifc, "682504")["Width"], 6);
-        // a round pile 24 inch in diameter whose solids are open shells: the reference output has 76.02 cubic feet
-        // (0.1.0 summed the open shells to 48.1, the first version of the foundation volume wrote none)
-        Assert.Equal(76.0207, SlabQuantities(ifc, "683092")["NetVolume"], 0.5);
+        // pile caps 36 x 36 x 24 inch: 3 feet in the reference output (2 feet is the vertical side)
+        var caps = SlabQuantities(ifc, "SFD_Pile_Cap_Rectangle:");
+        Assert.NotEmpty(caps);
+        Assert.All(caps, cap => Assert.Equal(3, cap["Width"], 6));
+        // round piles 24 inch in diameter whose solids are open shells: 73.8 or 76.0 cubic feet in the reference output
+        // (0.1.0 summed the open shells to several times that, the first version of the foundation volume wrote none)
+        var piles = SlabQuantities(ifc, "SFD_Round:24x24x25'");
+        Assert.NotEmpty(piles);
+        Assert.All(piles, pile => Assert.InRange(pile["NetVolume"], 73.8, 76.2));
     }
 }
