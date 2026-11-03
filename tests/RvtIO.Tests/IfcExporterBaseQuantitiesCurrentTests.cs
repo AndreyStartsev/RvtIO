@@ -2149,4 +2149,144 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.Equal(6, area, 12);
         Assert.Equal(expectedVolume, volume, 12);
     }
+
+    /// <summary>An extruded rectangle (x by y, depth) whose profile X axis is <paramref name="profileX"/> and whose solid has the
+    /// frame <paramref name="axis"/> (extrusion direction) and <paramref name="refDirection"/>.</summary>
+    private static int AddFramedExtrusionBody(StepWriter w, double x, double y, double depth, string axis, string refDirection, string profileX = "(1.,0.)")
+    {
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.)");
+        int profileDirection = w.Add("IFCDIRECTION", profileX);
+        int profilePlacement = w.Add("IFCAXIS2PLACEMENT2D", $"#{origin},#{profileDirection}");
+        int profile = w.Add("IFCRECTANGLEPROFILEDEF", $".AREA.,$,#{profilePlacement},{StepWriter.Real(x)},{StepWriter.Real(y)}");
+        int point3 = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{point3},#{w.Add("IFCDIRECTION", axis)},#{w.Add("IFCDIRECTION", refDirection)}");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int context = w.Add("IFCGEOMETRICREPRESENTATIONCONTEXT", $"$,'Model',3,1.E-05,#{position},$");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#{context},'Body','SweptSolid',(#{solid})");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
+    private static double SlabWidth(StepWriter w) => Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Width").Value;
+
+    [Fact]
+    public void Pass_FoundationLyingOnItsSide_WidthIsTheFirstSideOfItsProfileNotTheVerticalOne()
+    {
+        var (w, owner, placement) = NewWriter();
+        // A pile cap 0.4 x 0.9 x 0.4: profile 0.4 by 0.9 extruded along the world X, the profile X axis along the world Y, so the
+        // profile Y axis (0.9) is the vertical one. The world X extent rule of a floor would give 0.9.
+        int shape = AddFramedExtrusionBody(w, 0.4, 0.9, 0.4, axis: "(1.,0.,0.)", refDirection: "(0.,1.,0.)");
+        int slab = AddProduct(w, "IFCSLAB", "AZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var cap = new Element { Id = 61, CategoryId = -2001300, Geometry = Box(0.4, 0.9, 0.4) };
+
+        Apply(w, owner, new() { [61] = cap }, new() { [slab] = 61 });
+
+        Assert.Equal(0.4, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_BaseSlabOfTheFloorCategory_RectangleTurnedAboutZ_WidthIsTheFirstSideOfItsProfile()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddFramedExtrusionBody(w, 6, 3, 0.5, axis: "(0.,0.,1.)", refDirection: "(1.,0.,0.)", profileX: "(0.,1.)");
+        int slab = w.Add("IFCSLAB", $"'HZGD7y6S5209$mGLi_sPlj',#{owner},'P',$,$,#{placement},#{shape},'1',.BASESLAB.");
+
+        Apply(w, owner, new() { [68] = new Element { Id = 68, CategoryId = -2000032 } }, new() { [slab] = 68 });
+
+        // a floor would give the world X extent, 3; the reference gives the first side of the profile of a base slab
+        Assert.Equal(6, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_Floor_RectangleTurnedAboutZ_WidthIsTheWorldXExtentOfItsProfile()
+    {
+        var (w, owner, placement) = NewWriter();
+        // profile 6 by 3 whose X axis points along the world Y: the world X extent is the profile Y extent, 3
+        int shape = AddFramedExtrusionBody(w, 6, 3, 0.5, axis: "(0.,0.,1.)", refDirection: "(1.,0.,0.)", profileX: "(0.,1.)");
+        int slab = AddProduct(w, "IFCSLAB", "BZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+
+        Apply(w, owner, new() { [62] = new Element { Id = 62, CategoryId = -2000032 } }, new() { [slab] = 62 });
+
+        Assert.Equal(3, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_Floor_WithAVerticalPrism_WidthIsTheExtentOfTheFirstLoopOfItsLowerEndFaceNotTheOutlineOfTheBody()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 6, 3, 0.5);
+        int slab = AddProduct(w, "IFCSLAB", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var geometry = PrismOver(Rectangle(6, 3), 0.5);
+        double[][] Hole(double z) => [[2, 0.5, z], [3, 0.5, z], [3, 2.5, z], [2, 2.5, z]];
+        foreach (var (face, z) in new[] { (geometry.Faces[0], 0.0), (geometry.Faces[1], 0.5) })
+            face.InnerVertices = [Hole(z).ToList()];
+        geometry.Faces[0].FirstSourceLoop = Hole(0);
+        geometry.Faces[1].FirstSourceLoop = Rectangle(6, 3).Select(p => new[] { p.X, p.Y, 0.5 }).ToList();
+
+        Apply(w, owner, new() { [63] = new Element { Id = 63, CategoryId = -2000032, Geometry = geometry } }, new() { [slab] = 63 });
+
+        // the hole is 1 wide; the outline of the body is 6 wide
+        Assert.Equal(1 * 0.3048, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_Roof_WidthIsTheLargerSideOfTheBody()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 6, 9, 0.5);
+        int slab = w.Add("IFCSLAB", $"'DZGD7y6S5209$mGLi_sPlj',#{owner},'P',$,$,#{placement},#{shape},'1',.ROOF.");
+
+        Apply(w, owner, new() { [64] = new Element { Id = 64, CategoryId = -2000035, Geometry = PrismOver(Rectangle(6, 9), 0.5) } }, new() { [slab] = 64 });
+
+        Assert.Equal(9, SlabWidth(w), 9);
+    }
+
+    /// <summary>A round pile: open shells without measures, the end caps plane faces of one node with an exact area each.</summary>
+    private static GeometryData PileOfOpenShells(double length, double topCapArea, double topNormalZ)
+    {
+        var bottom = Face([0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]);
+        bottom.PlaneSurface = true; bottom.GeometryNode = 6; bottom.QuadratureArea = 3.14;
+        var top = Face([0, 0, length], [1, 0, length], [1, 1, length], [0, 1, length]);
+        top.PlaneSurface = true; top.GeometryNode = 6; top.QuadratureArea = topCapArea;
+        top.Normal = [0, 0, topNormalZ];
+        return new GeometryData { Faces = [bottom, top], BrepSolids = [new GeoBrepSolid { IsClosed = false, FaceIndices = [0, 1] }] };
+    }
+
+    [Fact]
+    public void Pass_FoundationPileOfOpenShells_NetVolumeIsTheCapAreaTimesTheDistanceOfTheOppositeCaps()
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "EZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var pile = new Element { Id = 65, CategoryId = -2001300, Geometry = PileOfOpenShells(24.25, 3.14, 1) };
+
+        Apply(w, owner, new() { [65] = pile }, new() { [slab] = 65 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 3.14 * 24.25 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationPileOfOpenShells_TessellatedSmallerTwinCapTakesTheLargerCapArea()
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "GZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var pile = new Element { Id = 67, CategoryId = -2001300, Geometry = PileOfOpenShells(23.5, 3.12, 1) };
+
+        Apply(w, owner, new() { [67] = pile }, new() { [slab] = 67 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 3.14 * 23.5 * CubicFeet));
+    }
+
+    [Theory]
+    [InlineData(3.5, 1)]     // the caps have not the same area
+    [InlineData(3.14, -1)]   // the caps face the same way
+    public void Pass_FoundationPileOfOpenShells_CapsThatAreNoPairGiveNoVolume(double topCapArea, double topNormalZ)
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "FZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var pile = new Element { Id = 66, CategoryId = -2001300, Geometry = PileOfOpenShells(24.25, topCapArea, topNormalZ) };
+
+        Apply(w, owner, new() { [66] = pile }, new() { [slab] = 66 });
+
+        Assert.Empty(Quantities(w, "IFCQUANTITYVOLUME"));
+    }
 }

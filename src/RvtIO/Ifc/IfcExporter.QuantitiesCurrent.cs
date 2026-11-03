@@ -905,6 +905,26 @@ public partial class IfcExporter
         return feet3 > 0 ? feet3 * CubicFeetToCubicMetres : null;
     }
 
+    /// <summary>Volume (m3) of a straight prism whose two end caps are plane faces of one node with an exact area each (within 2 percent
+    /// of each other: one cap can be the tessellated, smaller, twin of the other) and opposite normals: the larger cap area times the
+    /// distance of the cap planes. For a foundation whose solids are open shells without measures (a round pile), where a sum over the
+    /// shells has no meaning. Null without such a pair.</summary>
+    private static double? OppositeCapsVolumeCurrent(GeometryData geometry, GeoFace cap)
+    {
+        if (cap.QuadratureArea is not { } area || cap.Normal is not { Length: 3 } normal || cap.Origin is not { Length: 3 } origin) return null;
+        foreach (var other in geometry.Faces)
+        {
+            if (ReferenceEquals(other, cap) || other.GeometryNode != cap.GeometryNode || other.QuadratureArea is not { } otherArea
+                || other.Normal is not { Length: 3 } otherNormal || other.Origin is not { Length: 3 } otherOrigin
+                || Math.Abs(otherArea - area) > 0.02 * Math.Max(area, otherArea)
+                || normal[0] * otherNormal[0] + normal[1] * otherNormal[1] + normal[2] * otherNormal[2] > -1 + 1e-9) continue;
+            double distance = Math.Abs((otherOrigin[0] - origin[0]) * normal[0] + (otherOrigin[1] - origin[1]) * normal[1]
+                + (otherOrigin[2] - origin[2]) * normal[2]);
+            return distance > 1e-9 ? Math.Max(area, otherArea) * distance * CubicFeetToCubicMetres : null;
+        }
+        return null;
+    }
+
     private static ShellPrism? SoleClosedPrismCurrent(IReadOnlyList<ShellInfo> shells, bool verticalOnly = false) =>
         shells.Count == 1 && shells[0].Closed ? FindPrismCurrent(shells[0], verticalOnly) : null;
 
@@ -1159,13 +1179,13 @@ public partial class IfcExporter
         // A foundation without a vertical extrusion (a pile) takes the area of its cap face, and its volume from all the geometry:
         // the measured nodes and the closed shells of the solids that have no measure; an open shell without a measure has none.
         double? netVolume = totals?.Volume;
-        if (element.CategoryId == -2001300 && prism == null)
+        if (element.CategoryId == CurrentFoundationCategoryId && prism == null)
         {
             var cap = element.Geometry?.Faces?.FirstOrDefault(f => f.QuadratureArea != null);
             if (cap?.QuadratureArea is { } capArea && capArea > 1e-9)
             {
                 topArea = capArea * SquareFeetToSquareMetres;
-                netVolume = FoundationNodesVolumeCurrent(element.Geometry!, shells);
+                netVolume = FoundationNodesVolumeCurrent(element.Geometry!, shells) ?? OppositeCapsVolumeCurrent(element.Geometry!, cap);
             }
         }
         AddIfPositive(result, QuantityKind.Area, "GrossArea", profileArea ?? topArea);
@@ -1178,9 +1198,14 @@ public partial class IfcExporter
         AddIfPositive(result, QuantityKind.Length, "Perimeter",
             (ExactParameterFeetCurrent(element, null, HostPerimeterComputedParameterId) ?? (prism ?? topFace)?.OuterPerimeter) is { } outerPerimeter
                 ? (outerPerimeter + ((prism ?? topFace)?.InnerPerimeter ?? 0)) * FeetToMetres : null);
+        // A roof takes the larger side of its body. A foundation (a structural foundation, or a slab of the base slab type) takes the first side of its profile: the body of a pile
+        // cap is not extruded upwards, and the reference does not turn a base slab by the angle of its profile, so the world X extent says nothing about it. Any other slab takes the world X
+        // extent of its vertical prism (the first loop of the lower end face), and the body only when it has no such prism.
         double? slabWidth = body is { } b
             ? (arguments.Length > 8 && arguments[8] == ".ROOF." || element.CategoryId == -2000035
                 ? Math.Max(b.ExtentX, b.ExtentY)
+                : element.CategoryId == CurrentFoundationCategoryId || arguments.Length > 8 && arguments[8] == ".BASESLAB." ? b.ExtentX
+                : prism is { } vertical ? vertical.ExtentX * FeetToMetres
                 : (b.Rectangle && Math.Abs(b.AxisX?[0] ?? 1) < 0.1 ? b.ExtentY : b.ExtentX))
             : prism?.ExtentX * FeetToMetres;
         AddIfPositive(result, QuantityKind.Length, "Width", slabWidth);
