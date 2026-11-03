@@ -2,6 +2,7 @@ using RvtIO.Ifc;
 using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -45,6 +46,55 @@ public class StairComponentTypeAssociationTests
     {
         var (run, _, byId, counts) = RunWithType();
         Assert.Equal("OST_StairsRuns:Element 513309", IfcExporter.ResolveProductFamilyAndTypeName(run, "IFCSTAIRFLIGHT", byId, counts));
+    }
+
+    private static Parameter StringParameter(string name, string value, int id) => new()
+    {
+        Id = id,
+        Definition = new Definition { Id = id, Name = name },
+        StorageType = StorageType.String,
+        Value = value,
+    };
+
+    // The Reference of a run reads the explicit parameter of the type its TypeId names, ahead of the type name.
+    [Theory]
+    [InlineData("AUTHORED-REFERENCE", "AUTHORED-REFERENCE")]
+    [InlineData("{Expr}", null)]   // an unsupported expression blocks the substitution instead of being replaced by the name
+    [InlineData(null, "190mm Depth")]
+    public void TheReferenceOfARunReadsTheExplicitParameterOfItsResolvedType(string? explicitValue, string? expected)
+    {
+        var (run, type, byId, counts) = RunWithType();
+        if (explicitValue != null) type.Parameters.Add(StringParameter("Reference[Type]", explicitValue, 20));
+        Element? componentType = IfcExporter.ResolveStairComponentType(run, "IFCSTAIRFLIGHT", byId, counts);
+        Assert.Same(type, componentType);
+        Assert.Equal(expected, IfcExporter.ResolveIfcReferenceValue(run, byId, type.ValidatedStairComponentTypeName, componentType));
+    }
+
+    // The exported flight carries the same Reference in its property sets; an unsupported expression leaves it out.
+    [Theory]
+    [InlineData("AUTHORED-REFERENCE", "AUTHORED-REFERENCE")]
+    [InlineData("{Expr}", null)]
+    [InlineData(null, "190mm Depth")]
+    public void TheExportedFlightReferenceFollowsTheExplicitTypeParameter(string? explicitValue, string? expected)
+    {
+        var (_, type, _, _) = RunWithType();
+        if (explicitValue != null) type.Parameters.Add(StringParameter("Reference[Type]", explicitValue, 20));
+        Element run = IfcExporterStairOccurrenceCommonPropertySetTests.Product(513309, type.Id, RunsCategory, "OST_StairsRuns", null);
+        var info = new RevitFileInfo();
+        info.Elements.AddRange([run, type]);
+        string path = Path.Combine(Path.GetTempPath(), $"revitreader-stair-ref-{Guid.NewGuid():N}.ifc");
+        string ifc;
+        try
+        {
+            new IfcExporter { Profile = IfcProfile.Current }.Export(info, path);
+            ifc = File.ReadAllText(path);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+
+        Assert.Contains("IFCSTAIRFLIGHT(", ifc);
+        var references = Regex.Matches(ifc, @"IFCPROPERTYSINGLEVALUE\('Reference',(?:\$|''),IFCIDENTIFIER\('((?:''|[^'])*)'\)")
+            .Select(m => m.Groups[1].Value).Distinct().ToList();
+        Assert.Equal(expected == null ? [] : [expected], references);
     }
 
     // The Length surrogate of a run is decided by the family the run had before its type was resolved through TypeId, and by the class root

@@ -4446,10 +4446,12 @@ public partial class IfcExporter
             if (ifcType == "IFCSTAIR")
                 elemName = ResolveNativeStairName(elem, elemById, elementIdOccurrenceCounts, CurrentProfile) ?? elemName;
             // A stair run or landing takes its type's name too (its own Name is empty in the files that do not carry the legacy name).
+            Element? stairComponentType = CurrentProfile
+                ? ResolveStairComponentType(elem, ifcType, elemById, elementIdOccurrenceCounts) : null;
             string? referenceValue = ResolveIfcReferenceValue(
                 elem, elemById, (CurrentProfile ? ResolveMepCurveTypeName(elem, elemById) : null)
-                    ?? (CurrentProfile ? ResolveStairComponentType(elem, ifcType, elemById, elementIdOccurrenceCounts)?.ValidatedStairComponentTypeName : null)
-                    ?? elem.Name);
+                    ?? stairComponentType?.ValidatedStairComponentTypeName
+                    ?? elem.Name, stairComponentType);
             if (ifcType == "IFCCURTAINWALL")
                 referenceValue = ResolveCurtainWallReference(
                     elem, elemById.GetValueOrDefault(elem.FamilyTypeId), referenceValue);
@@ -4460,7 +4462,7 @@ public partial class IfcExporter
                     ? resolvedReferenceType
                     : null;
             bool referenceValueIsExplicit = ExactIfcStringParameterResolver
-                .ResolveReference(elem, referenceElementType).State
+                .ResolveReference(elem, stairComponentType ?? referenceElementType).State
                 == ExactIfcStringParameterState.Value;
             bool roofWithSlab = CurrentProfile && ifcType == "IFCROOF" && shapeId > 0 && RoofIsExportedWithSlabCurrent(elem);
             string shapeArg = shapeId > 0 && !roofWithSlab ? R(shapeId) : "$";
@@ -6976,12 +6978,14 @@ public partial class IfcExporter
     /// </summary>
     internal static string? ResolveIfcReferenceValue(
         Element element, IReadOnlyDictionary<int, Element> elementsById,
-        string? fallbackReferenceValue)
+        string? fallbackReferenceValue, Element? resolvedComponentType = null)
     {
-        Element? elementType = element.FamilyTypeId > 0
+        // A stair run or landing names its type through TypeId, so the caller passes the resolved one.
+        Element? elementType = resolvedComponentType
+            ?? (element.FamilyTypeId > 0
             && elementsById.TryGetValue(element.FamilyTypeId, out Element? resolvedType)
                 ? resolvedType
-                : null;
+                : null);
         ExactIfcStringParameterResult explicitReference =
             ExactIfcStringParameterResolver.ResolveReference(element, elementType);
         return explicitReference.State switch
