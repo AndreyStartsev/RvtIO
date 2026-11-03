@@ -48,7 +48,7 @@ public class StairComponentTypeAssociationTests
     }
 
     // The Length surrogate of a run is decided by the family the run had before its type was resolved through TypeId, and by the class root
-    // count of the parent build: resolving the type must not move it.
+    // count it had before: resolving the type must not move it.
     [Theory]
     [InlineData("category_only", true, true)]
     [InlineData("resolved_assembled_type", true, true)]

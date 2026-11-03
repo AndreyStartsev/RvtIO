@@ -7,8 +7,7 @@ namespace RvtIO.Ifc;
 /// An unknown projected endpoint Z is not invented.</summary>
 internal static class StairShape
 {
-    /// <param name="sketchedIsFlight">False for the current profile: a stair with a sketched run is not classified there (every such stair
-    /// of the measured samples is NOTDEFINED while its flight type is FREEFORM).</param>
+    /// <param name="sketchedIsFlight">False for the current profile: a stair with a sketched run is left undefined there; its flight type is FREEFORM.</param>
     internal static string? Classify(IReadOnlyList<TfBlockDeserializer.StairRunInput> runs, int landings, bool sketchedIsFlight = true)
     {
         if (landings < 0) return null;

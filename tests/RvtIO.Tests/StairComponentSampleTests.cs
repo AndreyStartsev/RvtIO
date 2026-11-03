@@ -51,7 +51,7 @@ public class StairComponentSampleTests
             Assert.Equal(predefined, ifc.TypeOf(flight.EntityId).Predefined);
             var quantities = Assert.Single(ifc.QuantitySetsOf(flight.EntityId), set => set.Name == "BaseQuantities");
             // a monolithic run counts its treads along the walking line; an assembled run has no such length. The Length surrogate keeps the
-            // inputs of the parent build (IsRunLengthRuleCurrent): only the file that counts the class root once (Test_2022) has it.
+            // inputs it had before the type was resolved (IsRunLengthRuleCurrent): only the file that counts the class root once (Test_2022) has it.
             bool hasLength = id != 665560 && sample == "Test_2022.rvt";
             Assert.Equal(hasLength ? ["Length", "NetVolume"] : ["NetVolume"], quantities.Properties.Order().ToArray());
         }
