@@ -31,6 +31,10 @@ public partial class IfcExporter
     /// (CLI: --ifc-opening-host-axes).</summary>
     public bool OpeningQuantitiesInHostAxes { get; init; }
 
+    /// <summary>The Height and Width quantities of openings that the quantity pass took from the door or window (the door and window
+    /// opening pass leaves those and writes the others from the outline it builds).</summary>
+    internal readonly HashSet<(int OpeningId, string Name)> _openingQuantitiesFromFiller = new();
+
     internal enum QuantityKind { Length, Area, Volume }
 
     internal readonly record struct QuantityValue(QuantityKind Kind, string Name, double Value);
@@ -127,6 +131,10 @@ public partial class IfcExporter
         public HashSet<int> FilledOpenings { get; } = new();
         /// <summary>The entity that fills each opening.</summary>
         public Dictionary<int, int> FillerByOpening { get; } = new();
+        /// <summary>The openings measured in the frame of the wall (see <see cref="IfcExporter.OpeningQuantitiesInHostAxes"/>).</summary>
+        public HashSet<int> HostAxisOpenings { get; } = new();
+        /// <summary>The opening quantities ("Height", "Width") that were taken from the door or window.</summary>
+        public HashSet<(int OpeningId, string Name)> FillerQuantities { get; init; } = new();
         /// <summary>Placement ids of IFCSITE (excluded from building/project model quantities frame).</summary>
         public HashSet<int> SitePlacementIds { get; } = new();
         /// <summary>Storey entity of each storey placement, and the distance of each storey to the next one up (metres).</summary>
@@ -622,7 +630,8 @@ public partial class IfcExporter
     /// high as the door or window: Width the Width of the instance, else of the type, and Height its Height (the values the IfcDoor
     /// or IfcWindow carries), whatever the box the opening was written as (a window 1.5 by 2.7 comes out of a generic opening as
     /// 2.7 by 6.0). The Depth of <paramref name="measured"/> is kept, and so are its other values when the door or window holds no
-    /// dimension of its own.</summary>
+    /// dimension of its own. Each dimension is taken from the door or window independently of the other; one it does not hold is
+    /// measured from the opening.</summary>
     private List<QuantityValue> FillerOpeningQuantitiesCurrent(QuantityContextCurrent context, int openingId, List<QuantityValue> measured)
     {
         if (!context.OpeningsInHostAxes || !FilledByDoorOrWindowCurrent(context, openingId)
@@ -631,12 +640,18 @@ public partial class IfcExporter
             || StraightWallHostCurrent(context, openingId) is null)
             return measured;
         var dimensions = DoorWindowQuantitiesCurrent(context, filler);
-        double? height = dimensions.Where(q => q.Name == "Height").Select(q => (double?)q.Value).FirstOrDefault();
-        double? width = dimensions.Where(q => q.Name == "Width").Select(q => (double?)q.Value).FirstOrDefault();
-        if (!(height > 1e-9) || !(width > 1e-9)) return measured;
+        double? height = dimensions.Where(q => q.Name == "Height" && q.Value > 1e-9).Select(q => (double?)q.Value).FirstOrDefault();
+        double? width = dimensions.Where(q => q.Name == "Width" && q.Value > 1e-9).Select(q => (double?)q.Value).FirstOrDefault();
+        if (height is null && width is null) return measured;
+        // shortcut: a body that could not be measured in the frame of the wall names its sides by the frame of the loop, so a missing
+        // dimension has no value in the host axes there; it keeps the measure unless both are known.
+        if ((height is null || width is null) && !context.HostAxisOpenings.Contains(openingId)) return measured;
         var result = measured.Where(q => q.Name == "Depth").ToList();
-        result.Add(new(QuantityKind.Length, "Height", height.Value));
-        result.Add(new(QuantityKind.Length, "Width", width.Value));
+        foreach (var (name, own) in new[] { ("Height", height), ("Width", width) })
+        {
+            if (own is { } value) { result.Add(new(QuantityKind.Length, name, value)); context.FillerQuantities.Add((openingId, name)); }
+            else if (measured.Find(q => q.Name == name) is { Name: not null } kept) result.Add(kept);
+        }
         return result;
     }
 
@@ -654,7 +669,10 @@ public partial class IfcExporter
         {
             if (context.OpeningsInHostAxes && FilledByDoorOrWindowCurrent(context, openingId)
                 && HostAxisOpeningQuantitiesCurrent(placement, host.Wall, body) is { } alongTheWall)
+            {
+                context.HostAxisOpenings.Add(openingId);
                 return alongTheWall;
+            }
             if (WallPlaneOpeningLoopCurrent(placement, host.Wall, body) is { } wallPlane)
             {
                 (depth, loop) = wallPlane;
@@ -687,10 +705,11 @@ public partial class IfcExporter
         int entityCount = w.EntityCount;
         var indexById = new Dictionary<int, int>(entityCount);
         for (int i = 0; i < entityCount; i++) indexById[w.EntityAt(i).Id] = i;
+        _openingQuantitiesFromFiller.Clear();
         var context = new QuantityContextCurrent
         {
             W = w, IndexById = indexById, Elements = elementsById, ElementIdByEntity = productElementIdByEntity, Products = products,
-            StoreyHeights = storeyHeights, OpeningsInHostAxes = OpeningQuantitiesInHostAxes,
+            StoreyHeights = storeyHeights, OpeningsInHostAxes = OpeningQuantitiesInHostAxes, FillerQuantities = _openingQuantitiesFromFiller,
         };
 
         for (int index = 0; index < entityCount; index++)

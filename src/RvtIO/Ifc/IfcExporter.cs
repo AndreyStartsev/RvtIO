@@ -378,6 +378,7 @@ public partial class IfcExporter
         _storeyGlobalIds.Clear();
         _recessOpeningEntityIds.Clear();
         _ownCutPairOpeningQuantitiesCurrent.Clear();
+        _openingQuantitiesFromFiller.Clear();
         _bodyItemOrigins.Clear();
         _spaceBodyGeometry.Clear();
         _othersCurrentPlans.Clear();

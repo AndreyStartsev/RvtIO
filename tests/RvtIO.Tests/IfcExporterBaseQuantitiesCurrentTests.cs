@@ -579,6 +579,31 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void FillerDimensions_HostAxes_OnlyTheWidthKnown_HeightIsTheVerticalExtentOfTheBox()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(0.,1.,0.)");
+        elements[90] = new Element { Id = 90, Parameters = [Dimension(-1001301, 2), TypeReference(30)] };
+        elements[30] = new Element { Id = 30 };
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        // the box is 6 along the wall, 0.202 across it and 3 up
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 3), ("Width", 2 * 0.3048));
+    }
+
+    [Fact]
+    public void FillerDimensions_HostAxes_OnlyTheHeightKnown_WidthIsTheExtentOfTheBoxAlongTheWall()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(0.,1.,0.)");
+        elements[90] = new Element { Id = 90, Parameters = [TypeReference(30)] };
+        elements[30] = new Element { Id = 30, Parameters = [Dimension(-1001300, 7)] };
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7 * 0.3048), ("Width", 6));
+    }
+
+    [Fact]
     public void FillerDimensions_HostAxes_OpeningOfACurvedWall_KeepsTheMeasuredBox()
     {
         var (w, owner, wall, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");

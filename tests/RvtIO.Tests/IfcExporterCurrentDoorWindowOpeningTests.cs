@@ -200,7 +200,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         Assert.Equal(2.1, w, 3);
     }
 
-    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool hostAxes, double turnDegrees)
+    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool hostAxes, double turnDegrees, params string[] fromTheFiller)
     {
         var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607], turnDegrees);
         int qDepth = f.W.Add("IFCQUANTITYLENGTH", "'Depth','',$,0.1");
@@ -209,7 +209,10 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         int qSet = f.W.Add("IFCELEMENTQUANTITY", $"'qset',#1,'BaseQuantities',$,$,(#{qDepth},#{qHeight},#{qWidth})");
         f.W.Add("IFCRELDEFINESBYPROPERTIES", $"'rel',#1,$,$,(#{opening}),#{qSet}");
 
-        Assert.Equal(1, new IfcExporter { OpeningQuantitiesInHostAxes = hostAxes }.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+        var exporter = new IfcExporter { OpeningQuantitiesInHostAxes = hostAxes };
+        // (what the quantity pass records for a dimension that it took from the door or window)
+        foreach (string name in fromTheFiller) exporter._openingQuantitiesFromFiller.Add((opening, name));
+        Assert.Equal(1, exporter.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
 
         double Value(int quantity) => double.Parse(f.Attributes(quantity)[3], System.Globalization.CultureInfo.InvariantCulture);
         return (Value(qDepth), Value(qHeight), Value(qWidth));
@@ -219,16 +222,31 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     // Default: the loop measured in the frame of the wall, X along the placement (Height) and the vertical side as Width.
     [InlineData(false, 0, 0.8, 2.1)]
     [InlineData(false, 37, 0.8, 2.1)]
-    // Along the host axes the quantities are those of the door or window, which the quantity pass wrote (here 0.885 and 2.135):
-    // the loop of the symbol does not replace them, in a wall of any direction.
-    [InlineData(true, 0, 0.885, 2.135)]
-    [InlineData(true, 37, 0.885, 2.135)]
-    [InlineData(true, 90, 0.885, 2.135)]
-    [InlineData(true, 180, 0.885, 2.135)]
-    public void BaseQuantities_HostAxesOption_LeavesHeightAndWidthToTheQuantityPass_AndStillWritesTheDepthOfTheWall(
-        bool hostAxes, double turnDegrees, double height, double width)
+    public void BaseQuantities_Default_NamesTheSidesOfTheLoopByTheFrame(bool hostAxes, double turnDegrees, double height, double width)
     {
         var (depth, h, w) = QuantitiesAfterTheRewrite(hostAxes, turnDegrees);
+
+        Assert.Equal(0.202, depth, 3);
+        Assert.Equal(height, h, 3);
+        Assert.Equal(width, w, 3);
+    }
+
+    [Theory]
+    // Along the host axes a dimension that the quantity pass took from the door or window (here 0.885 and 2.135) stays, in a wall of
+    // any direction; one it could not take is written from the new outline: Height the vertical side (2.1), Width the side along the wall (0.8).
+    [InlineData(0, "Height,Width", 0.885, 2.135)]
+    [InlineData(37, "Height,Width", 0.885, 2.135)]
+    [InlineData(90, "Height,Width", 0.885, 2.135)]
+    [InlineData(180, "Height,Width", 0.885, 2.135)]
+    [InlineData(0, "", 2.1, 0.8)]
+    [InlineData(37, "", 2.1, 0.8)]
+    [InlineData(90, "", 2.1, 0.8)]
+    [InlineData(0, "Width", 2.1, 2.135)]
+    [InlineData(0, "Height", 0.885, 0.8)]
+    public void BaseQuantities_HostAxesOption_KeepsWhatCameFromTheDoorOrWindow_AndWritesTheOtherFromTheNewOutline(
+        double turnDegrees, string fromTheFiller, double height, double width)
+    {
+        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, fromTheFiller.Split(',', StringSplitOptions.RemoveEmptyEntries));
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);

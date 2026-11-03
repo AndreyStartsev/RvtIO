@@ -71,7 +71,7 @@ Name the sides of door and window openings after the door or window:
 rvtio project.rvt project.ifc --ifc-opening-host-axes
 ```
 
-By default the Width and Height quantities of the opening of a door or window name the sides of its cut loop by the frame they are measured in, so a door 0.8 wide and 2.1 high gets Height 0.8 and Width 2.1. With the option, an opening in a straight wall gets the Width (along the wall) and Height of the door or window (its instance value, else its type value); the depth and every other output stay the same. In the library this is `IfcExporter.OpeningQuantitiesInHostAxes`.
+By default the Width and Height quantities of the opening of a door or window name the sides of its cut loop by the frame they are measured in, so a door 0.8 wide and 2.1 high gets Height 0.8 and Width 2.1. With the option, an opening in a straight wall gets the Width (along the wall) and Height of the door or window (its instance value, else its type value; a side the door or window holds no value for is measured from the opening, vertical for Height and along the wall for Width); the depth and every other output stay the same. In the library this is `IfcExporter.OpeningQuantitiesInHostAxes`.
 
 Use `--ifc-revit-parameter-groups` for one property set per parameter group. Use `--resolve-current-copies` for a file saved in several increments: it keeps only the current copy of an element that more than one partition stream holds; without it every copy is decoded as before. Run `rvtio --help` for all options. Unknown options exit with code 1; options starting with `--dev-` are not a stable interface.
 
