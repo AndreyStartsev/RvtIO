@@ -378,6 +378,7 @@ public partial class IfcExporter
         _storeyGlobalIds.Clear();
         _recessOpeningEntityIds.Clear();
         _ownCutPairOpeningQuantitiesCurrent.Clear();
+        LengthRuleRunsCurrent.Clear();
         _bodyItemOrigins.Clear();
         _spaceBodyGeometry.Clear();
         _othersCurrentPlans.Clear();
@@ -4441,10 +4442,14 @@ public partial class IfcExporter
             string elemTypeName = ResolveProductFamilyAndTypeName(
                 elem, ifcType, elemById, elementIdOccurrenceCounts, CurrentProfile);
             string elemName = $"{elemTypeName}:{elem.Id}";
+            if (CurrentProfile && IsRunLengthRuleCurrent(elem, ifcType, elemById, elementIdOccurrenceCounts)) LengthRuleRunsCurrent.Add(elem.Id);
             if (ifcType == "IFCSTAIR")
                 elemName = ResolveNativeStairName(elem, elemById, elementIdOccurrenceCounts, CurrentProfile) ?? elemName;
+            // A stair run or landing takes its type's name too (its own Name is empty in the files that do not carry the legacy name).
             string? referenceValue = ResolveIfcReferenceValue(
-                elem, elemById, (CurrentProfile ? ResolveMepCurveTypeName(elem, elemById) : null) ?? elem.Name);
+                elem, elemById, (CurrentProfile ? ResolveMepCurveTypeName(elem, elemById) : null)
+                    ?? (CurrentProfile ? ResolveStairComponentType(elem, ifcType, elemById, elementIdOccurrenceCounts)?.ValidatedStairComponentTypeName : null)
+                    ?? elem.Name);
             if (ifcType == "IFCCURTAINWALL")
                 referenceValue = ResolveCurtainWallReference(
                     elem, elemById.GetValueOrDefault(elem.FamilyTypeId), referenceValue);
@@ -4489,7 +4494,7 @@ public partial class IfcExporter
                 "IFCRAILING" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile && elem.NativeMasterSymbolId is not > 0 ? "$" : ".NOTDEFINED.")}",
                 "IFCSTAIR" =>
-                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.{ResolveNativeStairShape(elem, referenceElementType, elemById, elementIdOccurrenceCounts)}.",
+                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.{ResolveNativeStairShape(elem, referenceElementType, elemById, elementIdOccurrenceCounts, CurrentProfile)}.",
                 "IFCRAMP" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.NOTDEFINED.",
                 "IFCSTAIRFLIGHT" =>
@@ -67597,7 +67602,7 @@ public partial class IfcExporter
     /// <summary>The "Family:Type" name of a product: the MEP curve name, the type object name of a family type, or the validated type name with its family.</summary>
     internal static string ResolveProductFamilyAndTypeName(
         Element element, string ifcType, IReadOnlyDictionary<int, Element> elementsById,
-        IReadOnlyDictionary<int, int> elementIdOccurrenceCounts, bool currentProfile = false)
+        IReadOnlyDictionary<int, int> elementIdOccurrenceCounts, bool currentProfile = false, bool resolveComponentType = true)
     {
         // The current profile names a pipe, pipe insulation or cable tray after its own RbsCurve
         // type and that type's system family ("Pipe Types:{type}", "Pipe Insulation:{type}", "Cable
@@ -67610,14 +67615,35 @@ public partial class IfcExporter
             && elementsById.TryGetValue(element.FamilyTypeId, out Element? type)
             && type.ValidatedIfcTypeObjectName is { } familyAndType)
             return familyAndType;
-        string typeName = ResolveValidatedProductTypeName(element, ifcType, elementsById, currentProfile)
+        // A run or landing names its type through TypeId (the serialized association), not ELEM_TYPE_PARAM, which a run does not have.
+        Element? componentType = currentProfile && resolveComponentType
+            ? ResolveStairComponentType(element, ifcType, elementsById, elementIdOccurrenceCounts) : null;
+        string typeName = componentType?.ValidatedStairComponentTypeName
+            ?? ResolveValidatedProductTypeName(element, ifcType, elementsById, currentProfile)
             ?? element.Name ?? $"Element {element.Id}";
         if (currentProfile && ifcType == "IFCSLAB" && element.CategoryId == -2000920) return typeName;
         string familyName = (currentProfile && ifcType == "IFCSTAIR" && element.RootClassName == "Stairs" ? element.ValidatedStairOccurrenceName : null)
             ?? ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts)
+            ?? (componentType?.ValidatedSystemFamilyName is { Length: > 0 } componentFamily ? componentFamily : null)
             ?? element.FamilyName
             ?? element.Category ?? ifcType;
         return $"{familyName}:{typeName}";
+    }
+
+    /// <summary>The type element of a stair run or landing: the one its serialized TypeId names (a run has no ELEM_TYPE_PARAM, and the
+    /// parameter of a landing names a sibling landing, see <see cref="ResolveTypeObjectElementId"/>), when it is a unique element of the
+    /// same category whose own root carries a stair component type name. Null for anything else.</summary>
+    internal static Element? ResolveStairComponentType(Element component, string ifcType,
+        IReadOnlyDictionary<int, Element> elementsById, IReadOnlyDictionary<int, int> occurrenceCounts)
+    {
+        if ((ifcType, component.CategoryId) is not (("IFCSTAIRFLIGHT", StairsRunsCategoryId) or ("IFCSLAB", StairsLandingsCategoryId))
+            || component.Id <= 0 || component.IsBlockOnly || occurrenceCounts.GetValueOrDefault(component.Id) != 1)
+            return null;
+        int typeId = ResolveTypeObjectElementId(component, elementsById, currentProfile: true);
+        return typeId > 0 && typeId != component.Id && occurrenceCounts.GetValueOrDefault(typeId) == 1
+            && elementsById.TryGetValue(typeId, out Element? type) && type.Id == typeId && !type.IsBlockOnly
+            && type.CategoryId == component.CategoryId && type.ValidatedStairComponentTypeName is { Length: > 0 }
+            ? type : null;
     }
 
     /// <summary>Null keeps the general <see cref="Element.Name"/>.</summary>
@@ -67717,7 +67743,7 @@ public partial class IfcExporter
 
     /// <summary>Native GetStairsRuns SET order and cached GetStairsPath directions.</summary>
     internal static string ResolveNativeStairShape(Element parent, Element? type,
-        IReadOnlyDictionary<int, Element> elementsById, IReadOnlyDictionary<int, int> occurrenceCounts)
+        IReadOnlyDictionary<int, Element> elementsById, IReadOnlyDictionary<int, int> occurrenceCounts, bool currentProfile = false)
     {
         const string fallback = "NOTDEFINED";
         if (parent.Id <= 0 || parent.IsBlockOnly || parent.CategoryId != -2000120
@@ -67743,7 +67769,7 @@ public partial class IfcExporter
                     && HasIfcTypeOverride(runType)) return fallback;
             runs.Add(input);
         }
-        return StairShape.Classify(runs, landings) ?? fallback;
+        return StairShape.Classify(runs, landings, sketchedIsFlight: !currentProfile) ?? fallback;
     }
 
     /// <summary>

@@ -7,12 +7,15 @@ namespace RvtIO.Ifc;
 /// An unknown projected endpoint Z is not invented.</summary>
 internal static class StairShape
 {
-    internal static string? Classify(IReadOnlyList<TfBlockDeserializer.StairRunInput> runs, int landings)
+    /// <param name="sketchedIsFlight">False for the current profile: a stair with a sketched run is not classified there (every such stair
+    /// of the measured samples is NOTDEFINED while its flight type is FREEFORM).</param>
+    internal static string? Classify(IReadOnlyList<TfBlockDeserializer.StairRunInput> runs, int landings, bool sketchedIsFlight = true)
     {
         if (landings < 0) return null;
         var lines = new List<TfBlockDeserializer.StairPathDirection>();
         foreach (var run in runs)
         {
+            if (run.Style is TfBlockDeserializer.StairRunStyle.Sketched && !sketchedIsFlight) return null;
             if (run.Style is not (TfBlockDeserializer.StairRunStyle.Straight or TfBlockDeserializer.StairRunStyle.Sketched)
                 || run.Directions is not { Length: > 0 }) return null;
             if (run.Directions.Any(direction => !double.IsFinite(direction.X) || !double.IsFinite(direction.Y)

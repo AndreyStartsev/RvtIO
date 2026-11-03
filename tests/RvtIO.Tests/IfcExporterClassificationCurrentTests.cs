@@ -125,6 +125,25 @@ public class IfcExporterClassificationCurrentTests
     }
 
     [Fact]
+    public void ARailingAggregatedIntoAStair_DoesNotTakeTheStairsCode_ButItsRunsDo()
+    {
+        var m = new Model();
+        m.Elements[200] = Symbol(200, "C2010");
+        int stair = m.Product("IFCSTAIR", Typed(100, 200));
+        int flight = m.Product("IFCSTAIRFLIGHT", Typed(101, 300));
+        int railing = m.Product("IFCRAILING", Typed(102, 300));
+        int ownCode = m.Product("IFCRAILING", Typed(103, 300, code: "C2020"));
+        m.W.Add("IFCRELAGGREGATES", $"{Guid22},#5,'','',#{stair},(#{flight},#{railing},#{ownCode})");
+
+        m.Run();
+
+        var relations = m.Entities("IFCRELASSOCIATESCLASSIFICATION").Select(r => r.Args).ToArray();
+        Assert.Contains(relations, r => r.Contains("'Uniformat:C2010'") && r.Contains($"(#{stair},#{flight})"));
+        Assert.Contains(relations, r => r.Contains("'Uniformat:C2020'") && r.Contains($"(#{ownCode})"));
+        Assert.DoesNotContain(relations, r => r.Contains($"#{railing}"));
+    }
+
+    [Fact]
     public void ThePartsOfAnAggregate_ReceiveTheCodeOfTheAggregatesElement()
     {
         var m = new Model();

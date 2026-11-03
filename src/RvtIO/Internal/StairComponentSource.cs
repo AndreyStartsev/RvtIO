@@ -59,6 +59,8 @@ internal static class StairComponentSource
             && namedOwner == owner ? classId : null;
         state.OwnedElementClassRoots[owner] = state.OwnedElementClassRoots.TryGetValue(owner, out var existing)
             ? new(existing.BlockCount + 1, null) : new(1, exactClass);
+        state.WalkedElementClassRoots[owner] = state.WalkedElementClassRoots.TryGetValue(owner, out var walked)
+            ? new(walked.BlockCount + 1, null) : new(1, exactClass);
     }
 
     internal static void Apply(IReadOnlyList<Element> elements, ParsingState state)
@@ -67,6 +69,7 @@ internal static class StairComponentSource
         {
             element.SerializedStairCore = null;
             element.SerializedOwnElementClassId = null;
+            element.OwnClassRootSeededOnce = false;
             element.SerializedOwningElementId = null;
             element.SerializedRailingStairHostId = null;
             element.SerializedStairRunInput = null;
@@ -79,9 +82,10 @@ internal static class StairComponentSource
             if (element.Id <= 0 || element.IsBlockOnly) continue;
             if (state.ElemRecOwningElementIds.TryGetValue((uint)element.Id, out int owner))
                 element.SerializedOwningElementId = owner;
-            if (state.OwnedElementClassRoots.TryGetValue((uint)element.Id, out var root)
-                && root.BlockCount == 1)
+            if (state.StairClassRoot((uint)element.Id) is { BlockCount: 1 } root)
                 element.SerializedOwnElementClassId = root.ClassId;
+            element.OwnClassRootSeededOnce = state.OwnedElementClassRoots.TryGetValue((uint)element.Id, out var seeded)
+                && seeded is { BlockCount: 1, ClassId: not null };
             if (state.RailingStairHostRoots.TryGetValue((uint)element.Id, out var railing)
                 && railing is { BlockCount: 1, StairId: > 0 }
                 && element.SerializedOwnElementClassId == 485 && element.SerializedOwningElementId != null
@@ -115,8 +119,7 @@ internal static class StairComponentSource
                 // Missing or ambiguous service roots also reject the closure: they must
                 // not hide an omitted run/landing/support behind a guessed class.
                 if (child > int.MaxValue
-                    || !state.OwnedElementClassRoots.TryGetValue(child, out var root)
-                    || root is not { BlockCount: 1, ClassId: { } cls }) { valid = false; break; }
+                    || state.StairClassRoot(child) is not { BlockCount: 1, ClassId: { } cls }) { valid = false; break; }
                 if (cls is 3708 or 3686 or 3727) typed.Add((int)child, cls);
             }
             var listed = membership.RunsAndLandings.Concat(membership.Supports).ToArray();
