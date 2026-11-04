@@ -2541,6 +2541,38 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(FoundationAreas(geometry), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
     }
 
+    private static GeometryData ClosedShells(params List<GeoFace>[] groups)
+    {
+        var geometry = OpenShells(groups);
+        foreach (var solid in geometry.BrepSolids!) solid.IsClosed = true;
+        return geometry;
+    }
+
+    [Fact]
+    public void Pass_FoundationOfClosedShells_WithoutAnyCapArea_NetVolumeLeavesOutANegativeNode()
+    {
+        var geometry = ClosedShells(PrismWithCapArea(-1, 10, null), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfClosedShells_WithoutAnyCapArea_NetVolumeLeavesOutACuttingNode()
+    {
+        var geometry = ClosedShells(PrismWithCapArea(1, 10, null), PrismWithCapArea(2, 0, null));
+        geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(1, 10, -40)];
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfClosedShells_ExcludedNodeWithAZeroCapAreaFirst_NetVolumeLeavesItOut()
+    {
+        var geometry = ClosedShells(PrismWithCapArea(-1, 10, 0), PrismWithCapArea(2, 0, 4));
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
+
     [Fact]
     public void Pass_FoundationOfOpenShells_OnlyNodesThatDoNotCount_HaveNoNetArea()
     {

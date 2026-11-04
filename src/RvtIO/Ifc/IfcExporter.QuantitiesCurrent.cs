@@ -1245,13 +1245,15 @@ public partial class IfcExporter
             var cutting = (element.Geometry?.NodeMeasures ?? []).Where(measure => measure.Volume < 0).Select(measure => measure.Node).ToHashSet();
             var faces = element.Geometry?.Faces ?? [];
             bool Counts(GeoFace f) => f.GeometryNode >= 0 && !cutting.Contains(f.GeometryNode);
-            if (faces.Any(f => !Counts(f)))
+            bool excluded = faces.Any(f => !Counts(f));
+            if (excluded)
             {
                 // the area that stands in for the cap is the one of the nodes that count only
                 double kept = TopSurfaceAreaCurrent(shells.Select(shell => shell with { Faces = shell.Faces.Where(Counts).ToList() })) * SquareFeetToSquareMetres;
                 topArea = kept > 1e-9 ? kept : ComputedHostAreaCurrent(element) ?? profileArea;
             }
-            if (faces.FirstOrDefault(f => f.QuadratureArea != null) is { QuadratureArea: > 1e-9 })
+            // with an excluded node the volume is taken node by node as well: the volume of all shells would include it
+            if (excluded || faces.FirstOrDefault(f => f.QuadratureArea != null) is { QuadratureArea: > 1e-9 })
             {
                 if (faces.FirstOrDefault(f => f.QuadratureArea != null && Counts(f))?.QuadratureArea is { } capArea
                     && capArea > 1e-9)
