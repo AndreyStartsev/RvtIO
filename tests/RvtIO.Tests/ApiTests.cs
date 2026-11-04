@@ -552,7 +552,8 @@ public class ApiTests : IClassFixture<TestFileFixture>
             Assert.Null(walls[id].Geometry!.Transform); // world coordinates: no extra transform
         }
 
-        var (_, state) = new RvtFileReader().ReadWithState(TestFileFixture.FindTestFile("TESTFILE.rvt"));
+        // both copies of the wall block are inspected here, so the superseded one must not be dropped
+        var (_, state) = new RvtFileReader(new RvtReaderOptions { ResolveCurrentCopies = false }).ReadWithState(TestFileFixture.FindTestFile("TESTFILE.rvt"));
         var blocks = new List<(uint Size, int Faces, double[]? Transform)>();
         foreach (var chunk in state.NonRecordChunks)
         {
