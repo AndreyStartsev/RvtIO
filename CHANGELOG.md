@@ -6,6 +6,8 @@ API between minor releases.
 
 ## [Unreleased]
 
+- Gives a stair with straight and sketched runs the shape of its straight runs in the current profile (Closes #70). A sketched run (flight type FREEFORM) is no flight of the shape rule there, so a straight run, a landing and a sketched run turned back is STRAIGHT_RUN_STAIR, as in the reference export, instead of undefined; a stair of sketched runs alone stays undefined. The older profile and files without such stairs are unchanged.
+
 ## [0.2.0] - 2026-11-04
 
 ### Breaking changes
