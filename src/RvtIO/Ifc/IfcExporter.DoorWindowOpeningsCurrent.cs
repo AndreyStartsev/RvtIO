@@ -315,8 +315,9 @@ public partial class IfcExporter
 
     /// <summary>
     /// The total width of the layers of the host wall, metres: the width of the extrusion that is its Body, else the width of
-    /// its type. A wall whose layers (or body) and own width parameter disagree has a stale copy among them (a file saved in several
-    /// increments), so none of the two is confirmed: <paramref name="conflict"/> is set and no width is returned.
+    /// its type. A wall whose type thickness is not validated (the type root and its compound structure read once) and whose layers (or
+    /// body) disagree with its own width parameter has a stale copy among them (a file saved in several increments), so none of the two
+    /// is confirmed: <paramref name="conflict"/> is set and no width is returned.
     /// </summary>
     private static double? WallTotalWidthCurrent(StepWriter w, Dictionary<int, int> indexById, string[] wallAttributes, Element wall,
         IReadOnlyDictionary<int, Element> elementsById, out bool conflict)
@@ -325,7 +326,7 @@ public partial class IfcExporter
         double? declared = ExactParameterFeetCurrent(wall, TypeOfCurrent(wall, elementsById), WallWidthParameterId) * FeetToMetres;
         double? used = ReadBodyExtrusionCurrent(w, indexById, wallAttributes[6]) is { } body ? body.ExtentY
             : TryGetSerializedWallWidthFeet(wall, out double layersFeet) ? layersFeet * FeetToMetres : declared;
-        if (used is { } value && declared is { } stated && Math.Abs(value - stated) > WallWidthAgreementMetres)
+        if (wall.ValidatedWallTypeThicknessFeet is not > 0 && used is { } value && declared is { } stated && Math.Abs(value - stated) > WallWidthAgreementMetres)
         {
             conflict = true;
             return null;

@@ -313,4 +313,17 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         Assert.Equal(before, f.Find(opening).Args);
         Assert.Contains("wall-width-conflict=1", diagnostics.ToString());
     }
+
+    [Fact]
+    public void WallWithAValidatedTypeThickness_IsRewrittenWhateverItsWidthParameterSays()
+    {
+        // the type root and its compound structure were read once: that thickness is confirmed, the parameter is not consulted
+        var (f, opening, elements, products) = Scene([-1, -1, 0, 1, 1, 3]);
+        elements[WallElement].Parameters.Add(WallWidth(0.303));
+        elements[WallElement].ValidatedWallTypeThicknessFeet = 0.202 / 0.3048;
+
+        Assert.Equal(1, new IfcExporter().ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+
+        Assert.Equal(0.202, double.Parse(Read(f, opening).Solid[3], System.Globalization.CultureInfo.InvariantCulture), 9);
+    }
 }
