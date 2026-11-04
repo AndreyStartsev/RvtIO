@@ -141,6 +141,10 @@ namespace RvtIO.DeflateManaged
 
         public int AvailableOutput => _output.AvailableBytes;
 
+        /// <summary>The final block is decoded and every output byte is handed out. <see cref="Finished"/> is already true while up to a
+        /// window of decoded bytes still waits in the output window, so a read loop has to stop on this one.</summary>
+        internal bool Drained => Finished() && _output.AvailableBytes == 0;
+
         /// <summary>Input bytes not consumed by the inflater; after the final block ends it is the data behind the deflate stream.</summary>
         internal int UnconsumedInputBytes => _input.AvailableBytes;
 
