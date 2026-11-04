@@ -116,6 +116,12 @@ public class FacetedPlanTests
         for (int i = 0; i < geometries.Count; i++)
             if (Fingerprint(on[i].Result!) != Fingerprint(off[i].Result!)) differing++;
         Assert.True(differing >= 8);
+        // The geometries 60..67 are solids whose edge records do not close them: only the current profile accepts them by their polygons.
+        for (int i = 60; i < 68; i++)
+        {
+            Assert.NotEmpty(on[i].Result!);
+            Assert.Empty(off[i].Result!);
+        }
     }
 
     [Fact]
