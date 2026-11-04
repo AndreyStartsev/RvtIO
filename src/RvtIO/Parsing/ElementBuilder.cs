@@ -625,6 +625,17 @@ internal static partial class ElementBuilder
     /// </summary>
     internal static bool SeparateFacesWithDistinctOpenings;
 
+    /// <summary>Key of a face by its quantized corners, independent of corner order. Used for equality only, so the parts are sorted ordinally
+    /// (the culture sort of strings costs far more and a key is never read for its order).</summary>
+    internal static string FaceCornerKey(List<double[]> cs)
+    {
+        var parts = new string[cs.Count];
+        for (int i = 0; i < cs.Count; i++)
+            parts[i] = $"{(long)Math.Round(cs[i][0] * 1e4)},{(long)Math.Round(cs[i][1] * 1e4)},{(long)Math.Round(cs[i][2] * 1e4)}";
+        Array.Sort(parts, StringComparer.Ordinal);
+        return string.Join(";", parts);
+    }
+
     public static GeometryData? BuildGeometryData(GRepData grep)
     {
         // Skip empty GRep records - no faces and no bounding box = no actual geometry to report.
@@ -701,15 +712,7 @@ internal static partial class ElementBuilder
         // corners: same 4 corner positions = same face.
         var seenFaces = new Dictionary<string, int>();
         var grepFaceToGeoFace = new Dictionary<int, int>();
-        static long Q(double v) => (long)Math.Round(v * 1e4);
-        static string CornerKey(List<double[]> cs)
-        {
-            var parts = new string[cs.Count];
-            for (int i = 0; i < cs.Count; i++)
-                parts[i] = $"{Q(cs[i][0])},{Q(cs[i][1])},{Q(cs[i][2])}";
-            Array.Sort(parts);
-            return string.Join(";", parts);
-        }
+        static string CornerKey(List<double[]> cs) => FaceCornerKey(cs);
 
         for (int grepFaceIndex = 0; grepFaceIndex < grep.Faces.Count; grepFaceIndex++)
         {
