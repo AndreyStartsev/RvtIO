@@ -115,6 +115,10 @@ The library is silent by default. Set `RvtReaderOptions.DiagnosticOutput` for re
 
 See the [public API](docs/public-api.md) for the supported surface and [dependencies](docs/dependencies.md) for package details.
 
+## Documentation
+
+The documentation site with the API reference is at <https://mahach666.github.io/RvtIO/>. [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mahach666/RvtIO) offers an automatically generated overview of the repository.
+
 ## Examples
 
 IFC exports of sample models opened in an IFC viewer:
@@ -131,7 +135,7 @@ The tested projects include basic and advanced architecture, structure and MEP s
 
 ## Limitations
 
-- Version 0.1.0 is a preview. The API can change before 1.0.
+- Version 0.2.0 is a preview. The API can change before 1.0.
 - Geometry coverage is partial for some element kinds.
 - Revit 2027 support is partial.
 - There is no support for writing or modifying Revit files.
