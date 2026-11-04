@@ -275,4 +275,42 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         Assert.True(new IfcExporter { OpeningQuantitiesInHostAxes = false }.OpeningQuantitiesSwapped);
         Assert.False(new IfcExporter { OpeningQuantitiesInHostAxes = true }.OpeningQuantitiesSwapped);
     }
+
+    private static Parameter WallWidth(double metres) =>
+        new() { Id = -1001000, StorageType = StorageType.Double, Value = metres / 0.3048 };
+
+    [Fact]
+    public void WallWithAWidthParameterThatAgreesWithItsBody_IsRewritten()
+    {
+        var (f, opening, elements, products) = Scene([-1, -1, 0, 1, 1, 3]);
+        // within the agreement of 0.1 mm
+        elements[WallElement].Parameters.Add(WallWidth(0.202 + 5e-5));
+
+        Assert.Equal(1, new IfcExporter().ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+
+        Assert.Equal(0.202, double.Parse(Read(f, opening).Solid[3], System.Globalization.CultureInfo.InvariantCulture), 9);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WallWhoseWidthParameterDisagreesWithItsBody_KeepsTheOpeningAsItWas(bool parameterOfTheType)
+    {
+        // a stale copy of the wall (a file saved in several increments): the layers give 0.202 m, the width parameter 0.303 m
+        var (f, opening, elements, products) = Scene([-1, -1, 0, 1, 1, 3]);
+        if (parameterOfTheType)
+        {
+            elements[WallElement].Parameters.Add(new Parameter { Id = -1, StorageType = StorageType.ElementId, Value = 70, Definition = new Definition { Name = "ELEM_TYPE_PARAM" } });
+            elements[70] = new Element { Id = 70, Parameters = [WallWidth(0.303)] };
+        }
+        else
+            elements[WallElement].Parameters.Add(WallWidth(0.303));
+        string before = f.Find(opening).Args;
+        var diagnostics = new StringWriter();
+
+        Assert.Equal(0, new IfcExporter { DiagnosticOutput = diagnostics }.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+
+        Assert.Equal(before, f.Find(opening).Args);
+        Assert.Contains("wall-width-conflict=1", diagnostics.ToString());
+    }
 }

@@ -230,7 +230,11 @@ public partial class IfcExporter
         }
         if (box is not { Length: 6 } symbolBox) { failure = "no-symbol-box"; return false; }
         if (ModelPlacementCurrent(w, indexById, wallAttributes[5]) is not { } wallPlacement) { failure = "no-wall-placement"; return false; }
-        if (WallTotalWidthCurrent(w, indexById, wallAttributes, wall, elementsById) is not { } width || !(width > 0)) { failure = "no-wall-width"; return false; }
+        if (WallTotalWidthCurrent(w, indexById, wallAttributes, wall, elementsById, out bool widthConflict) is not { } width || !(width > 0))
+        {
+            failure = widthConflict ? "wall-width-conflict" : "no-wall-width";
+            return false;
+        }
         if (cut.Vertices.Count < 3 || direction.Length < 3 || cut.Vertices.Any(v => v.Length < 3 || v.Any(c => !double.IsFinite(c)))
             || direction.Any(c => !double.IsFinite(c)))
         {
@@ -311,13 +315,24 @@ public partial class IfcExporter
 
     /// <summary>
     /// The total width of the layers of the host wall, metres: the width of the extrusion that is its Body, else the width of
-    /// its type.
+    /// its type. A wall whose layers (or body) and own width parameter disagree has a stale copy among them (a file saved in several
+    /// increments), so none of the two is confirmed: <paramref name="conflict"/> is set and no width is returned.
     /// </summary>
     private static double? WallTotalWidthCurrent(StepWriter w, Dictionary<int, int> indexById, string[] wallAttributes, Element wall,
-        IReadOnlyDictionary<int, Element> elementsById)
+        IReadOnlyDictionary<int, Element> elementsById, out bool conflict)
     {
-        if (ReadBodyExtrusionCurrent(w, indexById, wallAttributes[6]) is { } body) return body.ExtentY;
-        if (TryGetSerializedWallWidthFeet(wall, out double layersFeet)) return layersFeet * FeetToMetres;
-        return ExactParameterFeetCurrent(wall, TypeOfCurrent(wall, elementsById), WallWidthParameterId) * FeetToMetres;
+        conflict = false;
+        double? declared = ExactParameterFeetCurrent(wall, TypeOfCurrent(wall, elementsById), WallWidthParameterId) * FeetToMetres;
+        double? used = ReadBodyExtrusionCurrent(w, indexById, wallAttributes[6]) is { } body ? body.ExtentY
+            : TryGetSerializedWallWidthFeet(wall, out double layersFeet) ? layersFeet * FeetToMetres : declared;
+        if (used is { } value && declared is { } stated && Math.Abs(value - stated) > WallWidthAgreementMetres)
+        {
+            conflict = true;
+            return null;
+        }
+        return used;
     }
+
+    /// <summary>Largest difference between the width of the layers or body of a wall and its width parameter that still counts as the same width.</summary>
+    private const double WallWidthAgreementMetres = 1e-4;
 }
