@@ -6,7 +6,7 @@ public partial class IfcExporter
 {
     /// <summary>A closed shell the faceted writer found: the faces of <c>GeometryData.Faces</c> it comes from, its oriented faces, the
     /// faces it uses up and the face of <c>GeometryData.Faces</c> each oriented face was made of (null when that is not one to one).</summary>
-    private sealed record ClosedComponentCurrent(List<int> SourceIndices, List<GeoFace> OrientedFaces, List<int> ConsumedIndices,
+    internal sealed record ClosedComponentCurrent(List<int> SourceIndices, List<GeoFace> OrientedFaces, List<int> ConsumedIndices,
         List<int>? OrientedSources);
 
     /// <summary>An oriented face with the serialized Face it is a region of (0 and null when it is not known to be one).</summary>

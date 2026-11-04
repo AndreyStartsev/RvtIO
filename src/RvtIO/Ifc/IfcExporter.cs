@@ -366,6 +366,7 @@ public partial class IfcExporter
         {
             info.Elements = allElements;
             foreach (var (element, original) in computedSymbolGeometry) element.Geometry = original;
+            _facetedPlans.Clear(); // plans nobody asked for must not outlive the export
         }
     }
 
@@ -383,6 +384,7 @@ public partial class IfcExporter
         _bodyItemOrigins.Clear();
         _spaceBodyGeometry.Clear();
         _othersCurrentPlans.Clear();
+        _facetedPlans.Clear();
         var w = new StepWriter();
         // The legacy profile writes millimetres whatever the document says; the current profile
         // follows the length unit of the project (IfcLengthUnitChoice).
@@ -696,6 +698,7 @@ public partial class IfcExporter
                 storeyIfcIds, storeyPlacements, storeyContents);
         var representationMapsBySymbol =
             new Dictionary<int, RepresentationMapCacheEntry>();
+        PrecomputeSymbolFacetedPlans(info.Elements, elemById);
 
         static int? IntParam(Element e, int id)
         {
@@ -7928,7 +7931,7 @@ public partial class IfcExporter
                             OpenShellFaceCount: 0));
                 else
                     symbolWrite = CreateFacetedShapeRepresentations(
-                        w, symbol.Geometry, subCtxId);
+                        w, symbol.Geometry, subCtxId, precomputedComponents: TakeFacetedPlan(symbol.Geometry));
                 if (symbolWrite.RepresentationIds.Count == 0) return false;
                 var mapIds = symbolWrite.RepresentationIds
                     .Select(representationId => w.Add("IFCREPRESENTATIONMAP",
@@ -8331,12 +8334,9 @@ public partial class IfcExporter
         return true;
     }
 
-    private FacetedShapeWriteResult CreateFacetedShapeRepresentations(
-        StepWriter w, GeometryData geo,
-        int subCtxId, double offX = 0, double offY = 0, double offZ = 0,
-        bool preserveValidatedPlanarFaces = false,
-        bool preserveValidatedCoordinates = false,
-        Func<double[], double[]>? localFrame = null)
+    /// <summary>The closed shells of a geometry with their oriented faces: a pure function of the geometry and the two flags (it reads
+    /// <paramref name="geo"/>, clones what it orients, and writes no field, no static and no STEP entity), so it can run on any thread.</summary>
+    internal static List<ClosedComponentCurrent> ComputeClosedComponents(GeometryData geo, bool preserveValidatedPlanarFaces, bool currentProfile)
     {
         var closedComponents = new List<ClosedComponentCurrent>();
         // The face of geo.Faces each oriented face was made of, when the oriented list is the
@@ -8351,7 +8351,7 @@ public partial class IfcExporter
             // Edge.m_pFace is Revit's serialized BRep topology. It remains authoritative when
             // independently tessellated curved faces acquire T-junctions or coordinate roundoff at
             // their shared boundary.
-            foreach (var solid in serializedSolids.Where(solid => solid.IsClosed || CurrentProfile && IsExactClosedDespiteOpenTopologyCurrent(geo, solid, preserveValidatedPlanarFaces)))
+            foreach (var solid in serializedSolids.Where(solid => solid.IsClosed || currentProfile && IsExactClosedDespiteOpenTopologyCurrent(geo, solid, preserveValidatedPlanarFaces)))
             {
                 var sourceIndices = solid.FaceIndices.Distinct()
                     .Where(index => (uint)index < geo.Faces.Count).Order().ToList();
@@ -8449,6 +8449,19 @@ public partial class IfcExporter
                     closedComponents.Add(new(component, orientedFaces, component,
                         OrientedSources(component, orientedFaces.Count)));
         }
+        return closedComponents;
+    }
+
+    private FacetedShapeWriteResult CreateFacetedShapeRepresentations(
+        StepWriter w, GeometryData geo,
+        int subCtxId, double offX = 0, double offY = 0, double offZ = 0,
+        bool preserveValidatedPlanarFaces = false,
+        bool preserveValidatedCoordinates = false,
+        Func<double[], double[]>? localFrame = null,
+        List<ClosedComponentCurrent>? precomputedComponents = null)
+    {
+        var closedComponents = precomputedComponents
+            ?? ComputeClosedComponents(geo, preserveValidatedPlanarFaces, CurrentProfile);
 
         // IFC topology identity follows the exact coordinate lattice used by this writer.
         var pointIds = new Dictionary<(long X, long Y, long Z), int>();
