@@ -25,11 +25,10 @@ public class ChunkDecompressorTests
 
     private static readonly byte[] MemberHeader = [0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B];
 
-    private static byte[] GzipMember(byte[] payload)
+    private static byte[] GzipMember(byte[] payload, System.IO.Compression.CompressionLevel level = System.IO.Compression.CompressionLevel.SmallestSize)
     {
         using var stream = new MemoryStream();
-        using (var gzip = new System.IO.Compression.GZipStream(
-            stream, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
+        using (var gzip = new System.IO.Compression.GZipStream(stream, level, leaveOpen: true))
             gzip.Write(payload);
         byte[] member = stream.ToArray();
         member[8] = 0;
@@ -81,22 +80,33 @@ public class ChunkDecompressorTests
 
     /// <summary>[padding][member with a 353-byte page segment inserted <paramref name="inside"/> bytes into it][32 bytes of
     /// metadata], the segment at the first page boundary of the stream.</summary>
-    private static (byte[] Raw, byte[] Payload, int Start) StreamWithSegmentInsideMember(int inside, bool compressible, int tail = 32)
+    private static (byte[] Raw, byte[] Payload, int Start) StreamWithSegmentInsideMember(int inside, bool compressible, int tail = 32,
+        int size = 30000, System.IO.Compression.CompressionLevel level = System.IO.Compression.CompressionLevel.SmallestSize)
     {
         var random = new Random(11);
-        byte[] payload = new byte[30000];
+        byte[] payload = new byte[size];
         if (compressible)
             for (int i = 0; i < payload.Length; i++) payload[i] = (byte)('a' + random.Next(0, 6) * (i % 7 == 0 ? 3 : 1));
         else
             random.NextBytes(payload);
-        byte[] member = GzipMember(payload);
+        byte[] member = GzipMember(payload, level);
         int start = PagedGzipStream.PageDataLength - inside;
-        var raw = new byte[start + member.Length + PagedGzipStream.SegmentLength + tail];
-        Array.Fill(raw, (byte)0xEE);
-        Array.Copy(member, 0, raw, start, inside);
-        raw[PagedGzipStream.PageDataLength] = 0;
-        raw[PagedGzipStream.PageDataLength + 1] = 0;
-        Array.Copy(member, inside, raw, PagedGzipStream.PageDataLength + PagedGzipStream.SegmentLength, member.Length - inside);
+        // a segment of 353 bytes at every page boundary the member crosses
+        var ms = new MemoryStream();
+        ms.Write(Enumerable.Repeat((byte)0xEE, start).ToArray());
+        long next = PagedGzipStream.PageDataLength;
+        for (int i = 0; i < member.Length; i++)
+        {
+            if (ms.Length == next)
+            {
+                ms.Write(new byte[PagedGzipStream.SegmentLength]);
+                next += PagedGzipStream.PageStride;
+            }
+            ms.WriteByte(member[i]);
+        }
+        if (ms.Length == next) ms.Write(new byte[PagedGzipStream.SegmentLength]);
+        ms.Write(Enumerable.Repeat((byte)0xEE, tail).ToArray());
+        var raw = ms.ToArray();
         return (raw, payload, start);
     }
 
@@ -108,6 +118,22 @@ public class ChunkDecompressorTests
         var (raw, payload, start) = StreamWithSegmentInsideMember(1000, compressible);
         Assert.Equal([start], ChunkDecompressor.FindMemberMarkers(raw));
 
+        Assert.True(ChunkDecompressor.TryDecodeWithoutPageSegments(raw, start, raw.Length, new byte[32768], 0, out byte[] output));
+        Assert.Equal(payload, output);
+        var chunks = new ChunkDecompressor().DecompressAll(raw);
+        Assert.Single(chunks);
+        Assert.Equal(payload, chunks[0]);
+    }
+
+    [Theory]
+    [InlineData(65536, System.IO.Compression.CompressionLevel.Optimal)]
+    [InlineData(65537, System.IO.Compression.CompressionLevel.Optimal)]
+    [InlineData(200000, System.IO.Compression.CompressionLevel.Optimal)]
+    [InlineData(200000, System.IO.Compression.CompressionLevel.SmallestSize)]
+    [InlineData(200000, System.IO.Compression.CompressionLevel.Fastest)]
+    public void LargeMemberWithAPageSegmentInside_IsDecodedCompletely(int size, System.IO.Compression.CompressionLevel level)
+    {
+        var (raw, payload, start) = StreamWithSegmentInsideMember(1000, compressible: true, size: size, level: level);
         Assert.True(ChunkDecompressor.TryDecodeWithoutPageSegments(raw, start, raw.Length, new byte[32768], 0, out byte[] output));
         Assert.Equal(payload, output);
         var chunks = new ChunkDecompressor().DecompressAll(raw);

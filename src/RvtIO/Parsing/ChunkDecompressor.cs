@@ -126,7 +126,7 @@ internal class ChunkDecompressor
                     inflater.SetInput(raw, headerEnd, end - headerEnd);
                     using var ms = new MemoryStream();
                     var buf = new byte[65536];
-                    while (!inflater.Finished())
+                    while (!inflater.Drained)
                     {
                         int n = inflater.Inflate(buf, 0, buf.Length);
                         if (n == 0) break;
@@ -309,7 +309,7 @@ internal class ChunkDecompressor
             inflater.SetInput(raw, headerEnd, end - headerEnd);
             long total = 0;
             var buf = new byte[65536];
-            while (!inflater.Finished())
+            while (!inflater.Drained)
             {
                 int n = inflater.Inflate(buf, 0, buf.Length);
                 if (n == 0) break;
@@ -394,7 +394,7 @@ internal class ChunkDecompressor
             inflater.SetInput(member, RvtGzipHeader.Length, member.Length - RvtGzipHeader.Length);
             using var ms = new MemoryStream();
             var buf = new byte[65536];
-            while (!inflater.Finished())
+            while (!inflater.Drained)
             {
                 int n = inflater.Inflate(buf, 0, buf.Length);
                 if (n == 0) break;
@@ -579,7 +579,7 @@ internal class ChunkDecompressor
         }
     }
 
-    private static byte[]? InflateRaw(byte[] compressed, byte[] dict, int dictLen)
+    internal static byte[]? InflateRaw(byte[] compressed, byte[] dict, int dictLen)
     {
         try
         {
@@ -589,7 +589,7 @@ internal class ChunkDecompressor
             inflater.SetInput(compressed, 0, compressed.Length);
             using var ms = new MemoryStream();
             var buf = new byte[65536];
-            while (!inflater.Finished())
+            while (!inflater.Drained)
             {
                 int n = inflater.Inflate(buf, 0, buf.Length);
                 if (n == 0) break;
