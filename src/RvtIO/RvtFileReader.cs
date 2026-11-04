@@ -2554,19 +2554,9 @@ public partial class RvtFileReader
             var g = BipHelpers.ParseGuidFromForgeId(def.ForgeId);
             if (g.HasValue) guidToElemId.TryAdd(g.Value, eid);
         }
+        var captionPrefixes = BuildGuidPrefixSet(guidToCaption.Keys);
         foreach (var chunk in state.RecordChunks)
-        {
-            for (int i = 0; i + 20 <= chunk.Length; i += 2)
-            {
-                var gb = new byte[16];
-                Array.Copy(chunk, i, gb, 0, 16);
-                var g = new Guid(gb);
-                if (!guidToCaption.ContainsKey(g)) continue;
-                uint eid = BitConverter.ToUInt32(chunk, i + 16);
-                if (!state.AllKnownIds.Contains(eid) || eid < 100) continue;
-                guidToElemId[g] = eid;
-            }
-        }
+            MapRecordChunkGuids(chunk, guidToCaption, captionPrefixes, state.AllKnownIds, guidToElemId);
         int guidApplied = 0;
         foreach (var (guid, caption) in guidToCaption)
         {
@@ -2580,6 +2570,36 @@ public partial class RvtFileReader
             state.ParamDefGuids.TryAdd(eid, guid);
         }
         diag?.WriteLine($"  GUID+Caption scan: {guidToCaption.Count} GUIDs, {guidToElemId.Count} mapped, {guidApplied} applied");
+    }
+
+    /// <summary>The first 8 bytes (as stored by <see cref="Guid"/> construction from bytes) of every GUID, as a cheap pre-filter.</summary>
+    internal static HashSet<ulong> BuildGuidPrefixSet(IEnumerable<Guid> guids)
+    {
+        var set = new HashSet<ulong>();
+        Span<byte> buf = stackalloc byte[16];
+        foreach (var g in guids)
+        {
+            g.TryWriteBytes(buf);
+            set.Add(System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(buf));
+        }
+        return set;
+    }
+
+    /// <summary>Scans one record chunk at every even offset for [GUID:16][elemId:4] where the GUID has a caption; the last match wins.
+    /// No allocation per offset: a GUID can be a key only if its first 8 bytes are in <paramref name="prefixes"/>.</summary>
+    internal static void MapRecordChunkGuids(byte[] chunk, Dictionary<Guid, string> guidToCaption, HashSet<ulong> prefixes,
+        HashSet<uint> knownIds, Dictionary<Guid, uint> guidToElemId)
+    {
+        if (prefixes.Count == 0) return;
+        for (int i = 0; i + 20 <= chunk.Length; i += 2)
+        {
+            if (!prefixes.Contains(System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(chunk.AsSpan(i, 8)))) continue;
+            var g = new Guid(chunk.AsSpan(i, 16));
+            if (!guidToCaption.ContainsKey(g)) continue;
+            uint eid = BitConverter.ToUInt32(chunk, i + 16);
+            if (!knownIds.Contains(eid) || eid < 100) continue;
+            guidToElemId[g] = eid;
+        }
     }
 
     /// <summary>Extract binary GUIDs for shared param definitions.
