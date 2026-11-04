@@ -10,7 +10,7 @@ projects through `InternalsVisibleTo`.
 |---|---|
 | `RvtDocument` | Opens a file (`Open`) and gives the elements, project information, file metadata and category lookups. |
 | `RvtFileReader` | Lower level read (`Read`) that returns the `RevitFileInfo` behind a document. |
-| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `RaiseLimits` and `Diagnostics`. |
+| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default false), `RaiseLimits` and `Diagnostics`. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition streams read and the streams cut by a limit. |
 | `ExportReport`, `SkipLog` | The machine-readable report of a run (`ToJson`) and the elements an export left out; see [the export report](export-report.md). |
 | `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes of the command line tool, the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
