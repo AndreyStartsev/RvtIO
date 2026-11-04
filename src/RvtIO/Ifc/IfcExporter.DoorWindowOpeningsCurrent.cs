@@ -163,12 +163,13 @@ public partial class IfcExporter
                             if (qArgs.Length >= 4)
                             {
                                 string qName = qArgs[0].Trim('\'');
-                                // (along the host axes Height is the vertical and Width the side along the wall of the new outline, and a
-                                // dimension that the quantity pass took from the door or window stays, see OpeningQuantitiesInHostAxes)
-                                bool own = hostAxes && _openingQuantitiesFromFiller.Contains((openingId, qName));
-                                if (qName == "Height" && !own && (hostAxes ? built.HostHeight : built.Height) is { } newHeight)
+                                // (along the host axes Height is the vertical and Width the side along the wall of the new outline. The decoded
+                                // cut loop is what Revit cuts, so it replaces the nominal size that the quantity pass took from the door or
+                                // window; where the two are the same size the nominal value stays, see OpeningQuantitiesInHostAxes)
+                                bool own(double cut) => hostAxes && SameSizeCurrent(qArgs[3], cut);
+                                if (qName == "Height" && (hostAxes ? built.HostHeight : built.Height) is { } newHeight && !own(newHeight))
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newHeight)}");
-                                else if (qName == "Width" && !own && (hostAxes ? built.HostWidth : built.Width) is { } newWidth)
+                                else if (qName == "Width" && (hostAxes ? built.HostWidth : built.Width) is { } newWidth && !own(newWidth))
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newWidth)}");
                                 else if (qName == "Depth")
                                     w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Depth)}");
@@ -309,6 +310,12 @@ public partial class IfcExporter
             return 0.5 * Math.Sqrt(total[0] * total[0] + total[1] * total[1] + total[2] * total[2]);
         }
     }
+
+    /// <summary>Whether a written quantity (the text of the STEP real) is the same size as <paramref name="cut"/>, up to the rounding noise
+    /// of the cut loop (a relative 1e-9; a cut that is larger or smaller than the nominal size differs by far more than that).</summary>
+    private static bool SameSizeCurrent(string written, double cut) =>
+        double.TryParse(written, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)
+        && Math.Abs(value - cut) <= 1e-9 * Math.Max(Math.Abs(value), Math.Abs(cut));
 
     private static double[]? SymbolBoxCurrent(Element? symbol) =>
         symbol?.Geometry is { } geometry ? geometry.RootBoundingBox ?? geometry.BoundingBox : null;

@@ -200,19 +200,20 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         Assert.Equal(2.1, w, 3);
     }
 
-    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool swapped, double turnDegrees, string fillerType, params string[] fromTheFiller)
+    private static (double Depth, double Height, double Width) QuantitiesAfterTheRewrite(bool swapped, double turnDegrees, string fillerType,
+        bool decodedCut = true)
     {
         var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607], turnDegrees, fillerType);
+        // (what the quantity pass wrote before the rewrite: a size that is not that of the cut loop, 0.885 by 2.135)
         int qDepth = f.W.Add("IFCQUANTITYLENGTH", "'Depth','',$,0.1");
         int qHeight = f.W.Add("IFCQUANTITYLENGTH", "'Height','',$,0.885");
         int qWidth = f.W.Add("IFCQUANTITYLENGTH", "'Width','',$,2.135");
         int qSet = f.W.Add("IFCELEMENTQUANTITY", $"'qset',#1,'BaseQuantities',$,$,(#{qDepth},#{qHeight},#{qWidth})");
         f.W.Add("IFCRELDEFINESBYPROPERTIES", $"'rel',#1,$,$,(#{opening}),#{qSet}");
+        // a door whose cut loop is not decoded: no cut of its own, and the symbol holds none
+        if (!decodedCut) elements[DoorElement].OwnSingleFamilyCutout = null;
 
-        var exporter = new IfcExporter { OpeningQuantitiesSwapped = swapped };
-        // (what the quantity pass records for a dimension that it took from the door or window)
-        foreach (string name in fromTheFiller) exporter._openingQuantitiesFromFiller.Add((opening, name));
-        Assert.Equal(1, exporter.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+        Assert.Equal(decodedCut ? 1 : 0, new IfcExporter { OpeningQuantitiesSwapped = swapped }.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
 
         double Value(int quantity) => double.Parse(f.Attributes(quantity)[3], System.Globalization.CultureInfo.InvariantCulture);
         return (Value(qDepth), Value(qHeight), Value(qWidth));
@@ -232,25 +233,112 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     }
 
     [Theory]
-    // By default (along the host axes) a dimension that the quantity pass took from the door or window (here 0.885 and 2.135) stays, in a wall of
-    // any direction; one it could not take is written from the new outline: Height the vertical side (2.1), Width the side along the wall (0.8).
-    [InlineData(0, "Height,Width", 0.885, 2.135)]
-    [InlineData(37, "Height,Width", 0.885, 2.135)]
-    [InlineData(90, "Height,Width", 0.885, 2.135)]
-    [InlineData(180, "Height,Width", 0.885, 2.135)]
-    [InlineData(0, "", 2.1, 0.8)]
-    [InlineData(37, "", 2.1, 0.8)]
-    [InlineData(90, "", 2.1, 0.8)]
-    [InlineData(0, "Width", 2.1, 2.135)]
-    [InlineData(0, "Height", 0.885, 0.8)]
-    public void BaseQuantities_Default_KeepsWhatCameFromTheDoorOrWindow_AndWritesTheOtherFromTheNewOutline(
-        double turnDegrees, string fromTheFiller, double height, double width)
+    // By default (along the host axes) the opening that the cut loop rebuilds is measured by the loop, in a wall of any direction: Height the vertical
+    // side (2.1), Width the side along the wall (0.8), whatever size the quantity pass had taken from the door (here 0.885 by 2.135, a cut that is not the nominal size).
+    [InlineData(0)]
+    [InlineData(37)]
+    [InlineData(90)]
+    [InlineData(180)]
+    public void BaseQuantities_Default_ADecodedCutLoopIsMeasuredByTheLoopAndNotByTheNominalSize(double turnDegrees)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(false, turnDegrees, "IFCDOOR", fromTheFiller.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        var (depth, h, w) = QuantitiesAfterTheRewrite(false, turnDegrees, "IFCDOOR");
 
         Assert.Equal(0.202, depth, 3);
-        Assert.Equal(height, h, 3);
-        Assert.Equal(width, w, 3);
+        Assert.Equal(2.1, h, 3);
+        Assert.Equal(0.8, w, 3);
+    }
+
+    [Theory]
+    // An opening whose cut loop is not decoded is not rebuilt and keeps what the quantity pass wrote (the size of the door).
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BaseQuantities_AnUndecodedCutLoop_KeepsTheQuantitiesOfTheQuantityPass(bool swapped)
+    {
+        var (depth, h, w) = QuantitiesAfterTheRewrite(swapped, 0, "IFCDOOR", decodedCut: false);
+
+        Assert.Equal(0.1, depth, 3);
+        Assert.Equal(0.885, h, 3);
+        Assert.Equal(2.135, w, 3);
+    }
+
+    /// <summary>Both passes in the order of the export: the quantity pass writes the nominal size of the door (0.885 by 2.135) on the
+    /// opening that was written as a generic box (6 by 0.202 by 3), then the opening pass rebuilds it from the cut loop (0.8 by 2.1) or,
+    /// with no decoded cut, leaves it.</summary>
+    private static (double Height, double Width) QuantitiesOfTheOpeningAfterBothPasses(bool decodedCut, double nominalHeight = 2.135, double nominalWidth = 0.885)
+    {
+        var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607]);
+        const double FeetPerMetre = 1 / 0.3048;
+        Parameter Dimension(int id, double metres) => new()
+        {
+            Id = id, Value = metres * FeetPerMetre, StorageType = StorageType.Double, Definition = new Definition { Id = id, Name = "P" + id },
+        };
+        elements[DoorElement].Parameters = [Dimension(-1001300, nominalHeight), Dimension(-1001301, nominalWidth)];
+        if (!decodedCut) elements[DoorElement].OwnSingleFamilyCutout = null;
+
+        // the generic box as the body of the opening, across the wall like the box of an undecoded opening
+        int origin = f.Point3D(0, 0, 0);
+        int profile = f.W.Add("IFCRECTANGLEPROFILEDEF", $".AREA.,$,#{f.W.Add("IFCAXIS2PLACEMENT2D", $"#{f.Point2D(0, 0)},$")},6.,3.");
+        int position = f.W.Add("IFCAXIS2PLACEMENT3D", $"#{origin},#{f.Direction3D(0, 1, 0)},#{f.Direction3D(1, 0, 0)}");
+        int solid = f.W.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{f.Direction3D(0, 0, 1)},0.202");
+        var shape = f.Attributes(int.Parse(f.Attributes(opening)[6][1..]));
+        int representation = int.Parse(shape[2].Trim('(', ')')[1..]);
+        for (int i = 0; i < f.W.EntityCount; i++)
+            if (f.W.EntityAt(i).Id == representation) f.W.ReplaceArgs(i, $"#{f.BodyContext},'Body','SweptSolid',(#{solid})");
+
+        var exporter = new IfcExporter();
+        var byEntity = new Dictionary<int, int>(products);
+        exporter.ApplyCurrentBaseQuantities(f.W, elements, byEntity, new Dictionary<int, (int, int, string)>(), 1, null);
+        exporter.ApplyCurrentDoorWindowOpenings(f.W, elements, products);
+
+        var openingSet = Enumerable.Range(0, f.W.EntityCount).Select(f.W.EntityAt)
+            .First(e => e.Type == "IFCRELDEFINESBYPROPERTIES" && e.Args.Contains($"(#{opening})"));
+        int set = int.Parse(IfcExporter.SplitStepArguments(openingSet.Args)[5][1..]);
+        var values = IfcExporter.SplitStepArguments(f.Attributes(set)[5].Trim('(', ')'))
+            .Select(reference => f.Attributes(int.Parse(reference[1..])))
+            .ToDictionary(q => q[0].Trim('\''), q => double.Parse(q[3], System.Globalization.CultureInfo.InvariantCulture));
+        return (values["Height"], values["Width"]);
+    }
+
+    [Fact]
+    public void BothPasses_ADecodedCutLoop_ReplacesTheNominalSizeOfTheDoor()
+    {
+        var (height, width) = QuantitiesOfTheOpeningAfterBothPasses(decodedCut: true);
+
+        Assert.Equal(2.1, height, 3);
+        Assert.Equal(0.8, width, 3);
+    }
+
+    [Fact]
+    public void BothPasses_ACutOfTheNominalSizeUpToRoundingNoise_KeepsTheNominalValueAsItWas()
+    {
+        // (the nominal size of the door differs from the cut loop, 2.1 by 0.8, by a relative 1e-12 only)
+        double nominalHeight = 2.1 * (1 + 1e-12), nominalWidth = 0.8 * (1 + 1e-12);
+        var written = QuantitiesOfTheOpeningAfterBothPasses(decodedCut: false, nominalHeight, nominalWidth);
+
+        var (height, width) = QuantitiesOfTheOpeningAfterBothPasses(decodedCut: true, nominalHeight, nominalWidth);
+
+        Assert.Equal(written.Height, height);
+        Assert.Equal(written.Width, width);
+        Assert.NotEqual(2.1, height);
+        Assert.NotEqual(0.8, width);
+    }
+
+    [Fact]
+    public void BothPasses_ACutThatDiffersFromTheNominalSizeByAPartInAMillion_IsMeasuredByTheLoop()
+    {
+        var (height, width) = QuantitiesOfTheOpeningAfterBothPasses(decodedCut: true, 2.1 * (1 + 1e-6), 0.8 * (1 + 1e-6));
+
+        Assert.Equal(2.1, height, 9);
+        Assert.Equal(0.8, width, 9);
+    }
+
+    [Fact]
+    public void BothPasses_NoDecodedCutLoop_LeavesTheNominalSizeOfTheDoorInsteadOfTheGenericBox()
+    {
+        var (height, width) = QuantitiesOfTheOpeningAfterBothPasses(decodedCut: false);
+
+        Assert.Equal(2.135, height, 3);
+        Assert.Equal(0.885, width, 3);
     }
 
     [Theory]
