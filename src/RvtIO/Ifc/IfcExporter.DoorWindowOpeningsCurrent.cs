@@ -69,7 +69,7 @@ public partial class IfcExporter
 
         var globals = new GlobalsCurrent(w);
         var detached = new List<int>();
-        int rewritten = 0;
+        int rewritten = 0, fromParameter = 0;
         var reasons = new SortedDictionary<string, int>(StringComparer.Ordinal);
         void Skip(string reason) => reasons[reason] = reasons.GetValueOrDefault(reason) + 1;
         foreach (var (openingId, fillingId) in fillingByOpening)
@@ -180,9 +180,10 @@ public partial class IfcExporter
             }
 
             rewritten++;
+            if (built.WidthFromParameter) fromParameter++;
         }
         if (rewritten > 0) RemoveDetachedCurrent(w, detached);
-        _diag?.WriteLine($"The current profile door and window openings of {fillingByOpening.Count} filled: {rewritten} rewritten; left as they were: "
+        _diag?.WriteLine($"The current profile door and window openings of {fillingByOpening.Count} filled: {rewritten} rewritten ({fromParameter} with the wall width parameter, its layers or body being stale: wall-width-conflict); left as they were: "
             + string.Join(", ", reasons.Select(pair => $"{pair.Key}={pair.Value}")));
         return rewritten;
     }
@@ -190,7 +191,7 @@ public partial class IfcExporter
     /// <summary>The opening placement, authored profile in its plane, extrusion axis and depth.</summary>
     private readonly record struct DoorWindowOpeningCurrent(double[] RelativeOrigin, List<double[]> ProfileLoop,
         bool IsRectangle, double[] Axis, double Depth, double Height, double Width,
-        double? HostHeight, double? HostWidth);
+        double? HostHeight, double? HostWidth, bool WidthFromParameter = false);
 
     private static bool TryDoorWindowOpeningCurrent(StepWriter w, Dictionary<int, int> indexById,
         IReadOnlyDictionary<int, Element> elementsById, Element hosted, Element wall, string[] wallAttributes, out DoorWindowOpeningCurrent opening,
@@ -296,7 +297,7 @@ public partial class IfcExporter
             double extent = wallLocalLoop.Max(p => p[axis]) - wallLocalLoop.Min(p => p[axis]);
             return extent > 1e-9 ? extent : null;
         }
-        opening = new DoorWindowOpeningCurrent(relative, projected, rectangle, axis, width, loopHeight, loopWidth, Extent(2), Extent(0));
+        opening = new DoorWindowOpeningCurrent(relative, projected, rectangle, axis, width, loopHeight, loopWidth, Extent(2), Extent(0), widthConflict);
         return true;
 
         static double LoopAreaOf(IReadOnlyList<double[]> vertices)
@@ -335,8 +336,9 @@ public partial class IfcExporter
             : TryGetSerializedWallWidthFeet(wall, out double layersFeet) ? layersFeet * FeetToMetres : declared;
         if (wall.ValidatedWallTypeThicknessFeet is not > 0 && used is { } value && declared is { } stated && Math.Abs(value - stated) > WallWidthAgreementMetres)
         {
+            // (the width parameter is read exactly from the wall or its type and is positive; it is the width Revit cuts through)
             conflict = true;
-            return null;
+            return double.IsFinite(stated) ? stated : null;
         }
         return used;
     }

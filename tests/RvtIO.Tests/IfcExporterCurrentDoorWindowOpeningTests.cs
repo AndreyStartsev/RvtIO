@@ -382,7 +382,7 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void WallWhoseWidthParameterDisagreesWithItsBody_KeepsTheOpeningAsItWas(bool parameterOfTheType)
+    public void WallWhoseWidthParameterDisagreesWithItsBody_IsRewrittenWithTheParameter(bool parameterOfTheType)
     {
         // a stale copy of the wall (a file saved in several increments): the layers give 0.202 m, the width parameter 0.303 m
         var (f, opening, elements, products) = Scene([-1, -1, 0, 1, 1, 3]);
@@ -393,6 +393,33 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         }
         else
             elements[WallElement].Parameters.Add(WallWidth(0.303));
+        var diagnostics = new StringWriter();
+
+        Assert.Equal(1, new IfcExporter { DiagnosticOutput = diagnostics }.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+
+        Assert.Equal(0.303, double.Parse(Read(f, opening).Solid[3], System.Globalization.CultureInfo.InvariantCulture), 9);
+        Assert.Contains("1 rewritten (1 with the wall width parameter", diagnostics.ToString());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-0.303)]
+    public void WallWhoseWidthParameterIsNotPositive_IsNoWidthAndTheBodyIsUsed(double parameter)
+    {
+        // the parameter is read only when it is positive: no declared width, so no conflict
+        var (f, opening, elements, products) = Scene([-1, -1, 0, 1, 1, 3]);
+        elements[WallElement].Parameters.Add(WallWidth(parameter));
+
+        Assert.Equal(1, new IfcExporter().ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+
+        Assert.Equal(0.202, double.Parse(Read(f, opening).Solid[3], System.Globalization.CultureInfo.InvariantCulture), 9);
+    }
+
+    [Fact]
+    public void WallWhoseWidthParameterIsNotFiniteAndDisagreesWithItsBody_KeepsTheOpeningAsItWas()
+    {
+        var (f, opening, elements, products) = Scene([-1, -1, 0, 1, 1, 3]);
+        elements[WallElement].Parameters.Add(new Parameter { Id = -1001000, StorageType = StorageType.Double, Value = double.PositiveInfinity });
         string before = f.Find(opening).Args;
         var diagnostics = new StringWriter();
 
