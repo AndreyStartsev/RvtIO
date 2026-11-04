@@ -117,7 +117,7 @@ See the [public API](docs/public-api.md) for the supported surface and [dependen
 
 ## Documentation
 
-The documentation site with the API reference is at <https://mahach666.github.io/RvtIO/>. [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mahach666/RvtIO) offers an AI-generated overview of the repository.
+The documentation site with the API reference is at <https://mahach666.github.io/RvtIO/>. [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mahach666/RvtIO) offers an automatically generated overview of the repository.
 
 ## Examples
 

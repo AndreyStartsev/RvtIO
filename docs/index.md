@@ -19,6 +19,6 @@ The library targets .NET 8 and .NET 10, uses managed code only, and supports Win
 - [Public API](public-api.md): the supported surface of the library.
 - [Export report and exit codes](export-report.md): how a complete export is told from a partial one.
 - [API reference](api/RvtIO.yml): every public type, generated from the XML documentation.
-- [Source on GitHub](https://github.com/mahach666/RvtIO) and [DeepWiki](https://deepwiki.com/mahach666/RvtIO) for an AI-generated overview of the repository.
+- [Source on GitHub](https://github.com/mahach666/RvtIO) and [DeepWiki](https://deepwiki.com/mahach666/RvtIO) for an automatically generated overview of the repository.
 
 RvtIO is not affiliated with, endorsed by or sponsored by Autodesk. Autodesk and Revit are trademarks of Autodesk, Inc.

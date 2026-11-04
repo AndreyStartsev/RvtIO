@@ -53,4 +53,4 @@ The supported surface is listed in [Public API](public-api.md); every type is in
 
 ## Status
 
-Version 0.1.0 is a preview and the API can change before 1.0.
+RvtIO is a preview and the API can change before 1.0.
