@@ -1590,9 +1590,13 @@ public partial class RvtFileReader
         if (TfBlockDeserializer.IsSubclassOf(classId, 1794))
         {
             int? typeId = ownerMatches ? TfBlockDeserializer.ExtractFamilyInstanceSymbolId(data, start, size, classId) : null;
+            var computed = ownerMatches ? TfBlockDeserializer.ExtractComputedFamilySymbol(data, start, size, classId) : null;
+            // A root that reads the same class, type, symbol, placement and host as the one before confirms nothing different (a file
+            // saved in several increments keeps the old copy of an instance whose other fields changed), so it does not make the
+            // instance ambiguous. A root that differs in any of them still does.
+            if (RepeatsInstanceRoot(state, owner, classId, typeId, computed)) return;
             state.FamilyInstanceSymbolIds[owner] = state.FamilyInstanceSymbolIds.TryGetValue(owner, out var old)
                 ? (old.BlockCount + 1, null) : (1, typeId);
-            var computed = ownerMatches ? TfBlockDeserializer.ExtractComputedFamilySymbol(data, start, size, classId) : null;
             state.ComputedFamilySymbols[owner] = state.ComputedFamilySymbols.TryGetValue(owner, out var prior)
                 ? (prior.BlockCount + 1, null) : (1, computed);
         }
@@ -1610,6 +1614,20 @@ public partial class RvtFileReader
             state.ComputedSymbolTargetClasses[owner] = state.ComputedSymbolTargetClasses.TryGetValue(owner, out var prior)
                 ? (prior.BlockCount + 1, null) : (1, kind);
         }
+    }
+
+    internal static bool RepeatsInstanceRoot(ParsingState state, uint owner, ushort classId, int? typeId,
+        TfBlockDeserializer.ComputedFamilySymbol? computed)
+    {
+        if (typeId is null || computed is null
+            || !state.FamilyInstanceSymbolIds.TryGetValue(owner, out var ids) || ids.BlockCount != 1 || ids.TypeId != typeId
+            || !state.ComputedFamilySymbols.TryGetValue(owner, out var symbols) || symbols.BlockCount != 1 || symbols.Symbol is not { } first
+            || !state.ComputedSymbolTargetClasses.TryGetValue(owner, out var kind) || kind.BlockCount != 1 || kind.ClassId != classId)
+            return false;
+        return first.SymbolId == computed.SymbolId && first.HostId == computed.HostId
+            && first.SubInstanceCount == computed.SubInstanceCount && first.InsertOrientation == computed.InsertOrientation
+            && (first.Transform is null ? computed.Transform is null
+                : computed.Transform is not null && first.Transform.AsSpan().SequenceEqual(computed.Transform));
     }
 
     internal static void RecordSystemTypeRoot(

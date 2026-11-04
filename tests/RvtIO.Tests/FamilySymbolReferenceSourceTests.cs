@@ -157,7 +157,7 @@ public class FamilySymbolReferenceSourceTests
         if (mode == "malformed_sweep_first") Record(state, Block(1794, "truncated_root"));
         if (mode == "malformed_type_first") Record(state, Block(1829, "null_pointer"));
         Record(state, sweep); Record(state, type);
-        if (mode == "duplicate_sweep") Record(state, sweep);
+        if (mode == "duplicate_sweep") Record(state, Block(1794, "negative_type")); // another copy; a byte-identical one confirms nothing different
         if (mode == "duplicate_type") Record(state, type);
         if (mode == "mixed_symbol_root") RvtFileReader.RecordFamilySymbolReferenceSource(state, type, 0, Size(type), 512, 500);
         var instance = new Element { Id = 100, CategoryId = -2001160 };

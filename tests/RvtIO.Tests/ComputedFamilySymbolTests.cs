@@ -88,11 +88,93 @@ public class ComputedFamilySymbolTests
     {
         var state = new ParsingState();
         if (mutation == "malformed_first") Record(state, Block("footer"));
-        if (mutation == "duplicate") Record(state, Block());
+        if (mutation == "duplicate") Record(state, Block(symbol: 601));
         Record(state, Block(), mutation == "foreign_owner" ? 999u : 100u);
         var own = state.ComputedFamilySymbols[mutation == "foreign_owner" ? 999u : 100u];
         Assert.Null(own.Symbol);
         Assert.Equal(mutation == "foreign_owner" ? 1 : 2, own.BlockCount);
+    }
+
+    [Fact]
+    public void RepeatThatReadsTheSameConfirmsNothingDifferent()
+    {
+        byte[] block = Block(host: 300);
+        var state = new ParsingState();
+        Record(state, block);
+        // the older copy of the instance in another partition: the same symbol, placement, type and host, but a field this reader
+        // does not use differs (the stamp in the block header and the last field)
+        byte[] older = new byte[block.Length + 11]; block.CopyTo(older, 5);
+        older[5 + 4] ^= 0x55; older[5 + block.Length - 5] ^= 1;
+        RvtFileReader.RecordFamilySymbolReferenceSource(state, older, 5, Size(block), 1794, 100);
+        Record(state, (byte[])block.Clone());
+        Assert.Equal(1, state.ComputedFamilySymbols[100].BlockCount);
+        Assert.Equal(600, state.ComputedFamilySymbols[100].Symbol!.SymbolId);
+        Assert.Equal(1, state.FamilyInstanceSymbolIds[100].BlockCount);
+        Assert.Equal(500, state.FamilyInstanceSymbolIds[100].TypeId);
+        Assert.Equal(1, state.ComputedSymbolTargetClasses[100].BlockCount);
+        Assert.Equal((ushort?)1794, state.ComputedSymbolTargetClasses[100].ClassId);
+        // and the instance still materializes its original symbol
+        var instance = new Element { Id = 100, NativeMasterSymbolId = 500 };
+        state.ComputedSymbolTargetClasses[600] = (1, 1829);
+        ElementBuilder.ApplyValidatedOriginalFamilySymbols([instance, new Element { Id = 600 }], state);
+        Assert.Equal(600, instance.ValidatedOriginalFamilySymbolId);
+    }
+
+    [Theory]
+    [InlineData("symbol")] [InlineData("placement")] [InlineData("host")] [InlineData("orientation")]
+    [InlineData("type")] [InlineData("malformed")]
+    public void RepeatThatReadsDifferentlyStillMakesTheInstanceAmbiguous(string difference)
+    {
+        byte[] block = Block(host: 300);
+        byte[] other = difference switch
+        {
+            "symbol" => Block(host: 300, symbol: 601),
+            "host" => Block(host: 301),
+            "orientation" => Block(host: 300, orientation: 1),
+            "type" => Block(host: 300, master: 501),
+            "malformed" => Block("footer", host: 300),
+            _ => (byte[])block.Clone(),
+        };
+        if (difference == "placement") BitConverter.GetBytes(5d).CopyTo(other, Read(other)!.Start + 9 * 8);
+        var state = new ParsingState();
+        Record(state, block);
+        Record(state, other);
+        Record(state, (byte[])block.Clone()); // equal to the first again, but the instance is ambiguous already
+        Assert.Equal(3, state.ComputedFamilySymbols[100].BlockCount);
+        Assert.Null(state.ComputedFamilySymbols[100].Symbol);
+        Assert.Equal(3, state.FamilyInstanceSymbolIds[100].BlockCount);
+        Assert.Equal(3, state.ComputedSymbolTargetClasses[100].BlockCount);
+        Assert.Null(state.ComputedSymbolTargetClasses[100].ClassId);
+    }
+
+    [Theory]
+    [InlineData("same", true)] [InlineData("symbol", false)] [InlineData("host", false)] [InlineData("sub", false)]
+    [InlineData("orientation", false)] [InlineData("transform", false)] [InlineData("type", false)]
+    [InlineData("class", false)] [InlineData("no_symbol", false)] [InlineData("no_type", false)]
+    [InlineData("first_ambiguous", false)] [InlineData("first_unreadable", false)]
+    [InlineData("symbols_ambiguous", false)] [InlineData("kind_ambiguous", false)] [InlineData("neither_type_read", false)]
+    public void RepeatComparisonCoversEveryFieldTheReaderUses(string change, bool repeats)
+    {
+        double[] matrix = [1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 20, 30];
+        TfBlockDeserializer.ComputedFamilySymbol Symbol(double[]? transform = null) => new(600, 1, 400, 504)
+            { Transform = transform ?? [.. matrix], SubInstanceCount = 0, HostId = 300, InsertOrientation = 0 };
+        var state = new ParsingState();
+        state.FamilyInstanceSymbolIds[100] = (change == "first_ambiguous" ? 2 : 1, change == "neither_type_read" ? null : 500);
+        state.ComputedFamilySymbols[100] = (change == "symbols_ambiguous" ? 2 : 1, change == "first_unreadable" ? null : Symbol());
+        state.ComputedSymbolTargetClasses[100] = (change == "kind_ambiguous" ? 2 : 1, change == "class" ? (ushort)1795 : (ushort)1794);
+        var again = change switch
+        {
+            "symbol" => Symbol() with { SymbolId = 601 },
+            "host" => Symbol() with { HostId = 301 },
+            "sub" => Symbol() with { SubInstanceCount = 1 },
+            "orientation" => Symbol() with { InsertOrientation = 1 },
+            "transform" => Symbol([.. matrix[..11], 31]),
+            "no_symbol" => null,
+            // the bytes of the walk differ (queue index, start, end) but what was read is the same
+            _ => Symbol() with { QueueIndex = 7, Start = 11, End = 115 },
+        };
+        int? type = change == "type" ? 501 : change is "no_type" or "neither_type_read" ? null : 500;
+        Assert.Equal(repeats, RvtFileReader.RepeatsInstanceRoot(state, 100, 1794, type, again));
     }
 
     [Theory]
@@ -116,7 +198,7 @@ public class ComputedFamilySymbolTests
             case "duplicate_occurrence": elements.Add(new Element { Id = 100 }); break;
             case "duplicate_symbol": elements.Add(new Element { Id = 600 }); break;
             case "missing_source": state.ComputedFamilySymbols.Clear(); break;
-            case "duplicate_source": Record(state, Block()); break;
+            case "duplicate_source": Record(state, Block(symbol: 601)); break;
             case "missing_target_root": state.ComputedSymbolTargetClasses.Clear(); break;
             case "duplicate_target_root": state.ComputedSymbolTargetClasses[600] = (2, 1829); break;
             case "wrong_target_class": state.ComputedSymbolTargetClasses[600] = (1, 512); break;
@@ -235,7 +317,7 @@ public class ComputedFamilySymbolTests
     private static void Record(ParsingState state, byte[] block, uint owner = 100)
         => RvtFileReader.RecordFamilySymbolReferenceSource(state, block, 0, Size(block), 1794, owner);
 
-    private static byte[] Block(string? mutation = null, int symbol = 600)
+    private static byte[] Block(string? mutation = null, int symbol = 600, int host = -1, int orientation = 0, int master = 500)
     {
         using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
         writer.Write(100); writer.Write(0u); writer.Write(0u); writer.Write((ushort)1794);
@@ -244,7 +326,9 @@ public class ComputedFamilySymbolTests
             if (field.Declaring == 37 && field.Name == "m_id") { writer.Write(100); continue; }
             if (field.Declaring == 37 && field.Name == "m_docAccess")
             { writer.Write(mutation == "foreign_document" ? 2u : mutation == "null_document" ? 0u : 1u); continue; }
-            if (field.Name == "m_masterSymbolId") { writer.Write(500); continue; }
+            if (field.Name == "m_masterSymbolId") { writer.Write(master); continue; }
+            if (field is { Declaring: 1795, Name: "m_hostId" }) { writer.Write(host); continue; }
+            if (field is { Declaring: 1794, Name: "m_insertOrientation" }) { writer.Write(orientation); continue; }
             if (field.Name == "m_pParamValueSetAString") { writer.Write(uint.MaxValue); writer.Write((ushort)2886); continue; }
             if (field.Name == "m_pInstanceInfo")
             {
