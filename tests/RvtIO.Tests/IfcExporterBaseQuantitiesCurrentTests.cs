@@ -2149,4 +2149,563 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.Equal(6, area, 12);
         Assert.Equal(expectedVolume, volume, 12);
     }
+
+    /// <summary>An extruded rectangle (x by y, depth) whose profile X axis is <paramref name="profileX"/> and whose solid has the
+    /// frame <paramref name="axis"/> (extrusion direction) and <paramref name="refDirection"/>.</summary>
+    private static int AddFramedExtrusionBody(StepWriter w, double x, double y, double depth, string axis, string refDirection, string profileX = "(1.,0.)")
+    {
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.)");
+        int profileDirection = w.Add("IFCDIRECTION", profileX);
+        int profilePlacement = w.Add("IFCAXIS2PLACEMENT2D", $"#{origin},#{profileDirection}");
+        int profile = w.Add("IFCRECTANGLEPROFILEDEF", $".AREA.,$,#{profilePlacement},{StepWriter.Real(x)},{StepWriter.Real(y)}");
+        int point3 = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{point3},#{w.Add("IFCDIRECTION", axis)},#{w.Add("IFCDIRECTION", refDirection)}");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int context = w.Add("IFCGEOMETRICREPRESENTATIONCONTEXT", $"$,'Model',3,1.E-05,#{position},$");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#{context},'Body','SweptSolid',(#{solid})");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
+    private static double SlabWidth(StepWriter w) => Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Width").Value;
+
+    [Fact]
+    public void Pass_FoundationLyingOnItsSide_WidthIsTheFirstSideOfItsProfileNotTheVerticalOne()
+    {
+        var (w, owner, placement) = NewWriter();
+        // A pile cap 0.4 x 0.9 x 0.4: profile 0.4 by 0.9 extruded along the world X, the profile X axis along the world Y, so the
+        // profile Y axis (0.9) is the vertical one. The world X extent rule of a floor would give 0.9.
+        int shape = AddFramedExtrusionBody(w, 0.4, 0.9, 0.4, axis: "(1.,0.,0.)", refDirection: "(0.,1.,0.)");
+        int slab = AddProduct(w, "IFCSLAB", "AZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var cap = new Element { Id = 61, CategoryId = -2001300, Geometry = Box(0.4, 0.9, 0.4) };
+
+        Apply(w, owner, new() { [61] = cap }, new() { [slab] = 61 });
+
+        Assert.Equal(0.4, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_BaseSlabOfTheFloorCategory_RectangleTurnedAboutZ_WidthIsTheFirstSideOfItsProfile()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddFramedExtrusionBody(w, 6, 3, 0.5, axis: "(0.,0.,1.)", refDirection: "(1.,0.,0.)", profileX: "(0.,1.)");
+        int slab = w.Add("IFCSLAB", $"'HZGD7y6S5209$mGLi_sPlj',#{owner},'P',$,$,#{placement},#{shape},'1',.BASESLAB.");
+
+        Apply(w, owner, new() { [68] = new Element { Id = 68, CategoryId = -2000032 } }, new() { [slab] = 68 });
+
+        // a floor would give the world X extent, 3; the reference gives the first side of the profile of a base slab
+        Assert.Equal(6, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_Floor_RectangleTurnedAboutZ_WidthIsTheWorldXExtentOfItsProfile()
+    {
+        var (w, owner, placement) = NewWriter();
+        // profile 6 by 3 whose X axis points along the world Y: the world X extent is the profile Y extent, 3
+        int shape = AddFramedExtrusionBody(w, 6, 3, 0.5, axis: "(0.,0.,1.)", refDirection: "(1.,0.,0.)", profileX: "(0.,1.)");
+        int slab = AddProduct(w, "IFCSLAB", "BZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+
+        Apply(w, owner, new() { [62] = new Element { Id = 62, CategoryId = -2000032 } }, new() { [slab] = 62 });
+
+        Assert.Equal(3, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_Floor_WithAVerticalPrism_WidthIsTheExtentOfTheFirstLoopOfItsLowerEndFaceNotTheOutlineOfTheBody()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 6, 3, 0.5);
+        int slab = AddProduct(w, "IFCSLAB", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var geometry = PrismOver(Rectangle(6, 3), 0.5);
+        double[][] Hole(double z) => [[2, 0.5, z], [3, 0.5, z], [3, 2.5, z], [2, 2.5, z]];
+        foreach (var (face, z) in new[] { (geometry.Faces[0], 0.0), (geometry.Faces[1], 0.5) })
+            face.InnerVertices = [Hole(z).ToList()];
+        geometry.Faces[0].FirstSourceLoop = Hole(0);
+        geometry.Faces[1].FirstSourceLoop = Rectangle(6, 3).Select(p => new[] { p.X, p.Y, 0.5 }).ToList();
+
+        Apply(w, owner, new() { [63] = new Element { Id = 63, CategoryId = -2000032, Geometry = geometry } }, new() { [slab] = 63 });
+
+        // the hole is 1 wide; the outline of the body is 6 wide
+        Assert.Equal(1 * 0.3048, SlabWidth(w), 9);
+    }
+
+    [Fact]
+    public void Pass_Roof_WidthIsTheLargerSideOfTheBody()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 6, 9, 0.5);
+        int slab = w.Add("IFCSLAB", $"'DZGD7y6S5209$mGLi_sPlj',#{owner},'P',$,$,#{placement},#{shape},'1',.ROOF.");
+
+        Apply(w, owner, new() { [64] = new Element { Id = 64, CategoryId = -2000035, Geometry = PrismOver(Rectangle(6, 9), 0.5) } }, new() { [slab] = 64 });
+
+        Assert.Equal(9, SlabWidth(w), 9);
+    }
+
+    /// <summary>A pile: open shells without measures, the end caps plane faces of one node with an exact area each, and four side faces.</summary>
+    private static GeometryData PileOfOpenShells(double length, double topCapArea, double topNormalZ)
+    {
+        var bottom = Face([0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]);
+        bottom.PlaneSurface = true; bottom.GeometryNode = 6; bottom.QuadratureArea = 3.14;
+        var top = Face([0, 0, length], [1, 0, length], [1, 1, length], [0, 1, length]);
+        top.PlaneSurface = true; top.GeometryNode = 6; top.QuadratureArea = topCapArea;
+        top.Normal = [0, 0, topNormalZ];
+        var faces = new List<GeoFace> { bottom, top };
+        double[][] ring = [[0, 0], [1, 0], [1, 1], [0, 1]];
+        for (int i = 0; i < 4; i++)
+        {
+            var (a, b) = (ring[i], ring[(i + 1) % 4]);
+            var side = Face([a[0], a[1], 0], [b[0], b[1], 0], [b[0], b[1], length], [a[0], a[1], length]);
+            side.PlaneSurface = true; side.GeometryNode = 6;
+            faces.Add(side);
+        }
+        return new GeometryData { Faces = faces, BrepSolids = [new GeoBrepSolid { IsClosed = false, FaceIndices = Enumerable.Range(0, 6).ToList() }] };
+    }
+
+    [Fact]
+    public void Pass_FoundationPileOfOpenShells_NetVolumeIsTheCapAreaTimesTheDistanceOfTheOppositeCaps()
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "EZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var pile = new Element { Id = 65, CategoryId = -2001300, Geometry = PileOfOpenShells(24.25, 3.14, 1) };
+
+        Apply(w, owner, new() { [65] = pile }, new() { [slab] = 65 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 3.14 * 24.25 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationPileOfOpenShells_TessellatedSmallerTwinCapTakesTheLargerCapArea()
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "GZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var pile = new Element { Id = 67, CategoryId = -2001300, Geometry = PileOfOpenShells(23.5, 3.12, 1) };
+
+        Apply(w, owner, new() { [67] = pile }, new() { [slab] = 67 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 3.14 * 23.5 * CubicFeet));
+    }
+
+    [Theory]
+    [InlineData(3.5, 1)]     // the caps have not the same area
+    [InlineData(3.14, -1)]   // the caps face the same way
+    public void Pass_FoundationPileOfOpenShells_CapsThatAreNoPairGiveNoVolume(double topCapArea, double topNormalZ)
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "FZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var pile = new Element { Id = 66, CategoryId = -2001300, Geometry = PileOfOpenShells(24.25, topCapArea, topNormalZ) };
+
+        Apply(w, owner, new() { [66] = pile }, new() { [slab] = 66 });
+
+        Assert.Empty(Quantities(w, "IFCQUANTITYVOLUME"));
+    }
+
+    /// <summary>The faces of one open prismatic solid of a node (a square of side 2 in plan, standing on z = 0, moved by
+    /// <paramref name="dx"/>): the two end caps with an exact area each, and the four side faces.</summary>
+    private static List<GeoFace> OpenPrismFaces(int node, double dx, double length, double topCapArea = 4, bool withSides = true)
+    {
+        double[] P(double x, double y, double z) => [x + dx, y, z];
+        var faces = new List<GeoFace>
+        {
+            Face(P(0, 0, 0), P(0, 2, 0), P(2, 2, 0), P(2, 0, 0)),
+            Face(P(0, 0, length), P(2, 0, length), P(2, 2, length), P(0, 2, length)),
+        };
+        faces[0].QuadratureArea = 4;
+        faces[1].QuadratureArea = topCapArea;
+        if (withSides)
+            for (int i = 0; i < 4; i++)
+            {
+                double[][] ring = [[0, 0], [2, 0], [2, 2], [0, 2]];
+                var (a, b) = (ring[i], ring[(i + 1) % 4]);
+                faces.Add(Face(P(a[0], a[1], 0), P(b[0], b[1], 0), P(b[0], b[1], length), P(a[0], a[1], length)));
+            }
+        foreach (var face in faces) { face.PlaneSurface = true; face.GeometryNode = node; }
+        return faces;
+    }
+
+    /// <summary>Every group of faces is one open shell without measures.</summary>
+    private static GeometryData OpenShells(params List<GeoFace>[] groups)
+    {
+        var faces = groups.SelectMany(group => group).ToList();
+        int start = 0;
+        var solids = new List<GeoBrepSolid>();
+        foreach (var group in groups)
+        {
+            solids.Add(new GeoBrepSolid { IsClosed = false, FaceIndices = Enumerable.Range(start, group.Count).ToList() });
+            start += group.Count;
+        }
+        return new GeometryData { Faces = faces, BrepSolids = solids };
+    }
+
+    private static List<(string Name, double Value)> FoundationVolume(GeometryData geometry)
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "HZGD7y6S5209$mGLi_sPlj", owner, placement);
+        Apply(w, owner, new() { [70] = new Element { Id = 70, CategoryId = -2001300, Geometry = geometry } }, new() { [slab] = 70 });
+        return Quantities(w, "IFCQUANTITYVOLUME");
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_StraightPrismWithSideFaces_NetVolumeIsTheCapAreaTimesTheLength()
+    {
+        AssertQuantities(FoundationVolume(OpenShells(OpenPrismFaces(1, 0, 10))), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_BodyNarrowedBetweenEqualCaps_GivesNoVolume()
+    {
+        // two square frusta meet at z = 5: the caps have a side of 2, the middle a side of 1 (the true volume is 70/3, not 40)
+        var faces = OpenPrismFaces(1, 0, 10, withSides: false);
+        for (int half = 0; half < 2; half++)
+        {
+            double za = half * 5, zb = za + 5, a = half == 0 ? 1 : 0.5, b = half == 0 ? 0.5 : 1;
+            double[][] lo = [[1 - a, 1 - a, za], [1 + a, 1 - a, za], [1 + a, 1 + a, za], [1 - a, 1 + a, za]];
+            double[][] hi = [[1 - b, 1 - b, zb], [1 + b, 1 - b, zb], [1 + b, 1 + b, zb], [1 - b, 1 + b, zb]];
+            for (int i = 0; i < 4; i++)
+                faces.Add(new GeoFace { GeometryNode = 1, PlaneSurface = true, OuterVertices = [lo[i], lo[(i + 1) % 4], hi[(i + 1) % 4], hi[i]] });
+        }
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_SideFaceLeaningAwayFromTheCapNormal_GivesNoVolume()
+    {
+        var faces = OpenPrismFaces(1, 0, 10);
+        // the top of the first side moved out: its vertices stay on the two cap planes, the face is not parallel to the normal
+        faces[2].OuterVertices![2][1] -= 1;
+        faces[2].OuterVertices![3][1] -= 1;
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_RoundPileOfFacetedSideFaces_KeepsTheVolume()
+    {
+        const int facets = 16;
+        const double length = 24.25, area = 3.14;
+        double[] Ring(int i, double z, int steps = facets) => [Math.Cos(2 * Math.PI * i / steps), Math.Sin(2 * Math.PI * i / steps), z];
+        // as in the sample: the caps are polygons of twice as many points as the side faces have facets
+        var faces = new List<GeoFace>
+        {
+            Face(Enumerable.Range(0, 2 * facets).Reverse().Select(i => Ring(i, 0, 2 * facets)).ToArray()),
+            Face(Enumerable.Range(0, 2 * facets).Select(i => Ring(i, length, 2 * facets)).ToArray()),
+        };
+        for (int i = 0; i < facets; i++)
+        {
+            var side = Face(Ring(i, 0), Ring(i + 1, 0), Ring(i + 1, length), Ring(i, length));
+            side.CurvedSurface = true;
+            faces.Add(side);
+        }
+        faces[0].QuadratureArea = faces[1].QuadratureArea = area;
+        foreach (var face in faces) { face.GeometryNode = 6; face.PlaneSurface = !face.CurvedSurface; }
+
+        AssertQuantities(FoundationVolume(OpenShells(faces)), ("NetVolume", area * length * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_CylinderFaceWithAxisAlongTheCapNormal_KeepsTheVolume()
+    {
+        var faces = OpenPrismFaces(1, 0, 10);
+        // a curved face whose boundary runs along both cap planes but has no usable loop normal (a bow tie): its analytic axis says it is straight
+        faces.Add(new GeoFace
+        {
+            GeometryNode = 1, CurvedSurface = true, AnalyticCylinderAxis = [0, 0, 1], AnalyticCylinderRadius = 1,
+            OuterVertices = [[0, 0, 0], [2, 0, 10], [2, 0, 0], [0, 0, 10]],
+        });
+
+        AssertQuantities(FoundationVolume(OpenShells(faces)), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_CylinderFaceWithAxisAcrossTheCapNormal_GivesNoVolume()
+    {
+        var faces = OpenPrismFaces(1, 0, 10);
+        faces[2].PlaneSurface = false; faces[2].CurvedSurface = true; faces[2].AnalyticCylinderAxis = [1, 0, 0];
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_TwistedPrismOfEqualCaps_GivesNoVolume()
+    {
+        // the top square is the bottom one turned by 90 degrees; the side faces are bent quads whose loop normal is perpendicular to the cap
+        // normal, but whose corners are not on a plane (the true volume is 80/3, not 40)
+        var faces = OpenPrismFaces(1, 0, 10, withSides: false);
+        double[][] lo = [[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]];
+        double[][] hi = [[2, 0, 10], [2, 2, 10], [0, 2, 10], [0, 0, 10]];
+        for (int i = 0; i < 4; i++)
+            faces.Add(new GeoFace { GeometryNode = 1, CurvedSurface = true, OuterVertices = [lo[i], lo[(i + 1) % 4], hi[(i + 1) % 4], hi[i]] });
+        faces[1].OuterVertices = hi.ToList();
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_CapsWithoutSideFaces_GiveNoVolume()
+    {
+        Assert.Empty(FoundationVolume(OpenShells(OpenPrismFaces(1, 0, 10, withSides: false))));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_SideFacesThatCoverOnlyPartOfTheCapBoundary_KeepTheVolume()
+    {
+        // as for the round piles of the sample: the other part of the lateral surface lies in another node
+        var faces = OpenPrismFaces(1, 0, 10);
+        faces.RemoveRange(3, 3);
+
+        AssertQuantities(FoundationVolume(OpenShells(faces)), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_SquareCapAndRoundCapOfTheSameAreaWithOneSideFace_GiveNoVolume()
+    {
+        // the side face is a rectangle of the square, its top edge is not on the round cap: the body between the caps is a loft (more than 40)
+        var faces = OpenPrismFaces(1, 0, 10, withSides: false);
+        double r = Math.Sqrt(4 / Math.PI);
+        faces[1].OuterVertices = Enumerable.Range(0, 32).Select(k => new[] { 1 + r * Math.Cos(2 * Math.PI * k / 32), 1 + r * Math.Sin(2 * Math.PI * k / 32), 10.0 }).ToList();
+        faces.Add(new GeoFace { GeometryNode = 1, PlaneSurface = true, OuterVertices = [[0, 0, 0], [2, 0, 0], [2, 0, 10], [0, 0, 10]] });
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_SideFaceWithAPointBetweenTheCapPlanes_GivesNoVolume()
+    {
+        var faces = OpenPrismFaces(1, 0, 10);
+        // a vertical rectangle that stops half way: not a side from cap to cap
+        faces.Add(new GeoFace { GeometryNode = 1, PlaneSurface = true, OuterVertices = [[0, 0, 0], [2, 0, 0], [2, 0, 5], [0, 0, 5]] });
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_PrismWithoutAGeometryNode_KeepsTheVolume()
+    {
+        AssertQuantities(FoundationVolume(OpenShells(OpenPrismFaces(0, 0, 10))), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NetAreaIsTheCapOfANodeThatCounts()
+    {
+        // the cap pair of the negative node comes first and is larger
+        var excluded = OpenPrismFaces(-1, 10, 10);
+        foreach (var face in excluded.Take(2)) face.QuadratureArea = 9;
+        var geometry = OpenShells(excluded, OpenPrismFaces(2, 0, 10));
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "IZGD7y6S5209$mGLi_sPlj", owner, placement);
+        Apply(w, owner, new() { [70] = new Element { Id = 70, CategoryId = -2001300, Geometry = geometry } }, new() { [slab] = 70 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
+    }
+
+    private static List<(string Name, double Value)> FoundationAreas(GeometryData geometry, double? hostArea = null)
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "IZGD7y6S5209$mGLi_sPlj", owner, placement);
+        Apply(w, owner, new() { [70] = new Element { Id = 70, CategoryId = -2001300, Geometry = geometry, Parameters = hostArea is { } area
+            ? [new Parameter { Id = -1012805, Value = area, StorageType = StorageType.Double, Definition = new Definition { Id = -1012805, Name = "HOST_AREA_COMPUTED" } }] : [] } },
+            new() { [slab] = 70 });
+        return Quantities(w, "IFCQUANTITYAREA");
+    }
+
+    /// <summary>An open prism whose caps carry an exact area of 9 (the area of a node that must not count) or none at all.</summary>
+    private static List<GeoFace> PrismWithCapArea(int node, double dx, double? capArea)
+    {
+        var faces = OpenPrismFaces(node, dx, 10);
+        faces[0].QuadratureArea = faces[1].QuadratureArea = capArea;
+        return faces;
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NetAreaOfANodeWithoutACapArea_LeavesOutANodeOfANegativeMeasure()
+    {
+        var geometry = OpenShells(PrismWithCapArea(1, 10, 9), PrismWithCapArea(2, 0, null));
+        geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(1, 10, -40)];
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NetAreaOfANodeWithoutACapArea_LeavesOutANegativeNode()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, 9), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NetAreaWithoutAnyCapArea_LeavesOutANegativeNode()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, null), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
+    }
+
+    private static GeometryData ClosedShells(params List<GeoFace>[] groups)
+    {
+        var geometry = OpenShells(groups);
+        foreach (var solid in geometry.BrepSolids!) solid.IsClosed = true;
+        return geometry;
+    }
+
+    [Fact]
+    public void Pass_FoundationOfClosedShells_WithoutAnyCapArea_NetVolumeLeavesOutANegativeNode()
+    {
+        var geometry = ClosedShells(PrismWithCapArea(-1, 10, null), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfClosedShells_WithoutAnyCapArea_NetVolumeLeavesOutACuttingNode()
+    {
+        var geometry = ClosedShells(PrismWithCapArea(1, 10, null), PrismWithCapArea(2, 0, null));
+        geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(1, 10, -40)];
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfClosedShells_ExcludedNodeWithAZeroCapAreaFirst_NetVolumeLeavesItOut()
+    {
+        var geometry = ClosedShells(PrismWithCapArea(-1, 10, 0), PrismWithCapArea(2, 0, 4));
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_OnlyNodesThatDoNotCount_HaveNoNetArea()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, 9));
+
+        Assert.Empty(FoundationAreas(geometry));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_OnlyNodesThatDoNotCount_NetAreaFallsBackToTheComputedHostArea()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, 9));
+
+        AssertQuantities(FoundationAreas(geometry, hostArea: 3), ("GrossArea", 3 * SquareFeet), ("NetArea", 3 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_WithoutAnExcludedNode_NetAreaIsTheTopSurfaceOfEveryShell()
+    {
+        var geometry = OpenShells(PrismWithCapArea(1, 10, null), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 8 * SquareFeet), ("NetArea", 8 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_TwinCapOnePointFivePercentSmaller_KeepsTheVolumeOfTheLargerCap()
+    {
+        // the twin is the tessellation of the cap: its points are a little inside the side faces
+        var faces = OpenPrismFaces(1, 0, 10, topCapArea: 4 * 0.985);
+        double shrink = Math.Sqrt(0.985);
+        faces[1].OuterVertices = faces[1].OuterVertices!.Select(p => new[] { 1 + (p[0] - 1) * shrink, 1 + (p[1] - 1) * shrink, p[2] }).ToList();
+
+        AssertQuantities(FoundationVolume(OpenShells(faces)), ("NetVolume", 40 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_CapsWithPlanesThatAreNotParallel_GiveNoVolume()
+    {
+        var faces = OpenPrismFaces(1, 0, 10);
+        faces[1].Normal = [0, Math.Sin(0.1), -Math.Cos(0.1)];
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NodeWithASingleCap_GivesNoVolume()
+    {
+        var faces = OpenPrismFaces(1, 0, 10);
+        faces[1].QuadratureArea = null;
+
+        Assert.Empty(FoundationVolume(OpenShells(faces)));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NegativeNodeGivesNoVolume()
+    {
+        Assert.Empty(FoundationVolume(OpenShells(OpenPrismFaces(-1, 0, 10))));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NegativeNodeNextToAValidOne_IsLeftOut()
+    {
+        var geometry = OpenShells(OpenPrismFaces(-1, 10, 10), OpenPrismFaces(2, 0, 5));
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 20 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NodeOfANegativeMeasure_IsLeftOut()
+    {
+        var geometry = OpenShells(OpenPrismFaces(1, 10, 10), OpenPrismFaces(2, 0, 5));
+        geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(1, 10, -40)];
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 20 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_TwoPrismaticNodes_VolumesAreAdded()
+    {
+        var geometry = OpenShells(OpenPrismFaces(1, 0, 10), OpenPrismFaces(2, 10, 10));
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 80 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_MeasuredNodeAndOpenPrismaticNode_AreAddedWithoutCountingTheMeasuredOneTwice()
+    {
+        var geometry = OpenShells(OpenPrismFaces(1, 0, 10), OpenPrismFaces(2, 10, 5));
+        geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(1, 10, 30)];
+
+        // node 1: its measure, 30 (its caps would give 40); node 2: its caps, 20
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 50 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_ClosedShellAndOpenPrismaticNode_AreAdded()
+    {
+        var closed = Box(2, 2, 3);
+        foreach (var face in closed.Faces) face.GeometryNode = 1;
+        var open = OpenPrismFaces(2, 10, 10);
+        var geometry = new GeometryData
+        {
+            Faces = closed.Faces.Concat(open).ToList(),
+            BrepSolids =
+            [
+                new GeoBrepSolid { IsClosed = true, FaceIndices = Enumerable.Range(0, 6).ToList() },
+                new GeoBrepSolid { IsClosed = false, FaceIndices = Enumerable.Range(6, open.Count).ToList() },
+            ],
+        };
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", (12 + 40) * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_ClosedShellThatIsAlsoAStraightPrism_IsCountedOnce()
+    {
+        // a closed box turned so that no face is horizontal (it has no vertical extrusion): its closed shell and its caps both give 40
+        var faces = OpenPrismFaces(1, 0, 10);
+        double[] e1 = [1 / Math.Sqrt(2), -1 / Math.Sqrt(2), 0], e3 = [1 / Math.Sqrt(3), 1 / Math.Sqrt(3), 1 / Math.Sqrt(3)];
+        double[] e2 = [e3[1] * e1[2] - e3[2] * e1[1], e3[2] * e1[0] - e3[0] * e1[2], e3[0] * e1[1] - e3[1] * e1[0]];
+        foreach (var face in faces)
+        {
+            double[] Turn(double[] p) => new[] { 0, 1, 2 }.Select(k => p[0] * e1[k] + p[1] * e2[k] + p[2] * e3[k]).ToArray();
+            face.OuterVertices = face.OuterVertices!.Select(Turn).ToList();
+            face.Origin = Turn(face.Origin!);
+            face.Normal = Turn(face.Normal!);
+        }
+        var geometry = new GeometryData
+        {
+            Faces = faces,
+            BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = Enumerable.Range(0, faces.Count).ToList() }],
+        };
+
+        AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
 }
