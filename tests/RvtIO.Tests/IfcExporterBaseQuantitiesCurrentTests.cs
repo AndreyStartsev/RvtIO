@@ -2498,6 +2498,73 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
     }
 
+    private static List<(string Name, double Value)> FoundationAreas(GeometryData geometry, double? hostArea = null)
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "IZGD7y6S5209$mGLi_sPlj", owner, placement);
+        Apply(w, owner, new() { [70] = new Element { Id = 70, CategoryId = -2001300, Geometry = geometry, Parameters = hostArea is { } area
+            ? [new Parameter { Id = -1012805, Value = area, StorageType = StorageType.Double, Definition = new Definition { Id = -1012805, Name = "HOST_AREA_COMPUTED" } }] : [] } },
+            new() { [slab] = 70 });
+        return Quantities(w, "IFCQUANTITYAREA");
+    }
+
+    /// <summary>An open prism whose caps carry an exact area of 9 (the area of a node that must not count) or none at all.</summary>
+    private static List<GeoFace> PrismWithCapArea(int node, double dx, double? capArea)
+    {
+        var faces = OpenPrismFaces(node, dx, 10);
+        faces[0].QuadratureArea = faces[1].QuadratureArea = capArea;
+        return faces;
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NetAreaOfANodeWithoutACapArea_LeavesOutANodeOfANegativeMeasure()
+    {
+        var geometry = OpenShells(PrismWithCapArea(1, 10, 9), PrismWithCapArea(2, 0, null));
+        geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(1, 10, -40)];
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NetAreaOfANodeWithoutACapArea_LeavesOutANegativeNode()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, 9), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_NetAreaWithoutAnyCapArea_LeavesOutANegativeNode()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, null), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 4 * SquareFeet), ("NetArea", 4 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_OnlyNodesThatDoNotCount_HaveNoNetArea()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, 9));
+
+        Assert.Empty(FoundationAreas(geometry));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_OnlyNodesThatDoNotCount_NetAreaFallsBackToTheComputedHostArea()
+    {
+        var geometry = OpenShells(PrismWithCapArea(-1, 10, 9));
+
+        AssertQuantities(FoundationAreas(geometry, hostArea: 3), ("GrossArea", 3 * SquareFeet), ("NetArea", 3 * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_FoundationOfOpenShells_WithoutAnExcludedNode_NetAreaIsTheTopSurfaceOfEveryShell()
+    {
+        var geometry = OpenShells(PrismWithCapArea(1, 10, null), PrismWithCapArea(2, 0, null));
+
+        AssertQuantities(FoundationAreas(geometry), ("GrossArea", 8 * SquareFeet), ("NetArea", 8 * SquareFeet));
+    }
+
     [Fact]
     public void Pass_FoundationOfOpenShells_TwinCapOnePointFivePercentSmaller_KeepsTheVolumeOfTheLargerCap()
     {

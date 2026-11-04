@@ -1244,9 +1244,16 @@ public partial class IfcExporter
             // the cap of a node below zero, or of a cutting node (a negative measure), is not part of the foundation
             var cutting = (element.Geometry?.NodeMeasures ?? []).Where(measure => measure.Volume < 0).Select(measure => measure.Node).ToHashSet();
             var faces = element.Geometry?.Faces ?? [];
+            bool Counts(GeoFace f) => f.GeometryNode >= 0 && !cutting.Contains(f.GeometryNode);
+            if (faces.Any(f => !Counts(f)))
+            {
+                // the area that stands in for the cap is the one of the nodes that count only
+                double kept = TopSurfaceAreaCurrent(shells.Select(shell => shell with { Faces = shell.Faces.Where(Counts).ToList() })) * SquareFeetToSquareMetres;
+                topArea = kept > 1e-9 ? kept : ComputedHostAreaCurrent(element) ?? profileArea;
+            }
             if (faces.FirstOrDefault(f => f.QuadratureArea != null) is { QuadratureArea: > 1e-9 })
             {
-                if (faces.FirstOrDefault(f => f.QuadratureArea != null && f.GeometryNode >= 0 && !cutting.Contains(f.GeometryNode))?.QuadratureArea is { } capArea
+                if (faces.FirstOrDefault(f => f.QuadratureArea != null && Counts(f))?.QuadratureArea is { } capArea
                     && capArea > 1e-9)
                     topArea = capArea * SquareFeetToSquareMetres;
                 netVolume = FoundationNodesVolumeCurrent(element.Geometry!, shells);
