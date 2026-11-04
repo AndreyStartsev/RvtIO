@@ -914,21 +914,25 @@ public partial class IfcExporter
     }
 
     /// <summary>Volume (feet3) of the open solid of one node when it is a straight prism: two plane end caps with an exact area each (within 2
-    /// percent of each other: one cap can be the tessellated, smaller, twin of the other) and opposite normals, on different planes, and every
-    /// other face a side face: its points on the two cap planes, and either a loop whose own normal is perpendicular to the cap normal or a
-    /// curved face with a cylinder axis along it. The volume is the larger cap area times the distance of the cap planes. Equal caps alone
-    /// say nothing about the shape between them, so without that proof there is none (null).</summary>
+    /// percent of each other: one cap can be the tessellated, smaller, twin of the other) and opposite normals, on different planes, and the
+    /// rest of the node at least one side face and only side faces. A side face has its points on the boundary of the two caps and is either
+    /// a curved face with a cylinder axis along the cap normal, or a face without an axis whose loop is flat with a normal perpendicular to
+    /// the cap normal. The volume is the larger cap area times the distance of the cap planes. Equal caps alone say nothing about the shape
+    /// between them, so without that proof there is none (null). Limits: a curved face without an axis is judged by its boundary loop alone,
+    /// and the side faces need not close the caps (the lateral surface of a round pile of the samples lies half in another node), so a
+    /// missing part of the lateral surface is not proven.</summary>
     private static double? StraightPrismVolumeCurrent(IReadOnlyList<GeoFace> faces)
     {
         for (int i = 0; i < faces.Count; i++)
         {
             var cap = faces[i];
-            if (!cap.PlaneSurface || cap.QuadratureArea is not { } area || cap.Normal is not { Length: 3 } normal || cap.Origin is not { Length: 3 } origin) continue;
+            if (!cap.PlaneSurface || cap.QuadratureArea is not { } area || cap.Normal is not { Length: 3 } normal || cap.Origin is not { Length: 3 } origin
+                || cap.OuterVertices is not { Count: >= 3 }) continue;
             for (int j = i + 1; j < faces.Count; j++)
             {
                 var other = faces[j];
                 if (!other.PlaneSurface || other.QuadratureArea is not { } otherArea || other.Normal is not { Length: 3 } otherNormal
-                    || other.Origin is not { Length: 3 } otherOrigin
+                    || other.Origin is not { Length: 3 } otherOrigin || other.OuterVertices is not { Count: >= 3 }
                     || Math.Abs(otherArea - area) > 0.02 * Math.Max(area, otherArea)
                     || normal[0] * otherNormal[0] + normal[1] * otherNormal[1] + normal[2] * otherNormal[2] > -1 + 1e-9) continue;
                 double distance = (otherOrigin[0] - origin[0]) * normal[0] + (otherOrigin[1] - origin[1]) * normal[1] + (otherOrigin[2] - origin[2]) * normal[2];
@@ -938,19 +942,48 @@ public partial class IfcExporter
                     double height = (point[0] - origin[0]) * normal[0] + (point[1] - origin[1]) * normal[1] + (point[2] - origin[2]) * normal[2];
                     return Math.Abs(height) <= 1e-6 || Math.Abs(height - distance) <= 1e-6;
                 }
-                bool Side(GeoFace face) =>
-                    face.OuterVertices is { Count: > 0 } outer && outer.All(Along)
-                    && (face.InnerVertices ?? []).All(loop => loop.All(Along))
-                    && (face.CurvedSurface && face.AnalyticCylinderAxis is { Length: 3 } axis
-                        && Math.Abs(axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2]) > 1 - 1e-9
-                        || FaceUnitNormal(face) is { } sideNormal
-                        && Math.Abs(sideNormal[0] * normal[0] + sideNormal[1] * normal[1] + sideNormal[2] * normal[2]) < 1e-6);
-                if (faces.All(face => ReferenceEquals(face, cap) || ReferenceEquals(face, other) || Side(face)))
-                    return Math.Max(area, otherArea) * Math.Abs(distance);
+                bool Side(GeoFace face)
+                {
+                    if (face.OuterVertices is not { Count: > 0 } outer || !outer.All(Along) || !(face.InnerVertices ?? []).All(loop => loop.All(Along)))
+                        return false;
+                    if (face.AnalyticCylinderAxis is { Length: 3 } axis)
+                        return face.CurvedSurface && Math.Abs(axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2]) > 1 - 1e-9;
+                    return FaceUnitNormal(face) is { } sideNormal
+                        && Math.Abs(sideNormal[0] * normal[0] + sideNormal[1] * normal[1] + sideNormal[2] * normal[2]) < 1e-6
+                        && outer.All(point => Math.Abs((point[0] - outer[0][0]) * sideNormal[0] + (point[1] - outer[0][1]) * sideNormal[1]
+                            + (point[2] - outer[0][2]) * sideNormal[2]) <= 1e-6);
+                }
+                var sides = faces.Where(face => !ReferenceEquals(face, cap) && !ReferenceEquals(face, other)).ToList();
+                if (!sides.All(Side)) continue;
+                // At least one side face, and every point of a side face lies on the boundary of the cap in its plane (up to 2 percent of the
+                // cap size: the faceted sides of a round pile stay inside the finer polygon of the cap). The sides are not required to close
+                // the caps: the lateral surface of a round pile of the samples lies half in another node.
+                if (sides.Count == 0) continue;
+                double tolerance = 0.02 * Math.Sqrt(Math.Max(area, otherArea));
+                bool OnBoundary(double[] point) => LoopEdges(Math.Abs((point[0] - origin[0]) * normal[0] + (point[1] - origin[1]) * normal[1]
+                        + (point[2] - origin[2]) * normal[2]) <= 1e-6 ? cap : other)
+                    .Any(edge => DistanceToSegment(point, edge.A, edge.B) <= tolerance);
+                if (!sides.All(side => side.OuterVertices!.Concat((side.InnerVertices ?? []).SelectMany(loop => loop)).All(OnBoundary))) continue;
+                return Math.Max(area, otherArea) * Math.Abs(distance);
             }
         }
         return null;
     }
+
+    private static double DistanceToSegment(double[] p, double[] a, double[] b)
+    {
+        double dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+        double length2 = dx * dx + dy * dy + dz * dz;
+        double t = length2 < 1e-24 ? 0 : Math.Clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy + (p[2] - a[2]) * dz) / length2, 0, 1);
+        double ex = a[0] + t * dx - p[0], ey = a[1] + t * dy - p[1], ez = a[2] + t * dz - p[2];
+        return Math.Sqrt(ex * ex + ey * ey + ez * ez);
+    }
+
+    /// <summary>The edges of every loop (outer and holes) of a face, each loop closed.</summary>
+    private static IEnumerable<(double[] A, double[] B)> LoopEdges(GeoFace face) =>
+        (face.OuterVertices is { } outer ? new[] { outer } : []).Concat(face.InnerVertices ?? [])
+            .Where(loop => loop.Count >= 2)
+            .SelectMany(loop => Enumerable.Range(0, loop.Count).Select(k => (loop[k], loop[(k + 1) % loop.Count])));
 
     private static ShellPrism? SoleClosedPrismCurrent(IReadOnlyList<ShellInfo> shells, bool verticalOnly = false) =>
         shells.Count == 1 && shells[0].Closed ? FindPrismCurrent(shells[0], verticalOnly) : null;
@@ -1208,10 +1241,14 @@ public partial class IfcExporter
         double? netVolume = totals?.Volume;
         if (element.CategoryId == CurrentFoundationCategoryId && prism == null)
         {
-            var cap = element.Geometry?.Faces?.FirstOrDefault(f => f.QuadratureArea != null);
-            if (cap?.QuadratureArea is { } capArea && capArea > 1e-9)
+            // the cap of a node below zero, or of a cutting node (a negative measure), is not part of the foundation
+            var cutting = (element.Geometry?.NodeMeasures ?? []).Where(measure => measure.Volume < 0).Select(measure => measure.Node).ToHashSet();
+            var faces = element.Geometry?.Faces ?? [];
+            if (faces.FirstOrDefault(f => f.QuadratureArea != null) is { QuadratureArea: > 1e-9 })
             {
-                topArea = capArea * SquareFeetToSquareMetres;
+                if (faces.FirstOrDefault(f => f.QuadratureArea != null && f.GeometryNode >= 0 && !cutting.Contains(f.GeometryNode))?.QuadratureArea is { } capArea
+                    && capArea > 1e-9)
+                    topArea = capArea * SquareFeetToSquareMetres;
                 netVolume = FoundationNodesVolumeCurrent(element.Geometry!, shells);
             }
         }
