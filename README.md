@@ -131,7 +131,7 @@ The tested projects include basic and advanced architecture, structure and MEP s
 
 ## Limitations
 
-- Version 0.1.0 is a preview. The API can change before 1.0.
+- Version 0.2.0 is a preview. The API can change before 1.0.
 - Geometry coverage is partial for some element kinds.
 - Revit 2027 support is partial.
 - There is no support for writing or modifying Revit files.

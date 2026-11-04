@@ -78,9 +78,9 @@ Write commit messages in the imperative mood, for example,
 
 ## Releases
 
-Push a tag matching the package version, such as `v0.1.0`, to run `release.yml`.
-The workflow builds and tests the solution, attaches packages, symbols, source and checksums to a draft preview release,
-and publishes the NuGet packages through Trusted Publishing. Review and publish the GitHub draft separately.
+Push a tag matching the package version, such as `v0.2.0`, to run `release.yml`.
+The workflow builds and tests the solution, attaches packages, symbols, source and checksums to a GitHub release published at once (not a draft),
+and publishes the NuGet packages through Trusted Publishing. The release notes are the section of `CHANGELOG.md` for the version, so add that section before the tag.
 The NuGet policy must name this repository, `release.yml`, the configured NuGet profile and the `RvtIO*` package pattern.
 
 ## Licensing contributions
