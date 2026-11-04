@@ -115,6 +115,10 @@ The library is silent by default. Set `RvtReaderOptions.DiagnosticOutput` for re
 
 See the [public API](docs/public-api.md) for the supported surface and [dependencies](docs/dependencies.md) for package details.
 
+## Documentation
+
+The documentation site with the API reference is at <https://mahach666.github.io/RvtIO/>. [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mahach666/RvtIO) offers an AI-generated overview of the repository.
+
 ## Examples
 
 IFC exports of sample models opened in an IFC viewer:
