@@ -15,7 +15,7 @@ API between minor releases.
 - Default output, IFC quantities: base quantities of beams, columns, members, piles, floors and plates are derived from the surface integrals of the source geometry, and door and window height and width come from their parameters or frame extent before the bounding box. NetVolume, NetSurfaceArea, CrossSectionArea, Length, GrossArea, NetArea and the door and window Height, Width, Area, OverallHeight and OverallWidth can differ from 0.1.0; most values move toward the reference exporter. There is no option that restores the 0.1.0 values.
 - Default output, stairs: a stair flight carries NumberOfRiser, NumberOfTreads, RiserHeight and TreadLength and the property set Pset_StairFlightCommon; runs, landings, stringers and railings of a stair are aggregated into the stair (IfcRelAggregates) and are no longer contained in the storey; a landing takes the name and Reference of its type. See also the stair type entry below. There is no option that restores the 0.1.0 layout.
 - API: `RvtFileReader.Read` and `RvtDocument.Open` throw `RvtInputException` (or `RvtLimitException` for a stream over the platform array length) for a file that cannot be read, instead of an `EndOfStreamException`, `FileFormatException` or a similar exception from a decoder. Code that catches the old exception types must catch the new ones.
-- Command line: the exit codes 2, 3 and 4 are new (see below). A damaged or truncated file ended in an unhandled exception in 0.1.0 and now returns 2 with a one-line message.
+- Command line: the exit codes 2, 3 and 4 are new (see below). A damaged or truncated file ended in an unhandled exception in 0.1.0 (or, when only the end of a stream the export does not use was missing, in an export without a message) and now returns 2 with a one-line message.
 
 ### Added
 
@@ -23,7 +23,7 @@ API between minor releases.
 - The `--ifc-phase <last|all|id>` command line option and the `IfcExporter.ExportPhaseId` and `ExportAllPhases` properties (see the breaking change above).
 - The opt-in `RvtReaderOptions.ResolveCurrentCopies` reader option and `--resolve-current-copies` command line option, which keep only the current copy of an element that several partition streams hold. It is off by default and the default output does not change.
 - The full JSON gets the parameter CURTAIN_WALL_PANELS_WIDTH (a copy of GENERIC_WIDTH) on elements that hold only the generic width, and lists it in ParameterDefinitions. CURVE_ELEM_LENGTH values can differ in the last digit. Compact JSON is unchanged.
-- The IFC length unit is read from the project length unit in every file layout (including the Revit 2020 display unit layout and family documents); the reason is reported through diagnostics when it falls back to millimetres.
+- The IFC length unit is read from the project length unit in every file layout (including the Revit 2020 display unit layout and family documents), so a file whose length unit is not the millimetre now gets that unit in the IFC (a family in feet gets FOOT, SQUARE FOOT and CUBIC FOOT instead of millimetre, square metre and cubic metre); the reason is reported through diagnostics when it falls back to millimetres.
 - Stair runs and landings resolve their type through the stored type association, so the IFC names the real type, writes its stair flight type and property sets, and the stair run Reference. The IFC stair shape of the current profile stays undefined when a stair has a sketched run, and a railing aggregated into a stair no longer takes the classification code of the stair. The run Length quantity keeps the inputs it had. The element class counts of the stair source are taken from the stream walk, which in files with their own class schema lets both profiles recognise the runs and landings of a stair.
 
 ### Fixed
@@ -42,7 +42,8 @@ API between minor releases.
 ### Performance
 
 - Reduces the memory allocated and the processor time spent in the tessellation of trimmed surfaces and in the ordering of boundary rings: grid cells are clipped in reused per-thread buffers and the ring search uses flat arrays instead of per-cell lists and LINQ. The output is unchanged byte for byte.
-- Speeds up the export of models with many family instances: the record chunks are scanned for shared parameter GUIDs without an allocation per offset, face corner keys are sorted ordinally, and the faceted shells of the family symbols are planned on several threads before the writer needs them. The output is unchanged byte for byte. In repeated runs of large JSON exports the wall time dropped by 17 to 18 percent against 0.1.0; the processor time can rise because plans that the writer does not use are computed too, and single-core machines gain nothing. Peak memory depends on the collector and can be higher than in 0.1.0.
+- Speeds up the export of models with many family instances: the record chunks are scanned for shared parameter GUIDs without an allocation per offset, face corner keys are sorted ordinally, and the faceted shells of the family symbols are planned on several threads before the writer needs them. The output is unchanged byte for byte. The processor time can rise because plans that the writer does not use are computed too, and single-core machines gain nothing.
+- Together, the two changes above cut the wall time against 0.1.0 by 17 to 18 percent in single repeated runs of large JSON exports and by 2 to 3 percent in large IFC exports. Peak memory depends on the collector and can be higher than in 0.1.0.
 
 ### Project
 
