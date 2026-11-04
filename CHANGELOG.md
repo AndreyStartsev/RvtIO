@@ -6,6 +6,7 @@ API between minor releases.
 
 ## [Unreleased]
 
+- Measures the opening of a door or window in a straight wall by its decoded cut loop (Width along the wall, Height vertical) instead of the nominal size of the door or window when the cut is larger than the nominal size, as Revit cuts it; the nominal size stays for an opening whose cut loop is not decoded (for the sample `arch25` this changes the Width and Height of 124 openings, which now agree with the reference export). Closes #72.
 - Gives a stair with straight and sketched runs the shape of its straight runs in the current profile (Closes #70). A sketched run (flight type FREEFORM) is no flight of the shape rule there, so a straight run, a landing and a sketched run turned back is STRAIGHT_RUN_STAIR, as in the reference export, instead of undefined; a stair of sketched runs alone stays undefined. The older profile and files without such stairs are unchanged.
 
 ## [0.2.0] - 2026-11-04
