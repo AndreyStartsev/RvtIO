@@ -890,37 +890,64 @@ public partial class IfcExporter
         return (taken.Sum(measure => measure.Volume) * CubicFeetToCubicMetres, taken.Sum(measure => measure.Area) * SquareFeetToSquareMetres);
     }
 
-    /// <summary>Volume (m3) of a foundation of several solids: each measured node counts once with its surface integrals (a cutting node, whose
-    /// volume is negative, is not taken), a solid without them counts by its closed shell, an open shell without them is left out, and a node with a negative number takes no part. Null when nothing counts.</summary>
+    /// <summary>Volume (m3) of a foundation of several solids, node by node: the measure of the node when it has surface integrals, else the
+    /// volume of its closed shells, else the volume of its open straight prism (<see cref="StraightPrismVolumeCurrent"/>), else nothing.
+    /// A node below zero and a cutting node (a negative measure) take no part. Null when the sum is not positive.</summary>
     private static double? FoundationNodesVolumeCurrent(GeometryData geometry, IReadOnlyList<ShellInfo> shells)
     {
         var measured = new Dictionary<int, double>();
         foreach (var measure in geometry.NodeMeasures ?? []) measured.TryAdd(measure.Node, measure.Volume);
         double feet3 = measured.Where(pair => pair.Key >= 0 && pair.Value > 0).Sum(pair => pair.Value);
+        var closedNodes = new HashSet<int>();
         foreach (var shell in shells)
         {
             int node = shell.Faces.Count > 0 ? shell.Faces[0].GeometryNode : 0;
-            if (shell.Closed && node >= 0 && !measured.ContainsKey(node)) feet3 += shell.Volume;
+            if (!shell.Closed || node < 0 || measured.ContainsKey(node)) continue;
+            feet3 += shell.Volume;
+            closedNodes.Add(node);
         }
+        foreach (var node in geometry.Faces.GroupBy(face => face.GeometryNode))
+            if (node.Key >= 0 && !measured.ContainsKey(node.Key) && !closedNodes.Contains(node.Key)
+                && StraightPrismVolumeCurrent(node.ToList()) is { } prism)
+                feet3 += prism;
         return feet3 > 0 ? feet3 * CubicFeetToCubicMetres : null;
     }
 
-    /// <summary>Volume (m3) of a straight prism whose two end caps are plane faces of one node with an exact area each (within 2 percent
-    /// of each other: one cap can be the tessellated, smaller, twin of the other) and opposite normals: the larger cap area times the
-    /// distance of the cap planes. For a foundation whose solids are open shells without measures (a round pile), where a sum over the
-    /// shells has no meaning. Null without such a pair.</summary>
-    private static double? OppositeCapsVolumeCurrent(GeometryData geometry, GeoFace cap)
+    /// <summary>Volume (feet3) of the open solid of one node when it is a straight prism: two plane end caps with an exact area each (within 2
+    /// percent of each other: one cap can be the tessellated, smaller, twin of the other) and opposite normals, on different planes, and every
+    /// other face a side face: its points on the two cap planes, and either a loop whose own normal is perpendicular to the cap normal or a
+    /// curved face with a cylinder axis along it. The volume is the larger cap area times the distance of the cap planes. Equal caps alone
+    /// say nothing about the shape between them, so without that proof there is none (null).</summary>
+    private static double? StraightPrismVolumeCurrent(IReadOnlyList<GeoFace> faces)
     {
-        if (cap.QuadratureArea is not { } area || cap.Normal is not { Length: 3 } normal || cap.Origin is not { Length: 3 } origin) return null;
-        foreach (var other in geometry.Faces)
+        for (int i = 0; i < faces.Count; i++)
         {
-            if (ReferenceEquals(other, cap) || other.GeometryNode != cap.GeometryNode || other.QuadratureArea is not { } otherArea
-                || other.Normal is not { Length: 3 } otherNormal || other.Origin is not { Length: 3 } otherOrigin
-                || Math.Abs(otherArea - area) > 0.02 * Math.Max(area, otherArea)
-                || normal[0] * otherNormal[0] + normal[1] * otherNormal[1] + normal[2] * otherNormal[2] > -1 + 1e-9) continue;
-            double distance = Math.Abs((otherOrigin[0] - origin[0]) * normal[0] + (otherOrigin[1] - origin[1]) * normal[1]
-                + (otherOrigin[2] - origin[2]) * normal[2]);
-            return distance > 1e-9 ? Math.Max(area, otherArea) * distance * CubicFeetToCubicMetres : null;
+            var cap = faces[i];
+            if (!cap.PlaneSurface || cap.QuadratureArea is not { } area || cap.Normal is not { Length: 3 } normal || cap.Origin is not { Length: 3 } origin) continue;
+            for (int j = i + 1; j < faces.Count; j++)
+            {
+                var other = faces[j];
+                if (!other.PlaneSurface || other.QuadratureArea is not { } otherArea || other.Normal is not { Length: 3 } otherNormal
+                    || other.Origin is not { Length: 3 } otherOrigin
+                    || Math.Abs(otherArea - area) > 0.02 * Math.Max(area, otherArea)
+                    || normal[0] * otherNormal[0] + normal[1] * otherNormal[1] + normal[2] * otherNormal[2] > -1 + 1e-9) continue;
+                double distance = (otherOrigin[0] - origin[0]) * normal[0] + (otherOrigin[1] - origin[1]) * normal[1] + (otherOrigin[2] - origin[2]) * normal[2];
+                if (Math.Abs(distance) <= 1e-9) continue;
+                bool Along(double[] point)
+                {
+                    double height = (point[0] - origin[0]) * normal[0] + (point[1] - origin[1]) * normal[1] + (point[2] - origin[2]) * normal[2];
+                    return Math.Abs(height) <= 1e-6 || Math.Abs(height - distance) <= 1e-6;
+                }
+                bool Side(GeoFace face) =>
+                    face.OuterVertices is { Count: > 0 } outer && outer.All(Along)
+                    && (face.InnerVertices ?? []).All(loop => loop.All(Along))
+                    && (face.CurvedSurface && face.AnalyticCylinderAxis is { Length: 3 } axis
+                        && Math.Abs(axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2]) > 1 - 1e-9
+                        || FaceUnitNormal(face) is { } sideNormal
+                        && Math.Abs(sideNormal[0] * normal[0] + sideNormal[1] * normal[1] + sideNormal[2] * normal[2]) < 1e-6);
+                if (faces.All(face => ReferenceEquals(face, cap) || ReferenceEquals(face, other) || Side(face)))
+                    return Math.Max(area, otherArea) * Math.Abs(distance);
+            }
         }
         return null;
     }
@@ -1177,7 +1204,7 @@ public partial class IfcExporter
         double surfaceArea = TopSurfaceAreaCurrent(shells) * SquareFeetToSquareMetres;
         double? topArea = surfaceArea > 1e-9 ? surfaceArea : ComputedHostAreaCurrent(element) ?? profileArea;
         // A foundation without a vertical extrusion (a pile) takes the area of its cap face, and its volume from all the geometry:
-        // the measured nodes and the closed shells of the solids that have no measure; an open shell without a measure has none.
+        // the measured nodes, the closed shells of the solids that have no measure, and the open straight prisms of the others.
         double? netVolume = totals?.Volume;
         if (element.CategoryId == CurrentFoundationCategoryId && prism == null)
         {
@@ -1185,7 +1212,7 @@ public partial class IfcExporter
             if (cap?.QuadratureArea is { } capArea && capArea > 1e-9)
             {
                 topArea = capArea * SquareFeetToSquareMetres;
-                netVolume = FoundationNodesVolumeCurrent(element.Geometry!, shells) ?? OppositeCapsVolumeCurrent(element.Geometry!, cap);
+                netVolume = FoundationNodesVolumeCurrent(element.Geometry!, shells);
             }
         }
         AddIfPositive(result, QuantityKind.Area, "GrossArea", profileArea ?? topArea);
