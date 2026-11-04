@@ -30,9 +30,9 @@ public class RvtReaderOptions
     public bool R22Layout { get; set; }
 
     /// <summary>When several partition streams hold a copy of the same element, keep the current copy named by the file's document
-    /// increment table and drop the superseded ones before decoding (see <see cref="Parsing.RecordRouting"/>). Off by default: the copies
-    /// are then all decoded as before.</summary>
-    public bool ResolveCurrentCopies { get; set; }
+    /// increment table and drop the superseded ones before decoding (see <see cref="Parsing.RecordRouting"/>). On by default; set it to false
+    /// to decode every copy, as releases before this default did. A file with one partition stream is read the same either way.</summary>
+    public bool ResolveCurrentCopies { get; set; } = true;
 
     /// <summary>Raise the limits that cut a stream while it is recovered from damage: the output of the element table recovery
     /// (256 MiB) and its loop guard (4096 iterations) become the platform array length and unbounded.
