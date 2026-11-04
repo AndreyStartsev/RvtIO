@@ -16,6 +16,7 @@ API between minor releases.
 - Default output, stairs: a stair flight carries NumberOfRiser, NumberOfTreads, RiserHeight and TreadLength and the property set Pset_StairFlightCommon; runs, landings, stringers and railings of a stair are aggregated into the stair (IfcRelAggregates) and are no longer contained in the storey; a landing takes the name and Reference of its type. See also the stair type entry below. There is no option that restores the 0.1.0 layout.
 - API: `RvtFileReader.Read` and `RvtDocument.Open` throw `RvtInputException` (or `RvtLimitException` for a stream over the platform array length) for a file that cannot be read, instead of an `EndOfStreamException`, `FileFormatException` or a similar exception from a decoder. Code that catches the old exception types must catch the new ones.
 - Command line: the exit codes 2, 3 and 4 are new (see below). A damaged or truncated file ended in an unhandled exception in 0.1.0 (or, when only the end of a stream the export does not use was missing, in an export without a message) and now returns 2 with a one-line message.
+- Default output, current IFC profile: the GlobalId of the IfcStairFlightType of a stair run or landing changes, because its seed now contains the run style, and the type gets the predefined type STRAIGHT instead of NOTDEFINED (2 types in the Revit 2025 architecture sample, 4 in the Revit 2024 DACH sample). The IfcRelDefinesByType of those types follows.
 
 ### Added
 
@@ -38,6 +39,7 @@ API between minor releases.
 - The NetVolume of round foundation piles whose solids are open shells without measures is written again (Closes #79). It is taken per node, only when the node is a straight prism (two opposite end caps, and at least one side face, all of them flat and parallel to the cap normal or cylinder faces along it, with their points on the cap boundaries), as the larger cap area times the distance of the caps, and added to the measured and closed solids of the foundation; a node below zero and a cutting node take no part, also not for the NetArea. 0.1.0 summed the open shells, which gave values up to ten times too large. A pile whose end caps differ by more than 2 percent still gets no NetVolume (#42).
 - The extrusion of an opening that the door or window code rewrites from the final outline can change shape (profile size, extrusion depth, placement direction), independent of `--ifc-opening-legacy-axes`. Seen on one opening of the 2022 rac basic sample; the profile size and extrusion depth now equal those of the reference exporter.
 - A door or window with a non-finite dimension is ignored for the opening, and each side of an opening is taken from the door or window independently.
+- Legacy IFC profile: the GlobalIds of the type-level IfcRelAssociatesMaterial relations (and of the relations of layer sets) change in files where the output gains or loses entities before them, for example the mullion Span property in the Revit 2022 rac basic sample, because the legacy seed is the STEP number of the relating material. Ids of the current profile do not depend on entity numbers and are unchanged.
 
 ### Performance
 
