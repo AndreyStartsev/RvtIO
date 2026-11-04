@@ -13,6 +13,10 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 
 ## Install
 
+The packages are published on nuget.org, not on GitHub Packages, so the Packages box of this repository stays empty.
+
+[![RvtIO on NuGet](https://img.shields.io/nuget/v/RvtIO?label=RvtIO)](https://www.nuget.org/packages/RvtIO) [![RvtIO.Cli on NuGet](https://img.shields.io/nuget/v/RvtIO.Cli?label=RvtIO.Cli)](https://www.nuget.org/packages/RvtIO.Cli)
+
 Install the command line tool:
 
 ```sh
