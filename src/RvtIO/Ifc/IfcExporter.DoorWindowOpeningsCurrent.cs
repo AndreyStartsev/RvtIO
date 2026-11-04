@@ -69,7 +69,7 @@ public partial class IfcExporter
 
         var globals = new GlobalsCurrent(w);
         var detached = new List<int>();
-        int rewritten = 0;
+        int rewritten = 0, fromParameter = 0;
         var reasons = new SortedDictionary<string, int>(StringComparer.Ordinal);
         void Skip(string reason) => reasons[reason] = reasons.GetValueOrDefault(reason) + 1;
         foreach (var (openingId, fillingId) in fillingByOpening)
@@ -180,9 +180,10 @@ public partial class IfcExporter
             }
 
             rewritten++;
+            if (built.WidthFromParameter) fromParameter++;
         }
         if (rewritten > 0) RemoveDetachedCurrent(w, detached);
-        _diag?.WriteLine($"The current profile door and window openings of {fillingByOpening.Count} filled: {rewritten} rewritten; left as they were: "
+        _diag?.WriteLine($"The current profile door and window openings of {fillingByOpening.Count} filled: {rewritten} rewritten ({fromParameter} with the wall width parameter, its layers or body being stale: wall-width-conflict); left as they were: "
             + string.Join(", ", reasons.Select(pair => $"{pair.Key}={pair.Value}")));
         return rewritten;
     }
@@ -190,7 +191,7 @@ public partial class IfcExporter
     /// <summary>The opening placement, authored profile in its plane, extrusion axis and depth.</summary>
     private readonly record struct DoorWindowOpeningCurrent(double[] RelativeOrigin, List<double[]> ProfileLoop,
         bool IsRectangle, double[] Axis, double Depth, double Height, double Width,
-        double? HostHeight, double? HostWidth);
+        double? HostHeight, double? HostWidth, bool WidthFromParameter = false);
 
     private static bool TryDoorWindowOpeningCurrent(StepWriter w, Dictionary<int, int> indexById,
         IReadOnlyDictionary<int, Element> elementsById, Element hosted, Element wall, string[] wallAttributes, out DoorWindowOpeningCurrent opening,
@@ -231,7 +232,11 @@ public partial class IfcExporter
         }
         if (box is not { Length: 6 } symbolBox) { failure = "no-symbol-box"; return false; }
         if (ModelPlacementCurrent(w, indexById, wallAttributes[5]) is not { } wallPlacement) { failure = "no-wall-placement"; return false; }
-        if (WallTotalWidthCurrent(w, indexById, wallAttributes, wall, elementsById) is not { } width || !(width > 0)) { failure = "no-wall-width"; return false; }
+        if (WallTotalWidthCurrent(w, indexById, wallAttributes, wall, elementsById, out bool widthConflict) is not { } width || !(width > 0))
+        {
+            failure = widthConflict ? "wall-width-conflict" : "no-wall-width";
+            return false;
+        }
         if (cut.Vertices.Count < 3 || direction.Length < 3 || cut.Vertices.Any(v => v.Length < 3 || v.Any(c => !double.IsFinite(c)))
             || direction.Any(c => !double.IsFinite(c)))
         {
@@ -292,7 +297,7 @@ public partial class IfcExporter
             double extent = wallLocalLoop.Max(p => p[axis]) - wallLocalLoop.Min(p => p[axis]);
             return extent > 1e-9 ? extent : null;
         }
-        opening = new DoorWindowOpeningCurrent(relative, projected, rectangle, axis, width, loopHeight, loopWidth, Extent(2), Extent(0));
+        opening = new DoorWindowOpeningCurrent(relative, projected, rectangle, axis, width, loopHeight, loopWidth, Extent(2), Extent(0), widthConflict);
         return true;
 
         static double LoopAreaOf(IReadOnlyList<double[]> vertices)
@@ -318,13 +323,26 @@ public partial class IfcExporter
 
     /// <summary>
     /// The total width of the layers of the host wall, metres: the width of the extrusion that is its Body, else the width of
-    /// its type.
+    /// its type. A wall whose type thickness is not validated (the type root and its compound structure read once) and whose layers (or
+    /// body) disagree with its own width parameter has a stale copy among them (a file saved in several increments), so none of the two
+    /// is confirmed: <paramref name="conflict"/> is set and no width is returned.
     /// </summary>
     private static double? WallTotalWidthCurrent(StepWriter w, Dictionary<int, int> indexById, string[] wallAttributes, Element wall,
-        IReadOnlyDictionary<int, Element> elementsById)
+        IReadOnlyDictionary<int, Element> elementsById, out bool conflict)
     {
-        if (ReadBodyExtrusionCurrent(w, indexById, wallAttributes[6]) is { } body) return body.ExtentY;
-        if (TryGetSerializedWallWidthFeet(wall, out double layersFeet)) return layersFeet * FeetToMetres;
-        return ExactParameterFeetCurrent(wall, TypeOfCurrent(wall, elementsById), WallWidthParameterId) * FeetToMetres;
+        conflict = false;
+        double? declared = ExactParameterFeetCurrent(wall, TypeOfCurrent(wall, elementsById), WallWidthParameterId) * FeetToMetres;
+        double? used = ReadBodyExtrusionCurrent(w, indexById, wallAttributes[6]) is { } body ? body.ExtentY
+            : TryGetSerializedWallWidthFeet(wall, out double layersFeet) ? layersFeet * FeetToMetres : declared;
+        if (wall.ValidatedWallTypeThicknessFeet is not > 0 && used is { } value && declared is { } stated && Math.Abs(value - stated) > WallWidthAgreementMetres)
+        {
+            // (the width parameter is read exactly from the wall or its type and is positive; it is the width Revit cuts through)
+            conflict = true;
+            return double.IsFinite(stated) ? stated : null;
+        }
+        return used;
     }
+
+    /// <summary>Largest difference between the width of the layers or body of a wall and its width parameter that still counts as the same width.</summary>
+    private const double WallWidthAgreementMetres = 1e-4;
 }
