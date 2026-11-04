@@ -32,7 +32,9 @@ internal static partial class Program
           --revit-localization <dir>        read the system family names from the resource DLLs of a Revit installation
           --r22-layout                      read the Revit 2022 layout for a JSON export too (an IFC export does it by default)
           --no-r22-layout                   keep the 64-bit schema path alone in an IFC export
-          --resolve-current-copies          keep only the current copy of an element that several partition streams hold (off by default)
+          --keep-all-copies                 decode every copy of an element that several partition streams hold, instead of only the current one
+                                            (a file saved in several increments; the current copy is kept by default)
+          --resolve-current-copies          the earlier opt-in for the default, accepted without effect
           --report <report.json>            write the JSON report of the run (read streams, limits, skipped elements, exported fraction)
           --allow-partial                   export what was read when a reader limit cut a stream (exit code 0 instead of 3)
           --raise-limits                    raise the limits that cut a damaged stream while it is recovered (very large models)
@@ -89,7 +91,7 @@ internal static partial class Program
     private static readonly HashSet<string> SwitchOptions =
     [
         "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities", ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
-        "--no-r22-layout", "--resolve-current-copies", "--allow-partial", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
+        "--no-r22-layout", ..RvtIO.Cli.CurrentCopiesOption.Names, "--allow-partial", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
         "--decode-blocks", "--decode-catc", "--wide", "--blocks", "--no-recover", "--no-d64", "--trim", "--dump-partial",
     ];
 
