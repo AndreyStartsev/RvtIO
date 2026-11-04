@@ -52,9 +52,38 @@ public class StairShapeTests
     {
         var sketched = Run(200, new Direction(1, 0, 0)) with { Style = TfBlockDeserializer.StairRunStyle.Sketched };
         Assert.Equal("STRAIGHT_RUN_STAIR", StairShape.Classify([sketched], 0));
-        Assert.Null(StairShape.Classify([sketched], 0, sketchedIsFlight: false));
-        Assert.Null(StairShape.Classify([Run(201, new Direction(1, 0, 0)), sketched], 1, sketchedIsFlight: false));
+        Assert.Equal("NOTDEFINED", StairShape.Classify([sketched], 0, sketchedIsFlight: false));
+        Assert.Equal("NOTDEFINED", StairShape.Classify([sketched, sketched with { OwnerId = 201 }], 1, sketchedIsFlight: false));
         Assert.Equal("STRAIGHT_RUN_STAIR", StairShape.Classify([Run(201, new Direction(1, 0, 0))], 0, sketchedIsFlight: false));
+    }
+
+    /// <summary>A straight run, a landing and a sketched run turned back: the sketched run is no flight of the current profile, so the stair
+    /// is straight (the reference export of the large DACH sample), while the older profile counts two flights turned back (half turn).</summary>
+    [Theory]
+    [InlineData(-1, 0, 1, "STRAIGHT_RUN_STAIR", "HALF_TURN_STAIR")]
+    [InlineData(0, 1, 1, "STRAIGHT_RUN_STAIR", "QUARTER_TURN_STAIR")]
+    [InlineData(-1, 0, 0, "STRAIGHT_RUN_STAIR", "NOTDEFINED")]
+    public void AStraightRunWithASketchedRunIsStraightInTheCurrentProfile(double x, double y, int landings, string current, string older)
+    {
+        var runs = new[] { Run(200, new Direction(1, 0, 0)), Run(201, new Direction(x, y, 0)) with { Style = TfBlockDeserializer.StairRunStyle.Sketched } };
+        Assert.Equal(current, StairShape.Classify(runs, landings, sketchedIsFlight: false));
+        Assert.Equal(older, StairShape.Classify(runs, landings));
+    }
+
+    [Theory]
+    [InlineData(true, "STRAIGHT_RUN_STAIR")]
+    [InlineData(false, "HALF_TURN_STAIR")]
+    public void TheExporterHandsTheProfileToTheShapeRuleOfAStairWithAStraightAndASketchedRun(bool currentProfile, string expected)
+    {
+        var (parent, elements, counts) = Fixture();
+        parent.SerializedStairCore = [new(200, 3708), new(201, 3686), new(202, 3708)];
+        foreach (var (id, cls, input) in new (int, ushort, TfBlockDeserializer.StairRunInput?)[]
+                 { (201, 3686, null), (202, 3708, Run(202, new Direction(-1, 0, 0)) with { Style = TfBlockDeserializer.StairRunStyle.Sketched }) })
+        {
+            elements.Add(id, new() { Id = id, SerializedOwnElementClassId = cls, SerializedOwningElementId = 100, SerializedStairRunInput = input });
+            counts.Add(id, 1);
+        }
+        Assert.Equal(expected, IfcExporter.ResolveNativeStairShape(parent, null, elements, counts, currentProfile));
     }
 
     [Theory]
