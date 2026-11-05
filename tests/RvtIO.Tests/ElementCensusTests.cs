@@ -36,22 +36,23 @@ public sealed class ElementCensusTests : IDisposable
     private static ushort Id(string name) => (ushort)Schema.Classes.Single(c => c.Name == name).Id;
 
     /// <summary>One block: <paramref name="keyed"/> for a loaded family document, and its elements as (owner id, class name).</summary>
-    private sealed record Block(bool Keyed, (uint Owner, string Class)[] Elements);
+    private sealed record Block(bool Keyed, (uint Owner, string Class)[] Elements, bool Tagless = false);
 
-    private static byte[] Record(uint owner, uint channel, ushort kind)
+    /// <summary>A record whose body is the 2-byte class tag and one more byte, or, when <paramref name="tagless"/>, one byte only.</summary>
+    private static byte[] Record(uint owner, uint channel, ushort kind, bool tagless = false)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         writer.Write(owner);
         if (channel != 101) writer.Write(77u);
-        writer.Write(3u);
-        writer.Write(kind);
+        writer.Write(tagless ? 1u : 3u);
+        if (!tagless) writer.Write(kind);
         writer.Write((byte)17);
-        writer.Write(3u);
+        writer.Write(tagless ? 1u : 3u);
         return stream.ToArray();
     }
 
-    private static void Segment(BinaryWriter writer, uint channel, byte[] records, uint count)
+    private static void Segment(BinaryWriter writer, uint channel, byte[] records, uint count, uint recordSize = 3)
     {
         byte[] payload = GzipMember.Write(records);
         uint size = (uint)payload.Length + 8;
@@ -59,7 +60,7 @@ public sealed class ElementCensusTests : IDisposable
         writer.Write(0u);
         writer.Write(count);
         writer.Write(size);
-        writer.Write(count * 3u);
+        writer.Write(count * recordSize);
         writer.Write(channel);
         writer.Write(19u);
         writer.Write(payload);
@@ -81,8 +82,8 @@ public sealed class ElementCensusTests : IDisposable
             if (block.Keyed) writer.Write(new byte[16]);
             for (uint channel = 101; channel <= 103; channel++)
             {
-                byte[] records = [.. block.Elements.SelectMany(e => Record(e.Owner, channel, channel == 102 ? Tag(e.Class) : (ushort)1))];
-                Segment(writer, channel, records, (uint)block.Elements.Length);
+                byte[] records = [.. block.Elements.SelectMany(e => Record(e.Owner, channel, channel == 102 ? Tag(e.Class) : (ushort)1, block.Tagless && channel == 102))];
+                Segment(writer, channel, records, (uint)block.Elements.Length, block.Tagless && channel == 102 ? 1u : 3u);
             }
             writer.Write(Id("SegmentMarker"));
             writer.Write(new byte[16]);
@@ -164,6 +165,17 @@ public sealed class ElementCensusTests : IDisposable
 
         Assert.Equal("truncated-or-damaged", exception.Kind);
         Assert.Contains("Partition stream 1", exception.Message);
+    }
+
+    [Fact]
+    public void ARecordWithoutAClassTag_IsDamage_AndSaysWhichStream()
+    {
+        byte[] partition = Partition(new Block(false, [(1, "Alpha")], Tagless: true));
+
+        var exception = Assert.Throws<RvtInputException>(() => Count(partition));
+
+        Assert.Equal("truncated-or-damaged", exception.Kind);
+        Assert.Contains("without a class tag", exception.Message);
     }
 
     [Fact]
