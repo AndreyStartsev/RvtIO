@@ -1124,10 +1124,10 @@ public partial class IfcExporter
         // ElementBuilder.ApplyCoarseDoorWindowSurfaces); a window without Coarse alternatives has the Fine solids at that level.
         double surface = element.CoarseSurfaceArea is { } coarse
             ? coarse * SquareFeetToSquareMetres : SolidTotalsCurrent(ShellsOfCurrent(element.Geometry))?.Area ?? 0;
-        if (!inCurtainWall && !fromBoxes && surface > 1e-9)
+        if (!inCurtainWall && surface > 1e-9)
             result.Add(new(QuantityKind.Area, "Area", surface / 2));
         // Without solids at that level an element of its own has no area; an insert of a curtain wall holds both dimensions.
-        else if ((inCurtainWall || fromBoxes || element.CoarseSurfaceArea == null) && height != null && width != null)
+        else if ((inCurtainWall || element.CoarseSurfaceArea == null) && height != null && width != null)
             result.Add(new(QuantityKind.Area, "Area", height.Value * width.Value));
         return result;
     }
