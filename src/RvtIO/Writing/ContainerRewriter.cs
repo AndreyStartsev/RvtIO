@@ -23,6 +23,10 @@ internal sealed record ContainerRewriteResult(IReadOnlyDictionary<string, Contai
 /// read back: the same storages and streams must be there, and every stream must have the length and SHA-256 of the bytes that were
 /// meant to be written (the bytes read from the source, or the replacement). The temporary file is removed when anything fails, and an
 /// existing output is never replaced.
+///
+/// The source is opened for reading with writers denied for as long as it is read, so the copy is one state of the source and not a
+/// mix of two. When another process already holds the source open for writing (an application that has the file open), the open
+/// fails with an <see cref="IOException"/> and nothing is written; there is no fall back to a shared read.
 /// </summary>
 internal static class ContainerRewriter
 {
@@ -37,7 +41,8 @@ internal static class ContainerRewriter
     /// container) holds the given bytes.</summary>
     /// <param name="beforeCheck">Called with the path of the temporary file once it is written and before it is read back; tests change the file there.</param>
     /// <exception cref="ArgumentException">A key names no stream of the source (it may name a storage), or two keys name the same stream.</exception>
-    /// <exception cref="IOException">The output exists (the source itself included), its folder is missing, or a file cannot be read or written.</exception>
+    /// <exception cref="IOException">The output exists (the source itself included), its folder is missing, the source is open for writing in
+    /// another process, or a file cannot be read or written.</exception>
     /// <exception cref="InvalidDataException">The source directory is damaged, or the written file differs from what was meant to be written.</exception>
     internal static ContainerRewriteResult Rewrite(string sourcePath, string outputPath, IReadOnlyDictionary<string, byte[]> replacements,
         Action<string>? beforeCheck = null)
@@ -73,7 +78,7 @@ internal static class ContainerRewriter
 
     private static ContainerRewriteResult WriteTemporary(string sourcePath, string temporary, Dictionary<string, byte[]> replacements)
     {
-        using var sourceFile = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var sourceFile = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var source = RootStorage.Open(sourceFile, StorageModeFlags.LeaveOpen);
         var version = SectorVersion(sourceFile);
 
@@ -183,6 +188,9 @@ internal static class ContainerRewriter
                 continue;
             }
             if (!want.IsStream) throw new InvalidDataException($"'{path}' was written as a storage and is a stream.");
+            // The declared length of the directory entry must be the written one; a stream whose sectors are missing reads as empty.
+            if (entry.Length != want.Length)
+                throw new InvalidDataException($"Stream '{path}' was written with {want.Length.ToString("N0", CultureInfo.InvariantCulture)} bytes and its directory entry declares {entry.Length.ToString("N0", CultureInfo.InvariantCulture)}.");
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             long length = 0;
             using (var input = storage.OpenStream(entry.Name))

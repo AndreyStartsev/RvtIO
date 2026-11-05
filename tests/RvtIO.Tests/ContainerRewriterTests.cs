@@ -272,7 +272,7 @@ public sealed class ContainerRewriterTests : IDisposable
     {
         File.WriteAllBytes(P("text.rvt"), Content("not a container", 5000));
 
-        Assert.ThrowsAny<Exception>(() => ContainerRewriter.Rewrite(P("text.rvt"), P("out.rvt"), NoReplacements));
+        Assert.Throws<FileFormatException>(() => ContainerRewriter.Rewrite(P("text.rvt"), P("out.rvt"), NoReplacements));
 
         AssertOnlyFiles("text.rvt");
     }
@@ -284,7 +284,7 @@ public sealed class ContainerRewriterTests : IDisposable
         byte[] whole = File.ReadAllBytes(source);
         File.WriteAllBytes(P("cut.rvt"), whole.AsSpan(0, whole.Length / 2).ToArray());
 
-        Assert.ThrowsAny<Exception>(() => ContainerRewriter.Rewrite(P("cut.rvt"), P("out.rvt"), NoReplacements));
+        Assert.Throws<InvalidDataException>(() => ContainerRewriter.Rewrite(P("cut.rvt"), P("out.rvt"), NoReplacements));
 
         AssertOnlyFiles("source.rvt", "cut.rvt");
     }
@@ -343,6 +343,56 @@ public sealed class ContainerRewriterTests : IDisposable
         Assert.Contains("'Big'", error.Message);
         Assert.NotNull(seen);
         Assert.Equal(_folder, Path.GetDirectoryName(seen));
+        AssertOnlyFiles("source.rvt");
+    }
+
+    [SkippableFact]
+    public void Rewrite_Refuses_ASourceThatIsOpenForWriting_AndLeavesNoFile()
+    {
+        if (!OperatingSystem.IsWindows()) throw new SkipException("File sharing is enforced by the system on Windows only.");
+        string source = CreateSource();
+
+        using (var writer = new FileStream(source, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+            Assert.Throws<IOException>(() => ContainerRewriter.Rewrite(source, P("out.rvt"), NoReplacements));
+
+        AssertOnlyFiles("source.rvt");
+        ContainerRewriter.Rewrite(source, P("out.rvt"), NoReplacements);
+    }
+
+    [Fact]
+    public void Rewrite_Throws_WhenTheWrittenFileDeclaresAnotherLengthThanItHolds()
+    {
+        string source = CreateSource();
+        // An empty stream whose directory entry declares 8,192 bytes and a first sector past the end of the file reads as empty,
+        // so only the declared length shows the damage.
+        void Damage(string temporary)
+        {
+            using var file = new FileStream(temporary, FileMode.Open, FileAccess.ReadWrite);
+            var header = new byte[512];
+            file.ReadExactly(header);
+            int sectorSize = 1 << BitConverter.ToUInt16(header, 30);
+            long directory = (BitConverter.ToUInt32(header, 48) + 1L) * sectorSize;
+            var sector = new byte[sectorSize];
+            file.Position = directory;
+            file.ReadExactly(sector);
+            bool found = false;
+            for (int offset = 0; offset < sectorSize; offset += 128)
+            {
+                int nameBytes = BitConverter.ToUInt16(sector, offset + 64);
+                if (System.Text.Encoding.Unicode.GetString(sector, offset, Math.Max(nameBytes - 2, 0)) != "Empty") continue;
+                BitConverter.TryWriteBytes(sector.AsSpan(offset + 116), 0x0010_0000u);
+                BitConverter.TryWriteBytes(sector.AsSpan(offset + 120), 8192UL);
+                found = true;
+            }
+            Assert.True(found);
+            file.Position = directory;
+            file.Write(sector);
+        }
+
+        var error = Assert.Throws<InvalidDataException>(() => ContainerRewriter.Rewrite(source, P("out.rvt"), NoReplacements, Damage));
+
+        Assert.Contains("'Empty'", error.Message);
+        Assert.Contains("8,192", error.Message);
         AssertOnlyFiles("source.rvt");
     }
 
