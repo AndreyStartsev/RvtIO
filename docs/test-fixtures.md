@@ -23,6 +23,9 @@ A file may lie directly in the folder or in one level of subfolders (`2020`, `20
 `PageCodecSampleTests` reads every `.rvt` file in the folder and in one level of subfolders, whatever its name, and skips streams over
 128 MB.
 
+`ContainerRewriterSampleTests` copies every `.rvt` file in the folder and in one level of subfolders to a temporary file (deleted after
+each file; it needs free disk space for the largest file) and compares the compact JSON of the copy with that of the source for the ten largest files of up to 8 MB.
+
 `SchemaStreamEditorSampleTests` reads the `Formats/Latest` stream of every `.rvt` file in the folder and in one level of subfolders,
 whatever its name, and tests one stream per distinct schema, so one project per release is enough.
 

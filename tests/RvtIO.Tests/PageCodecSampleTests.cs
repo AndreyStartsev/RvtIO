@@ -17,7 +17,7 @@ public class PageCodecSampleTests(ITestOutputHelper output)
 
     private sealed record PagedStream(string File, string Name, byte[] Raw);
 
-    private static List<string> ProjectFiles()
+    internal static List<string> ProjectFiles()
     {
         var files = new SortedSet<string>(StringComparer.Ordinal);
         foreach (string root in TestFiles.Roots())
