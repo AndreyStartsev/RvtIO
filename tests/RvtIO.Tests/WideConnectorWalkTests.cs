@@ -12,7 +12,7 @@ namespace RvtIO.Tests;
 public class WideConnectorWalkTests
 {
     private const int IdentifierId = 1, ElementIdId = 2, GuidId = 3, PairId = 4, EntityId = 5, CellId = 6, RootId = 7, ConnectorId = 8,
-        ConnectorIdItemId = 9, SegmentCalculationId = 10, ElectricalCalculationId = 11;
+        ConnectorIdItemId = 9, SegmentCalculationId = 10, ElectricalCalculationId = 11, StoreId = 12, HelperId = 13, HolderId = 14;
 
     private static SchemaField Field(string name, byte type, byte mods = 0, int? reference = null) =>
         new(name, type, mods, 0, null, reference, null, null);
@@ -36,6 +36,9 @@ public class WideConnectorWalkTests
                 [Field("m_idSystem", 14, 0, ElementIdId), Field("m_nSection", 4), Field("m_eSystemType", 4), Field("m_eDirection", 4)], []),
             new(ElectricalCalculationId, "MEPFamilyConnectorCalculationElectrical", 0, 1,
                 [Field("m_idSystem", 14, 0, ElementIdId), Field("m_idDownstreamCircuit", 14, 0, ElementIdId)], []),
+            new(StoreId, "ParamValueSetElementId", 0, 1, [Field("m_n", 4)], []),
+            new(HelperId, "FamilyInstancePatternHelper", 0, 1, [Field("m_pStore", 14, 2)], []),
+            new(HolderId, "FamilyInstance", 0, 1, [Field("m_pCell", 14, 2), Field("m_pHelper", 14, 2)], []),
         ],
     };
 
@@ -132,5 +135,29 @@ public class WideConnectorWalkTests
         Assert.Equal([0, 2, -1], host.SerializedConnectorGraph!.Select(connector => connector.Direction));
         Assert.Equal([0, 77, 0], host.SerializedConnectorSystems);
         Assert.Equal([2, 1, 1], host.SerializedConnectorModes);
+    }
+
+    /// <summary>A holder whose cell holds an empty entity and whose helper (behind the cell) queues a parameter store.</summary>
+    private static byte[] HolderWithStoreBehindTheEntity()
+    {
+        var stream = new MemoryStream();
+        var w = new BinaryWriter(stream, Encoding.Unicode);
+        w.Write((ushort)HolderId);
+        Pointer(w, CellId); Pointer(w, HelperId);
+        w.Write(1u); w.Write(SchemaGuid); w.Write(0xFFFFFFFFu); w.Write(SchemaGuid);   // the entity cell
+        Pointer(w, StoreId);                                                          // the helper
+        w.Write(0);                                                                   // the store
+        return stream.ToArray();
+    }
+
+    [Fact]
+    public void Build_AStoreQueuedBehindAnEmptyEntityDoesNotMakeTheParameterStoresIncomplete()
+    {
+        // Before the walk could pass the entity it never saw this store, and the element listed its unset parameters; it still does.
+        var block = HolderWithStoreBehindTheEntity();
+        var walk = Params.Walker.Run(block, 0, block.Length, HolderId);
+        Assert.True(walk.Exact, walk.Error);
+        Assert.Contains(StoreId, walk.Queue);
+        Assert.True(Params.Build(walk, HolderId)!.RootParameterStoresComplete);
     }
 }

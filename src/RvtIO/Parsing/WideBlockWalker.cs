@@ -41,6 +41,8 @@ internal sealed class WideBlockWalker
         /// <summary>Per queued object the length of the queue after its fields were read (the entries it queued are the ones before).</summary>
         public readonly List<int> QueueEnd = [];
         public readonly List<int> QueueCountAtStart = [];
+        /// <summary>Queue index of the first object that held an extensible storage entity without stored values, which the walk passes; -1 when none.</summary>
+        public int EmptyEntityAt = -1;
     }
 
     /// <summary>Key of a record that names the field ("Declaring.field") of the root object it was read inline from; absent for a queued object.</summary>
@@ -387,6 +389,7 @@ internal sealed class WideBlockWalker
                 && c.D.AsSpan(c.Pos - 20, 16).SequenceEqual(c.D.AsSpan(c.Pos, 16)))
             {
                 Take(c, 16);
+                if (c.Walk.EmptyEntityAt < 0) c.Walk.EmptyEntityAt = c.QueueIndex;
                 if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, -1, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
                 if (record != null) record[f.Name] = 0L;
                 return;

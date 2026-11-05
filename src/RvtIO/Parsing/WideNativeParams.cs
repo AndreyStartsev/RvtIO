@@ -230,6 +230,10 @@ internal sealed class WideNativeParams
         bool laterStore = false;
         int rootQueued = rootClassId >= 0 && _walker.IsA(rootClassId, "MaterialElem") && walk.QueueCountAtStart.Count > 0
             ? walk.QueueCountAtStart[0] : walk.Queue.Count;
+        // Objects queued behind an extensible storage entity without values are not counted: the walk used to stop at that entity, and passing it must not
+        // change which elements list their unset parameters (the reference output lists them).
+        if (walk.EmptyEntityAt >= 0 && walk.EmptyEntityAt + 1 < walk.QueueCountAtStart.Count)
+            rootQueued = Math.Min(rootQueued, walk.QueueCountAtStart[walk.EmptyEntityAt + 1]);
         for (int i = leading; i < rootQueued; i++) laterStore |= _storeIds.Contains(walk.Queue[i]);
         int finished = walk.QueueEnd.Count;
         np.RootParameterStoresComplete = !laterStore && finished >= leading;
