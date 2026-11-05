@@ -29,6 +29,11 @@ each file; it needs free disk space for the largest file) and compares the compa
 `SchemaStreamEditorSampleTests` reads the `Formats/Latest` stream of every `.rvt` file in the folder and in one level of subfolders,
 whatever its name, and tests one stream per distinct schema, so one project per release is enough.
 
+`DowngradeSampleTests` finds one project per release by the release of its class table, whatever the file name, and needs a project of
+release 2026 and one of release 2025 (and one of release 2027 for the refusal test). Its numbers (4690 and 4600 classes, 4584 in
+common, 106 only in 2026, 16 only in 2025, 67 higher versions, 69 classes with different fields, 10 changed identifier lists, 64 elements in
+classes 2025 lacks) hold for any project of those releases, because the class tables of one release are identical.
+
 The attributes `[SkippableFact]` and `[SkippableTheory]` (`SkippableFact.cs`) report a test that throws `SkipException` as
 skipped; xunit 2.9.3 has no runtime skip of its own. `TestFiles.Find`, `FindRelative` and `OpenBlock` throw it, so a test
 needs no code of its own to skip. Tests that write diagnostic dumps write them to `rvtio-tests` in the system temporary

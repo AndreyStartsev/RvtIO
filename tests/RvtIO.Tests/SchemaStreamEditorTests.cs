@@ -12,18 +12,18 @@ public class SchemaStreamEditorTests
 {
     // ---- an independent writer of the grammar -------------------------------------------------------------------------------
 
-    private abstract record Ref;
-    private sealed record NoRef : Ref;
-    private sealed record Back(int Id) : Ref;
-    private sealed record Inline(Cls Class) : Ref;
+    internal abstract record Ref;
+    internal sealed record NoRef : Ref;
+    internal sealed record Back(int Id) : Ref;
+    internal sealed record Inline(Cls Class) : Ref;
 
-    private sealed record Fld(string Name, byte Type, byte Mods = 0, ushort Extra = 0, uint? Fixed = null, Ref? Target = null, Fld[]? Args = null);
+    internal sealed record Fld(string Name, byte Type, byte Mods = 0, ushort Extra = 0, uint? Fixed = null, Ref? Target = null, Fld[]? Args = null);
 
-    private sealed record Cls(string Name, Ref Base, uint Version, Fld[] Fields, string[] Guids);
+    internal sealed record Cls(string Name, Ref Base, uint Version, Fld[] Fields, string[] Guids);
 
-    private sealed record Placed(string Name, int Id, int VersionAt, int ListAt, int ListLength);
+    internal sealed record Placed(string Name, int Id, int VersionAt, int ListAt, int ListLength);
 
-    private sealed class Writer(bool guidLists = true)
+    internal sealed class Writer(bool guidLists = true)
     {
         private readonly MemoryStream _s = new();
         private int _counter = 12;
@@ -94,11 +94,11 @@ public class SchemaStreamEditorTests
         }
     }
 
-    private static string Guid(int n) => string.Concat(Enumerable.Range(0, 16).Select(i => ((n * 31 + i * 7) & 0xFF).ToString("x2")));
+    internal static string Guid(int n) => string.Concat(Enumerable.Range(0, 16).Select(i => ((n * 31 + i * 7) & 0xFF).ToString("x2")));
 
-    private static string[] Guids(int from, int count) => [.. Enumerable.Range(from, count).Select(Guid)];
+    internal static string[] Guids(int from, int count) => [.. Enumerable.Range(from, count).Select(Guid)];
 
-    private static Fld Int(string name) => new(name, 0x04);
+    internal static Fld Int(string name) => new(name, 0x04);
 
     /// <summary>A schema with top-level classes, a base reference, an inline base, an inline field type, a back reference, a template
     /// argument, a fixed count and lists of 0, 1 and 3 entries. Ids: Alpha 12, Beta 13, Gamma 14, GammaBase 15, Delta 16, DeltaPart 17,
@@ -115,7 +115,7 @@ public class SchemaStreamEditorTests
         new("Zeta", new NoRef(), 0, [], Guids(50, 5)),
     ];
 
-    private static (byte[] Data, List<Placed> Placed) Write(List<Cls> model, int padding = 8, bool guidLists = true)
+    internal static (byte[] Data, List<Placed> Placed) Write(List<Cls> model, int padding = 8, bool guidLists = true)
     {
         var w = new Writer(guidLists);
         foreach (var c in model) w.Top(c);

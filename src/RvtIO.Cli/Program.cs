@@ -63,6 +63,10 @@ internal static partial class Program
           --dev-collisions <tsv>            compact JSON: write user parameters that share a group and label
           --dev-solids <tsv>                compact JSON: write the solid quantities; with --dev-solids-only stop after it
           --dev-native <ids>                compact JSON: print the native record of elements
+          downgrade <source.rvt> --target-profile <file> --check [--guid-rule exact|minimal] [--report <report.json>]
+                                            (first argument) plan the class table edit that would let an older release load a newer
+                                            project and report it; the profile is a project or family saved by that older release;
+                                            writes nothing but the report; exit code 5 when the releases are out of scope
           --schema-dump <file> <out.json>   (first argument) write the class schema embedded in a file
           --schema-check <file|json> [out.txt]   (first argument) validate a class schema
           --schema-diff <a> <b> [out.txt]   (first argument) compare two class schemas
@@ -121,6 +125,7 @@ internal static partial class Program
 
         // --schema-dump / --schema-check / --schema-diff: the class schema embedded in a Revit file (Formats/Latest), see TfSchemaTools.
         if (args[0].StartsWith("--schema-")) return RvtIO.Parsing.TfSchemaTools.Run(args, Console.Out, Console.Error);
+        if (args[0] == "downgrade") return RvtIO.Cli.DowngradeCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "--rebar-dump") return RvtIO.RebarDump.Run(args[1..]);
         if (args[0] == "--parse-block") return ParseBlock(args);
 
