@@ -15,9 +15,19 @@ internal sealed record SchemaField(string Name, byte Type, byte Mods, ushort Ext
     internal bool Stored => (Extra & 2) == 0;
 }
 
+/// <summary>A run of bytes of the decoded Formats/Latest stream.</summary>
+internal readonly record struct ByteSpan(int Offset, int Length);
+
+/// <summary>Where a class stores its version and its GUID list in the decoded stream. <see cref="Version"/> is the 4-byte version
+/// dword. <see cref="GuidList"/> is the u32 count followed by the 16-byte values (4 + 16 * count bytes); it is null in the older
+/// layout, which has no list.</summary>
+internal readonly record struct ClassSpans(ByteSpan Version, ByteSpan? GuidList);
+
 /// <summary>One class of the embedded schema. <see cref="Guids"/> is the trailing GUID list of the definition
-/// (lower-case hex, 16 bytes each); the list does not exist in the older stream layout.</summary>
-internal sealed record SchemaClass(int Id, string Name, int Base, int Version, List<SchemaField> Fields, List<string> Guids);
+/// (lower-case hex, 16 bytes each); the list does not exist in the older stream layout. <see cref="Spans"/> is set by the stream
+/// parser only (null for a class read from JSON or from the shipped table).</summary>
+internal sealed record SchemaClass(int Id, string Name, int Base, int Version, List<SchemaField> Fields, List<string> Guids,
+    ClassSpans? Spans = null);
 
 internal sealed class SchemaDocument
 {
@@ -171,6 +181,7 @@ internal static class TfSchemaReader
             int slot = order.Count;
             order.Add(null!);
             int baseId = TypeRef();
+            int versionAt = o;
             int version = (int)U32();
             uint count = U32();
             if (count > 400) throw new Failure($"field count {count} of {name} at {o - 4:X}");
@@ -181,13 +192,16 @@ internal static class TfSchemaReader
                 fields.Add(Core(fieldName, false));
             }
             var guids = new List<string>();
+            ByteSpan? guidSpan = null;
             if (guidLists)
             {
+                int listAt = o;
                 uint n = U32();
                 if ((long)n * 16 > d.Length - o) throw new Failure($"GUID count {n} of {name} at {o - 4:X}");
                 for (uint i = 0; i < n; i++, o += 16) guids.Add(Convert.ToHexString(d, o, 16).ToLowerInvariant());
+                guidSpan = new ByteSpan(listAt, o - listAt);
             }
-            order[slot] = new SchemaClass(id, name, baseId, version, fields, guids);
+            order[slot] = new SchemaClass(id, name, baseId, version, fields, guids, new ClassSpans(new ByteSpan(versionAt, 4), guidSpan));
         }
 
         private SchemaField Core(string name, bool inTemplate)
