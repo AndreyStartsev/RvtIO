@@ -689,6 +689,7 @@ public partial class IfcExporter
             elementIdOccurrenceCounts[e.Id] = occurrenceCount + 1;
             elementOrderById.TryAdd(e.Id, elementIndex);
         }
+        if (CurrentProfile) RelinkRampTypes(info.Elements, elemById);
         _elementsByIdCurrent = elemById;
         _axisExtrusionBodyCurrent.Clear();
         if (CurrentProfile)
@@ -741,6 +742,10 @@ public partial class IfcExporter
         // Roof element id -> entity id of the IfcSlab (ROOF) that holds its body (the current
         // profile, RoofIsExportedWithSlabCurrent).
         var roofSlabParts = new Dictionary<int, int>();
+        // The entities that carry the body of a ramp: the IfcRamp of a monolithic ramp, the parts of a ramp made of its solids.
+        var rampBodies = new Dictionary<int, List<int>>();
+        var rampAggregations = new Dictionary<int, int>();
+        var rampsWithRailings = CurrentProfile ? RampsWithRailings(info.Elements) : [];
         var pendingCurtainParents = new Dictionary<int, (Element Element, int StoreyId, bool CountedSuppressed)>();
 
         // Real project walls have a decoded location curve (or, for the one curved wall, a
@@ -1690,6 +1695,8 @@ public partial class IfcExporter
                     ? "IFCCURTAINWALL"
                 : elem.CategoryId == -2000011 && ShouldExportAsIfcWall(elem, CurrentProfile)
                     ? "IFCWALL"
+                : CurrentProfile && elem.CategoryId == RampCategoryId
+                    ? "IFCRAMP"
                 : MapCategoryToIfcType(elem.CategoryId)
                     ?? (elem.CategoryId == null && elem.Transform != null && elem.TypeId > 0
                         ? "IFCBUILDINGELEMENTPROXY"
@@ -1793,6 +1800,8 @@ public partial class IfcExporter
 
             double[]? bbox = elem.BoundingBox ?? elem.Geometry?.BoundingBox;
             int shapeId = 0;
+            List<(int ShapeId, bool IsLanding)>? rampPartBodies = null;
+            var rampLayout = RampLayout.Single;
             int elemPlacementId = 0;
             if (bbox == null || bbox.Length < 6)
             {
@@ -4058,6 +4067,9 @@ public partial class IfcExporter
                     + preserveExactParameterizedRevealCollinearPlan + " "
                     + $"writerLatticePlan={useWriterLatticeBoundaryPlan} "
                     + $"accepted={canExportStandardCaseWallAsSweptSolid}");
+            // A ramp of several small solids is an IfcRamp without a body that aggregates its flights and landings.
+            if (CurrentProfile && ifcType == "IFCRAMP") rampLayout = ClassifyRamp(elem, rampsWithRailings.Contains(elem.Id));
+            var rampParts = rampLayout == RampLayout.Components ? ClassifyRampSolids(elem.Geometry) : null;
             if (false && ifcType == "IFCROOF" && decodedRichFaces < 4
                 && TryCreatePitchedRoofShape(w, elem, bbox, bodySubCtxId, out shapeId))
             {
@@ -4084,6 +4096,13 @@ public partial class IfcExporter
                 // The placed SolarWorld instances retain an array/group AABB, not the individual
                 // module mesh.
                 shapeId = CreateSolarPanelShape(w, bbox, bodySubCtxId, info.SharedTransform);
+                elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
+                withFaces++;
+            }
+            else if (rampParts != null && TryWriteRampPartBodies(w, elem.Geometry!, rampParts, bodySubCtxId, out var writtenRampBodies))
+            {
+                rampPartBodies = writtenRampBodies;
+                RegisterEmittedAggregateParent(elem.Id);
                 elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                 withFaces++;
             }
@@ -4248,7 +4267,7 @@ public partial class IfcExporter
                         + $"sectionFt={beamExtrusion.ProfileWidthFt:G17}x{beamExtrusion.ProfileDepthFt:G17}");
                 withFaces++;
             }
-            else if (richFaces > 0
+            else if (richFaces > 0 && !(CurrentProfile && IsSystemRamp(elem))
                 && TryCreateMappedShape(w, elem, elemById, representationMapsBySymbol,
                     bodySubCtxId, axisId, out shapeId, out bodyWriteOutcome,
                     ifcType, () => OthersCurrentProfileName(ResolveProductFamilyAndTypeName(
@@ -4472,7 +4491,8 @@ public partial class IfcExporter
                 .ResolveReference(elem, stairComponentType ?? referenceElementType).State
                 == ExactIfcStringParameterState.Value;
             bool roofWithSlab = CurrentProfile && ifcType == "IFCROOF" && shapeId > 0 && RoofIsExportedWithSlabCurrent(elem);
-            string shapeArg = shapeId > 0 && !roofWithSlab ? R(shapeId) : "$";
+            bool rampWithBody = rampLayout == RampLayout.Monolithic && shapeId > 0 && rampPartBodies == null;
+            string shapeArg = shapeId > 0 && !roofWithSlab && !rampWithBody ? R(shapeId) : "$";
             string productGlobalId = (ExportIdProductClasses.Contains(ifcType)
                     ? ResolveExactElementGlobalId(elem, _usedExportIds, handleBased: CurrentProfile)
                     : null)
@@ -4522,6 +4542,14 @@ public partial class IfcExporter
             int elemEntityId = w.Add(ifcType, elemArgs);
             exportedIfcElements[elem.Id] = (elemEntityId, elemPlacementId, ifcType);
             exportedGlobalIds[elem.Id] = productGlobalId;
+            if (rampPartBodies != null)
+                rampBodies[elem.Id] = WriteRampComponentsCurrent(w, ownerHistId, elem, elemEntityId, elemName, elemPlacementId, axisId, rampPartBodies);
+            else if (rampWithBody)
+            {
+                var (rampBody, rampRelation) = WriteRampBodyCurrent(w, ownerHistId, elem, elemEntityId, elemName, elemTypeName, elemPlacementId, axisId, shapeId);
+                rampBodies[elem.Id] = [rampBody];
+                rampAggregations[elem.Id] = rampRelation;
+            }
             int roofSlabEntityId = roofWithSlab
                 ? roofSlabParts[elem.Id] = WriteRoofSlabCurrent(w, ownerHistId, elem, elemEntityId, elemName, elemTypeName,
                     elemStoreyPlacementId, axisId, shapeId)
@@ -4710,6 +4738,12 @@ public partial class IfcExporter
                         elemById, elementIdOccurrenceCounts,
                         propertySingleValueIds, CurrentProfile);
                 }
+                if (quantityTakeOffReferenceValueId.HasValue && CurrentProfile && ifcType == "IFCRAMP")
+                {
+                    ExportRampCommonPropertySet(
+                        w, elem, elemEntityId, ownerHistId, quantityTakeOffReferenceValueId.Value, propertySingleValueIds,
+                        OccurrenceIsExternalCurrent(elem, elemById) ?? false);
+                }
                 if (quantityTakeOffReferenceValueId.HasValue
                     && ifcType == "IFCBEAM")
                 {
@@ -4812,6 +4846,7 @@ public partial class IfcExporter
         var stairBodyParts = CurrentProfile
             ? StairAggregation.SplitLegacyBodies(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, axisId, _usedExportIds)
             : [];
+        AggregateRampRailings(w, info.Elements, exportedIfcElements, storeyContents, rampAggregations);
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
             foreach (int systemId in WriteJoistAssemblies(w, info.Elements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
@@ -5818,6 +5853,8 @@ public partial class IfcExporter
         var typeOnlyMaterialProducts = new Dictionary<string, List<int>>();
         foreach (var (elementId, product) in exportedIfcElements)
         {
+            // A ramp that holds its body in another entity has the material association on that entity.
+            IReadOnlyList<int> materialEntities = rampBodies.TryGetValue(elementId, out var rampEntities) ? rampEntities : [product.entityId];
             if (layerAssociatedElementIds.Contains(elementId)
                 || !elemById.TryGetValue(elementId, out var element)
                 || element.CategoryId == -2001340
@@ -5945,9 +5982,15 @@ public partial class IfcExporter
                     materialElementIds = [systemMaterial];
                 // The Body items follow the solids in their order, each in the best material of its
                 // own solid.
-                bodyStyles.Solids[product.entityId] = pieceSystemMaterial is int solidSystemMaterial
+                var solidMaterials = pieceSystemMaterial is int solidSystemMaterial
                     ? pieces.Select(_ => solidSystemMaterial).ToList() : pieces.Select(piece => piece.Material).ToList();
-                bodyStyles.Rules[product.entityId] = (pieceSystemMaterial, structuralFallback);
+                for (int part = 0; part < materialEntities.Count; part++)
+                {
+                    // The parts of a ramp made of its solids follow the solids in their order.
+                    bodyStyles.Solids[materialEntities[part]] = materialEntities.Count > 1 && solidMaterials.Count == materialEntities.Count
+                        ? [solidMaterials[part]] : solidMaterials;
+                    bodyStyles.Rules[materialEntities[part]] = (pieceSystemMaterial, structuralFallback);
+                }
                 pieceBased = true;
             }
             if (geometrySource != null && !pieceBased)
@@ -5996,7 +6039,7 @@ public partial class IfcExporter
                 (typeOnlyMaterialProducts.TryGetValue(materialKey, out var typeOnly)
                     ? typeOnly : typeOnlyMaterialProducts[materialKey] = []).Add(product.entityId);
             else
-                association.ProductIds.Add(product.entityId);
+                association.ProductIds.AddRange(materialEntities);
             directMaterialProducts[materialKey] = association;
         }
 
@@ -64350,7 +64393,7 @@ public partial class IfcExporter
     {
         "IFCWALL", "IFCWALLSTANDARDCASE", "IFCCURTAINWALL", "IFCSLAB", "IFCROOF", "IFCFOOTING",
         "IFCDOOR", "IFCWINDOW", "IFCBUILDINGELEMENTPROXY", "IFCRAILING", "IFCCOVERING",
-        "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCCOLUMN", "IFCBEAM", "IFCMEMBER", "IFCPLATE",
+        "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCRAMP", "IFCCOLUMN", "IFCBEAM", "IFCMEMBER", "IFCPLATE",
         "IFCFURNISHINGELEMENT", "IFCFLOWSEGMENT", "IFCFLOWTERMINAL", "IFCFLOWFITTING",
         "IFCFLOWCONTROLLER", "IFCDISTRIBUTIONFLOWELEMENT", "IFCSITE", "IFCREINFORCINGMESH",
     };
@@ -67257,7 +67300,7 @@ public partial class IfcExporter
             if (roofContainer) typeClass = "IFCCURTAINWALLTYPE";
             // IFC2X3 has no IfcStairType: the current profile types a stair by the generic
             // IfcTypeProduct.
-            else if (currentProfile && product.ifcType == "IFCSTAIR") typeClass = "IFCTYPEPRODUCT";
+            else if (currentProfile && product.ifcType is "IFCSTAIR" or "IFCRAMP") typeClass = "IFCTYPEPRODUCT";
             else if (!TypeClassByProductClass.TryGetValue(product.ifcType, out typeClass)
                 && product.ifcType is not ("IFCFLOWFITTING" or "IFCFLOWCONTROLLER"))
                 continue;
@@ -67657,6 +67700,7 @@ public partial class IfcExporter
             ?? ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts)
             ?? (componentType?.ValidatedSystemFamilyName is { Length: > 0 } componentFamily ? componentFamily : null)
             ?? element.FamilyName
+            ?? (currentProfile && IsSystemRamp(element) ? RampFamilyName : null)
             ?? element.Category ?? ifcType;
         return $"{familyName}:{typeName}";
     }
