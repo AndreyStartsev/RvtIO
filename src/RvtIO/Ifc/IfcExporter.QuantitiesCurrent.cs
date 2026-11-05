@@ -686,12 +686,14 @@ public partial class IfcExporter
                 // clearance, is measured in the frame of the wall. Depths now carry no clearance, so the one an earlier output
                 // added is put back for the comparison.
                 double zAxisZ = body.AxisZ is { } az ? Math.Abs(placement.Apply(az)[2]) : 0;
-                double earlierDepth = depth + (context.OpeningsWithFormerDepthClearance.Contains(openingId) ? FormerDepthClearanceM : 0);
+                bool hadClearance = context.OpeningsWithFormerDepthClearance.Contains(openingId);
+                double earlierDepth = depth + (hadClearance ? FormerDepthClearanceM : 0);
                 if (!context.OpeningsInHostAxes && zAxisZ > 0.9 && context.FilledOpenings.Contains(openingId)
                     && WallWidthCurrent(context, host.HostId) is { } width && Math.Abs(earlierDepth - width) <= 5e-5)
                 {
                     loop = loop.Select(host.Wall.ToLocal).ToList();
-                    depth = width;
+                    // Only the frame is restored for an opening that had a clearance: its measured depth is not the width of the wall.
+                    if (!hadClearance) depth = width;
                 }
             }
         }

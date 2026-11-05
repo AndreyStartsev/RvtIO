@@ -441,6 +441,18 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void Legacy_FilledOpeningWhoseEarlierDepthMatchedTheWall_IsMeasuredInTheFrameOfTheWallAndKeepsItsMeasuredDepth()
+    {
+        // The measured depth is 0.202 and the wall is 0.2022 wide: the depth with the former clearance equals the width, so the contour
+        // is measured in the frame of the wall, but the depth stays the one measured and is not set to the width.
+        var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)", wallWidth: 0.2022, filled: true);
+
+        Apply(w, owner, exporter: LegacyWithFormerClearance(w));
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
+    }
+
+    [Fact]
     public void Legacy_FilledOpeningOfAnExactDepthInASlightlyTurnedWall_KeepsTheContourMeasuredInTheFrameOfTheWall()
     {
         // A frame in a wall 202 mm wide, turned by 1.6 degrees: the sides of the loop in the frame of the wall, not the extents of the
