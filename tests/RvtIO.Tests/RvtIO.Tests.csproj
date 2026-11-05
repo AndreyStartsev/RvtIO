@@ -35,6 +35,7 @@
     <Compile Include="..\..\src\RvtIO.Cli\JsonClassPrefixOption.cs" Link="Cli\JsonClassPrefixOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\OpeningAxesOption.cs" Link="Cli\OpeningAxesOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\CurrentCopiesOption.cs" Link="Cli\CurrentCopiesOption.cs" />
+    <Compile Include="..\..\src\RvtIO.Cli\DowngradeCommand.cs" Link="Cli\DowngradeCommand.cs" />
   </ItemGroup>
 
 </Project>

@@ -91,6 +91,22 @@ Use `--ifc-revit-parameter-groups` for one property set per parameter group. A f
 
 `--report project.report.json` writes a machine-readable report: the fraction of each partition stream and of the element table that decoded, the streams cut by a limit, the elements the export left out with their class and reason, and the exported fraction. `--raise-limits` raises the limits for a very large model. A complete export without these options behaves as before. The report format and the limits are described in [the export report](docs/export-report.md).
 
+### Plan a downgrade to an older release (experimental)
+
+```powershell
+rvtio downgrade project2026.rvt --target-profile project2025.rvt --check --report downgrade.json
+```
+
+`downgrade --check` compares the class table of a project (the stream `Formats/Latest`) with the class table of a project or family saved by an older release, the profile, and reports what editing the first table to fit the second would change. It writes nothing but the report. Nothing is embedded in RvtIO: the profile is read from the file you give. The report lists:
+
+- the classes only the source defines, with the number of elements the file holds in each (counted from the partition streams); elements of a class the older release lacks are expected to be lost when that release loads the file;
+- the classes only the profile defines;
+- the classes whose version is higher in the source (the version is lowered to the profile's);
+- per class, the stored fields that exist in one table only, matched by name (fields only in the source are expected to be ignored by the older release, fields only in the profile to get their default value);
+- the classes whose list of upgrade identifiers changes, with the number added and removed. `--guid-rule exact` (the default) makes the list the profile's list of the same class; `--guid-rule minimal` only removes the identifiers the profile does not list. A list is empty after the edit only when the rule yields no identifier for that class.
+
+Limits: the plan is computed from the bytes of the two files. This version cannot write a converted file, and no application opened a converted file as part of this change. The tested source release is 2026; a source of a newer release, a source whose saving release differs from the release of its class table, and a profile that is not older than the source are refused with exit code 5 and one line on standard error. A file that cannot be read exits with code 2, a wrong command line with code 1. Without `--check` the command refuses to run.
+
 ## Library
 
 Open a project, list wall instances through `FilteredElementCollector`, and export the document to IFC:

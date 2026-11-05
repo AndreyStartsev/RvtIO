@@ -1,0 +1,159 @@
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using RvtIO.Writing;
+
+namespace RvtIO.Cli;
+
+/// <summary>
+/// <c>rvtio downgrade &lt;source&gt; --target-profile &lt;file&gt; --check [--guid-rule exact|minimal] [--report report.json]</c>: plans the edit of the
+/// class table of a newer project so that an older release may load it, and reports it. It writes nothing but the report. Exit codes:
+/// 0 planned, 1 usage error, 2 a file cannot be read, 5 refused (the releases are out of scope or the edit does not apply).
+/// </summary>
+internal static class DowngradeCommand
+{
+    internal const int Refused = 5;
+    internal const string ReportSchema = "rvtio-downgrade-check/1";
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    internal static int Run(string[] args, TextWriter output, TextWriter error)
+    {
+        string? source = null, profile = null, reportPath = null;
+        var rule = GuidRule.Exact;
+        bool check = false;
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            switch (arg)
+            {
+                case "--check": check = true; break;
+                case "--target-profile" or "--report" or "--guid-rule":
+                    if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                        return Usage(error, $"{arg} requires one value.");
+                    string value = args[++i];
+                    if (arg == "--target-profile") { if (profile != null) return Usage(error, "--target-profile is given twice."); profile = value; }
+                    else if (arg == "--report") { if (reportPath != null) return Usage(error, "--report is given twice."); reportPath = value; }
+                    else if (value == "exact") rule = GuidRule.Exact;
+                    else if (value == "minimal") rule = GuidRule.Minimal;
+                    else return Usage(error, "--guid-rule requires one value: exact or minimal.");
+                    break;
+                default:
+                    if (arg.StartsWith("--", StringComparison.Ordinal)) return Usage(error, $"Unknown option for downgrade: {arg}.");
+                    if (source != null) return Usage(error, "downgrade takes one source file.");
+                    source = arg;
+                    break;
+            }
+        }
+        if (source == null) return Usage(error, "downgrade requires the source file.");
+        if (profile == null) return Usage(error, "downgrade requires --target-profile <file>, a project or family saved by the target release.");
+        if (!check) return Usage(error, "downgrade only plans in this version: add --check. No converted file can be written.");
+        if (reportPath != null && (ExportReport.SameFile(reportPath, source) || ExportReport.SameFile(reportPath, profile)))
+            return Usage(error, "--report must not name the source file or the profile file; nothing was read or written.");
+
+        string sourceName = Path.GetFileName(source), profileName = Path.GetFileName(profile);
+        DowngradePlanner.Result result;
+        try { result = DowngradePlanner.Plan(source, profile, rule); }
+        catch (RvtInputException exception)
+        {
+            return End(error, reportPath, RvtExitCodes.InputError, exception.Kind, exception.Message, sourceName, profileName, rule);
+        }
+        catch (DowngradeRefusedException exception)
+        {
+            return End(error, reportPath, Refused, exception.Kind, exception.Message, sourceName, profileName, rule);
+        }
+        catch (RvtLimitException exception)
+        {
+            return End(error, reportPath, RvtExitCodes.InputError, "limit-exceeded", exception.Message, sourceName, profileName, rule);
+        }
+
+        var plan = result.Plan;
+        var inv = CultureInfo.InvariantCulture;
+        output.WriteLine($"Source: {sourceName} (release {result.SourceRelease}, {plan.SourceClasses.ToString(inv)} classes)");
+        output.WriteLine($"Profile: {profileName} (release {result.TargetRelease}, {plan.TargetClasses.ToString(inv)} classes)");
+        output.WriteLine($"Upgrade-identifier rule: {RuleName(rule)}");
+        output.WriteLine($"Classes in both: {plan.CommonClasses.ToString(inv)}; class versions to lower: {plan.HigherVersions.Count.ToString(inv)}; upgrade-identifier lists to change: {plan.GuidLists.Count.ToString(inv)}");
+        string elements = plan.ElementsInSourceOnlyClasses is int n ? $"; elements in them: {n.ToString(inv)}" : "; elements not counted";
+        output.WriteLine($"Classes only in the source: {plan.ClassesOnlyInSource.Count.ToString(inv)}{elements}");
+        output.WriteLine($"Classes only in the profile: {plan.ClassesOnlyInTarget.Count.ToString(inv)}; classes with different fields: {plan.FieldDifferences.Count.ToString(inv)}");
+        int emptied = plan.GuidLists.Count(g => g.Result == 0);
+        if (emptied > 0) output.WriteLine($"Upgrade-identifier lists that become empty: {emptied.ToString(inv)} (the profile lists none for them)");
+        if (result.CountFailure != null) error.WriteLine($"warning: the elements were not counted: {result.CountFailure}.");
+        output.WriteLine("Check only: no file was written" + (reportPath == null ? "." : $" except the report {reportPath}."));
+        return WriteReport(error, reportPath, Report(result, sourceName, profileName), RvtExitCodes.Success);
+    }
+
+    private static string RuleName(GuidRule rule) => rule == GuidRule.Exact ? "exact" : "minimal";
+
+    private static int Usage(TextWriter error, string message)
+    {
+        error.WriteLine($"{message} Usage: rvtio downgrade <source.rvt> --target-profile <file> --check [--guid-rule exact|minimal] [--report <report.json>]");
+        return RvtExitCodes.Usage;
+    }
+
+    private static int End(TextWriter error, string? reportPath, int exitCode, string kind, string message, string sourceName, string profileName, GuidRule rule)
+    {
+        error.WriteLine($"error: {message} Nothing was written (exit code {exitCode.ToString(CultureInfo.InvariantCulture)}).");
+        var report = new
+        {
+            schema = ReportSchema,
+            status = exitCode == Refused ? "refused" : "unreadable",
+            kind,
+            message,
+            guidRule = RuleName(rule),
+            source = new { file = sourceName },
+            profile = new { file = profileName },
+        };
+        return WriteReport(error, reportPath, report, exitCode);
+    }
+
+    private static object Report(DowngradePlanner.Result result, string sourceName, string profileName)
+    {
+        var plan = result.Plan;
+        return new
+        {
+            schema = ReportSchema,
+            status = "ok",
+            guidRule = RuleName(plan.Rule),
+            source = new { file = sourceName, release = result.SourceRelease, classes = plan.SourceClasses },
+            profile = new { file = profileName, release = result.TargetRelease, classes = plan.TargetClasses },
+            commonClasses = plan.CommonClasses,
+            classesOnlyInSource = plan.ClassesOnlyInSource.Select(c => new { name = c.Name, elements = c.Elements }),
+            elementsInClassesOnlyInSource = plan.ElementsInSourceOnlyClasses,
+            elementCountFailure = result.CountFailure,
+            classesOnlyInProfile = plan.ClassesOnlyInTarget,
+            classesWithHigherVersion = plan.HigherVersions.Select(v => new { name = v.Name, source = v.Source, profile = v.Target }),
+            classesWithLowerVersion = plan.LowerVersions,
+            fieldDifferences = plan.FieldDifferences.Select(f => new { name = f.Name, onlyInSource = f.OnlyInSource, onlyInProfile = f.OnlyInTarget }),
+            upgradeIdentifierLists = plan.GuidLists.Select(g => new { name = g.Name, source = g.Source, profile = g.Target, result = g.Result, added = g.Added, removed = g.Removed }),
+            edits = new { classVersions = plan.HigherVersions.Count, upgradeIdentifierLists = plan.GuidLists.Count, classTableBytesBefore = result.SourceStreamBytes, classTableBytesAfter = result.EditedStreamBytes },
+        };
+    }
+
+    // The report is written beside its target and moved over it, so a failed write leaves no half file and a link keeps its content.
+    private static int WriteReport(TextWriter error, string? reportPath, object report, int exitCode)
+    {
+        if (reportPath == null) return exitCode;
+        string temporary = reportPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(report, JsonOptions), new UTF8Encoding(false));
+            File.Move(temporary, reportPath, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+            error.WriteLine($"error: the report cannot be written to '{reportPath}': {exception.Message}");
+            return exitCode != RvtExitCodes.Success ? exitCode : RvtExitCodes.Usage;
+        }
+        error.WriteLine($"Report written to {reportPath}");
+        return exitCode;
+    }
+}
