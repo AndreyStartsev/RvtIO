@@ -6,6 +6,7 @@ API between minor releases.
 
 ## [Unreleased]
 
+- Current profile: OverallHeight and OverallWidth of a door or window in a straight wall are now the vertical and the along-the-wall extent of the largest cut loop of the instance, in millimetres and unrounded, so the attributes follow the opening that is cut (a family with clearance around the frame gets the larger size) (Refs #84); the nominal Height and Width stay where no opening is rewritten (no wall host, curtain wall, curved wall, no decoded cut loop).
 - Writes the BaseQuantities set of a door or window that holds no height or width parameter and no solid frame (a storefront door): Height is the extent of the stored box of the instance, Width the extent of the box of its family symbol along the family width axis, and Area their product (Closes #87).
 - Writes the NumberOfRisers and RiserHeight attributes of a stair flight from the flight itself (Closes #85): the flight's own number of risers, also where the stair's stored count differs, and the flight's elevation range divided by its riser index span, no longer the stair's nominal riser height.
 - Current profile: writes the IfcGroup of every model group in a file saved before Revit 2022 (the localized group label is not needed for the name "Model Group"); the 2021 rac advanced sample gains its model groups, files from 2022 on are unchanged.

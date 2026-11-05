@@ -341,6 +341,47 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         Assert.Equal(0.885, width, 3);
     }
 
+    private static string[] OverallSizeAfterTheRewrite(bool decodedCut, string fillerType, string written)
+    {
+        var (f, _, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607],
+            fillerType: fillerType);
+        if (!decodedCut) elements[DoorElement].OwnSingleFamilyCutout = null;
+        int index = Enumerable.Range(0, f.W.EntityCount).First(i => f.W.EntityAt(i).Type == fillerType);
+        f.W.ReplaceArgs(index, f.W.EntityAt(index).Args + "," + written);
+
+        new IfcExporter().ApplyCurrentDoorWindowOpenings(f.W, elements, products);
+
+        // (the pass removes the entities it detaches, so the index is looked up again)
+        var attributes = IfcExporter.SplitStepArguments(
+            Enumerable.Range(0, f.W.EntityCount).Select(f.W.EntityAt).Single(e => e.Type == fillerType).Args);
+        return [attributes[8], attributes[9]];
+    }
+
+    [Theory]
+    [InlineData("IFCDOOR")]
+    [InlineData("IFCWINDOW")]
+    public void OverallSize_ADecodedCutLoop_ReplacesTheNominalSizeInMillimetres(string fillerType)
+    {
+        var overall = OverallSizeAfterTheRewrite(true, fillerType, "2135.,885.");
+
+        Assert.Equal(2100, double.Parse(overall[0], System.Globalization.CultureInfo.InvariantCulture), 3);
+        Assert.Equal(800, double.Parse(overall[1], System.Globalization.CultureInfo.InvariantCulture), 3);
+    }
+
+    [Fact]
+    public void OverallSize_ACutOfTheNominalSizeUpToRoundingNoise_KeepsTheWrittenText()
+    {
+        var overall = OverallSizeAfterTheRewrite(true, "IFCDOOR", "2100.0000000000005,800.0000000000001");
+
+        Assert.Equal(["2100.0000000000005", "800.0000000000001"], overall);
+    }
+
+    [Fact]
+    public void OverallSize_NoDecodedCutLoop_KeepsTheNominalSize()
+    {
+        Assert.Equal(["2135.", "885."], OverallSizeAfterTheRewrite(false, "IFCDOOR", "2135.,885."));
+    }
+
     [Theory]
     [InlineData("IFCWINDOW", 2.1, 0.8)]
     [InlineData("IFCBUILDINGELEMENTPROXY", 0.8, 2.1)]
