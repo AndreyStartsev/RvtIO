@@ -313,17 +313,17 @@ public partial class IfcExporter
         if (run.SerializedStairRunInput is { Numbers: { } numbers } input && input.OwnerId == run.Id)
         {
             elementsById.TryGetValue(input.StairsId, out var stairs);
-            int runRisers = StairRunRisers(numbers);
-            if (runRisers > 0)
+            int runRisers = StairRunRisers(run, numbers, current: true), indexSpan = StairRunIndexSpan(numbers);
+            if (runRisers > 0 && indexSpan > 0)
             {
                 risers = runRisers.ToString(CultureInfo.InvariantCulture);
-                if (StairRunCountsAgree(run, elementsById, numbers) && StairRunTreads(numbers) is int count && count > 0)
+                if (StairRunCountsAgree(run, elementsById, numbers, current: true) && StairRunTreads(run, numbers, current: true) is int count && count > 0)
                     treads = count.ToString(CultureInfo.InvariantCulture);
-                double runRiserMillimetres = (numbers.TopElevation - numbers.BottomElevation) / runRisers * 304.8;
+                double runRiserMillimetres = (numbers.TopElevation - numbers.BottomElevation) / indexSpan * 304.8;
                 if (double.IsFinite(runRiserMillimetres) && runRiserMillimetres > 0)
                     riserHeight = StepWriter.RealFromMillimetres(runRiserMillimetres);
             }
-            else if (stairs?.SerializedActualNumberOfRisers is int stairRisers && stairRisers > 0)
+            else if (indexSpan <= 0 && stairs?.SerializedActualNumberOfRisers is int stairRisers && stairRisers > 0)
                 risers = stairRisers.ToString(CultureInfo.InvariantCulture);
             if (riserHeight == "$" && stairs?.SerializedActualRiserHeightFeet is double riserFeet && double.IsFinite(riserFeet) && riserFeet > 0)
                 riserHeight = StepWriter.RealFromMillimetres(riserFeet * 304.8);
