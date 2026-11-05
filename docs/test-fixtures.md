@@ -40,21 +40,22 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 
 ## What runs without the private files
 
-With no private file at all, 9244 of the 9608 test cases run and pass and 364 are skipped: 330 need the private files listed
-below and 34 need optional inputs (`bim_dump.txt`,
-`formats_latest_decompressed.bin`). The tests that run use synthetic data built in the tests
-and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
+With no private file at all, 9639 of the 10054 test cases run and pass and 415 are skipped: 409 need private files (listed
+below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`) and 6 need other inputs (two need symbolic links, three
+need `RVTIO_FREEFORM_FULL`, `RVTIO_CYL_FULL` or `RVTIO_MESH_FULL`, one is a known gap). The tests that run use synthetic data built
+in the tests and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
 remaining cases run as well.
 
 Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell: `$env:RVTIO_TEST_FILES = '<folder>'`).
 
 ## Tests that need the private files
 
-223 test methods (330 cases, theory rows counted) are skipped without the files:
+279 test methods (409 cases, theory rows counted) are skipped without the files:
 
 | Class | Methods | Cases | Files |
 |---|---|---|---|
-| `ApiTests` | 47 | 47 | TESTFILE.rvt |
+| `ApiTests` | 49 | 52 | TESTFILE.rvt |
+| `ArcProfileTests` | 1 | 1 | TestData blocks |
 | `BinarySearchTests` | 4 | 4 | TESTFILE.rvt |
 | `BlockDiagnosticTests` | 5 | 5 | TESTFILE.rvt |
 | `CompactFormatSettingsTests` | 8 | 23 | TESTFILE.rvt |
@@ -64,40 +65,51 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `CompactPropertySourcesTests` | 4 | 4 | Test_2022.rvt, TESTFILE.rvt |
 | `CompactSolidValueTests` | 5 | 6 | Test_2022.rvt, TESTFILE.rvt |
 | `CompactUserParametersTests` | 2 | 2 | Test_2022.rvt |
+| `ContainerRewriterSampleTests` | 3 | 3 | any `.rvt` project files |
+| `CurrentCopiesDefaultTests` | 2 | 2 | TESTFILE.rvt, test_angled_wall.rvt |
 | `CurtainPanelOrderTests` | 3 | 3 | TestData blocks |
 | `CurtainRoofReferenceSourceTests` | 4 | 16 | TestData blocks |
 | `DocumentExportIdTests` | 1 | 1 | TESTFILE.rvt |
+| `DowngradeSampleTests` | 7 | 8 | any `.rvt` project files |
+| `EdgeBoundsTests` | 3 | 15 | TestData blocks |
 | `ElemTableAuthorityTests` | 2 | 2 | TESTFILE.rvt |
 | `ElementExportIdTests` | 3 | 6 | TESTFILE.rvt |
 | `ElementHeaderCategoryTest2022Tests` | 2 | 2 | TESTFILE.rvt, Test_2022.rvt |
 | `ElementHeaderCategoryTestFileTests` | 1 | 1 | TESTFILE.rvt |
 | `EpisodeGuidTests` | 2 | 2 | TESTFILE.rvt |
+| `ExportReportTests` | 8 | 13 | Test_2020.rvt, TESTFILE.rvt |
+| `FaceAreaTests` | 2 | 2 | TestData blocks |
+| `FormatsLatestAnalysisTests` | 1 | 1 | TESTFILE.rvt, formats_latest_decompressed.bin |
 | `FormatsSchemaTests` | 3 | 5 | Test_2020.rvt, Test_2022.rvt, Test_2025.rvt |
 | `GlobalStorageDecodeTests` | 2 | 4 | TESTFILE.rvt |
 | `IfcCurrentFamilyHostTests` | 1 | 3 | TestData blocks |
 | `IfcCurrentRoofTypeReferenceTests` | 1 | 2 | TestData blocks |
 | `IfcCurrentSourcePlaneSlopeTests` | 1 | 4 | TestData blocks |
 | `IfcExporterPlainWallBodyCurrentTests` | 4 | 4 | TestData blocks |
-| `ReferenceApiTests` | 2 | 2 | TESTFILE.rvt, bim_dump.txt |
-| `ArcProfileTests` | 1 | 1 | TestData blocks |
-| `EdgeBoundsTests` | 3 | 15 | TestData blocks |
-| `FaceAreaTests` | 2 | 2 | TestData blocks |
-| `ValidatedTests` | 72 | 89 | TESTFILE.rvt |
+| `IfcExporterSlabQuantitiesSampleTests` | 2 | 2 | rstbasicsampleproject.rvt, struct25.rvt |
+| `PageCodecSampleTests` | 2 | 2 | any `.rvt` project files |
+| `PartitionFramingFuzzTests` | 1 | 1 | TESTFILE.rvt |
 | `ProfileRoofAreaTests` | 3 | 11 | TestData blocks |
-| `ValidatedElementNamesTest2022Tests` | 2 | 2 | Test_2022.rvt, TESTFILE.rvt |
+| `ProjectLengthUnitTests` | 1 | 1 | One Way Sign in Route Analysis.rfa |
 | `R22TranscoderTests` | 2 | 2 | Test_2025.rvt, TESTFILE.rvt |
 | `RailingQuantitySourceTests` | 4 | 18 | TestData blocks |
+| `RecordRoutingTests` | 1 | 1 | TESTFILE.rvt |
+| `ReferenceApiTests` | 18 | 18 | TESTFILE.rvt, bim_dump.txt |
 | `SchemaModelTests` | 1 | 1 | Test_2022.rvt |
+| `SchemaReleaseTests` | 2 | 7 | Test_2020.rvt, Test_2022.rvt, Test_2025.rvt, TESTFILE.rvt |
+| `SchemaStreamEditorSampleTests` | 2 | 2 | any `.rvt` project files |
 | `SpaceBoundaryLiteralTests` | 5 | 5 | TestData blocks |
+| `StairComponentSampleTests` | 6 | 16 | Test_2020.rvt, Test_2022.rvt, Test_2025.rvt, rac_basic_sample_project.rvt |
 | `TfSchemaToolsTests` | 3 | 6 | Test_2020.rvt, Test_2022.rvt, Test_2025.rvt |
 | `UserParameterCatalogTests` | 1 | 1 | Test_2022.rvt, TESTFILE.rvt |
+| `ValidatedElementNamesTest2022Tests` | 2 | 2 | Test_2022.rvt, TESTFILE.rvt |
+| `ValidatedTests` | 72 | 88 | TESTFILE.rvt |
 | `VkConnectorBlockTests` | 6 | 6 | TestData blocks |
 | `WideBlockWalkerTests` | 3 | 14 | Test_2025.rvt, TESTFILE.rvt |
 | `WideElementRecordsTests` | 2 | 2 | Test_2025.rvt, TESTFILE.rvt |
 
-`ReferenceApiTests` has 16 more methods that need `bim_dump.txt`; they are skipped when it is missing and, together with
-`FormatsLatestAnalysisTests` (needs `formats_latest_decompressed.bin`), account for 17 of the 34 cases that stay skipped
-with a fixture folder that lacks those two files.
+`ReferenceApiTests` (16 of its 18 methods need `bim_dump.txt`) and `FormatsLatestAnalysisTests` (needs
+`formats_latest_decompressed.bin`) account for the 17 cases that stay skipped with a fixture folder that lacks those two files.
 
 ## Class blocks (`TestData`)
 
