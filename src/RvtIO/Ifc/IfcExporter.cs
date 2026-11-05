@@ -51838,15 +51838,14 @@ public partial class IfcExporter
             Math.Max(wallThicknessFt,
                 hasAuthoredNormalDepth ? authoredNormalDepthFt : 0));
         double depthRoundoff = 1024 * MachineEpsilon * depthScale;
-        const double BooleanClearanceM = 1.0e-4;
+        // A door or window opening is extruded over the whole host and a wall opening keeps the extrusion length of its
+        // solid: the depth is written as measured, with no clearance added to either side.
         double depthFt = hasCommonOpening
             ? commonOpening.DepthFt
-                + (commonOpening.ExactDepth ? 0
-                    : 2 * BooleanClearanceM / FeetToMetres)
             : hasAuthoredNormalDepth
                 && authoredNormalDepthFt > wallThicknessFt + depthRoundoff
                 ? authoredNormalDepthFt
-                : wallThicknessFt + 2 * BooleanClearanceM / FeetToMetres;
+                : wallThicknessFt;
         double baseZFt = hasCommonOpening
             ? commonOpening.BaseZFt : hasAuthoredSpan
                 ? authoredBaseZFt : bbox[2];

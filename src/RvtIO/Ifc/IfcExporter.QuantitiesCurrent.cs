@@ -654,10 +654,10 @@ public partial class IfcExporter
         return result;
     }
 
-    /// <summary>The quantities of an opening. The loop is measured in the model frame, except for the opening of a door or window
-    /// in a straight wall whose depth is the width of the wall: that one is made from the cut loops of the family instance
-    /// (extruded over the whole wall) and measured in the frame of the host.
-    /// The opening solid of any other door or window, with a depth of its own, is measured in the model frame.</summary>
+    /// <summary>The quantities of an opening. The loop is measured in the model frame. Only the opening made from the cut loop of a
+    /// family symbol is measured in the frame of the wall; the door and window pass rewrites those from the decoded loop. A depth equal
+    /// to the width of the wall does not mark that opening: a wall opening and a door without cut loops reach through the wall as well,
+    /// and they keep the model frame.</summary>
     private static List<QuantityValue> OpeningQuantitiesCurrent(
         QuantityContextCurrent context, int openingId, string[] openingArguments, ProfileExtrusion body)
     {
@@ -673,16 +673,7 @@ public partial class IfcExporter
                 return alongTheWall;
             }
             if (WallPlaneOpeningLoopCurrent(placement, host.Wall, body) is { } wallPlane)
-            {
                 (depth, loop) = wallPlane;
-                double zAxisZ = body.AxisZ is { } az ? Math.Abs(placement.Apply(az)[2]) : 0;
-                if (zAxisZ > 0.9 && context.FilledOpenings.Contains(openingId) && WallWidthCurrent(context, host.HostId) is { } width
-                    && Math.Abs(depth - width) <= 5e-5)
-                {
-                    loop = loop.Select(host.Wall.ToLocal).ToList();
-                    depth = width;
-                }
-            }
         }
         return OpeningQuantitiesCurrent(depth, loop);
     }
