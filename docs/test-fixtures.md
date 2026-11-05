@@ -20,6 +20,9 @@ A file may lie directly in the folder or in one level of subfolders (`2020`, `20
 | `TestData/*.bin` | class blocks captured from project files (38 files, below) |
 | `TestData/compact_label_vectors.tsv` | only to re-derive `label_vectors.tsv` (see `docs/frozen-resource-fixtures.md`) |
 
+`PageCodecSampleTests` reads every `.rvt` file in the folder and in one level of subfolders, whatever its name, and skips streams over
+128 MB.
+
 The attributes `[SkippableFact]` and `[SkippableTheory]` (`SkippableFact.cs`) report a test that throws `SkipException` as
 skipped; xunit 2.9.3 has no runtime skip of its own. `TestFiles.Find`, `FindRelative` and `OpenBlock` throw it, so a test
 needs no code of its own to skip. Tests that write diagnostic dumps write them to `rvtio-tests` in the system temporary
