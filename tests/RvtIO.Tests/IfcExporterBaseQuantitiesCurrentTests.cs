@@ -1154,6 +1154,66 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("Area", height * width));
     }
 
+    [Fact]
+    public void Pass_DoorWithoutAnyDimensionParameter_TakesHeightFromTheBoxOfTheInstanceAndWidthFromTheBoxOfItsSymbol()
+    {
+        var (w, owner, placement) = NewWriter();
+        int door = AddProduct(w, "IFCDOOR", "FZGD7y6S5209$mGLi_sPlj", owner, placement);
+        // a door of a storefront: 8 ft high, 3 ft wide along the family width axis; the box of the instance is wider (3.1458) the other way
+        var instance = new Element
+        {
+            Id = 93, Parameters = [TypeReference(33)], BoundingBox = [0, 0, 0, 3, 3.1458, 8],   // no solids at any detail level
+        };
+        var symbol = new Element { Id = 33, Geometry = new GeometryData { RootBoundingBox = [-1.5, -0.1, 0, 1.5, 3, 7] } };
+
+        Apply(w, owner, new() { [93] = instance, [33] = symbol }, new() { [door] = 93 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Height", 8 * 0.3048), ("Width", 3 * 0.3048));
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("Area", 24 * SquareFeet));
+    }
+
+    [Theory]
+    [InlineData(12.0, 6.0)]   // a measured Coarse area keeps priority: half of it, not Height times Width
+    [InlineData(0.0, -1.0)]   // a Coarse area of zero gives no Area, as before
+    public void Pass_DoorWithoutDimensionParameterAndWithACoarseArea_KeepsTheCoarseAreaRule(double coarseArea, double expectedArea)
+    {
+        var (w, owner, placement) = NewWriter();
+        int door = AddProduct(w, "IFCDOOR", "IZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var instance = new Element
+        {
+            Id = 96, Parameters = [TypeReference(36)], BoundingBox = [0, 0, 0, 3, 3.1458, 8], Geometry = Box(3, 0.2, 7), CoarseSurfaceArea = coarseArea,
+        };
+        var symbol = new Element { Id = 36, Geometry = new GeometryData { RootBoundingBox = [-1.5, -0.1, 0, 1.5, 3, 7] } };
+
+        Apply(w, owner, new() { [96] = instance, [36] = symbol }, new() { [door] = 96 });
+
+        if (expectedArea < 0) Assert.Empty(Quantities(w, "IFCQUANTITYAREA"));
+        else AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("Area", expectedArea * SquareFeet));
+    }
+
+    [Fact]
+    public void Pass_WindowWithAWidthParameterOnly_KeepsAWidthWithoutTheBoxHeight()
+    {
+        var (w, owner, placement) = NewWriter();
+        int window = AddProduct(w, "IFCWINDOW", "HZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var instance = new Element { Id = 95, Parameters = [Dimension(-1001301, 4)], BoundingBox = [0, 0, 0, 4, 1, 3] };
+
+        Apply(w, owner, new() { [95] = instance }, new() { [window] = 95 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Width", 4 * 0.3048));
+    }
+
+    [Fact]
+    public void Pass_DoorWithoutAnyDimensionAndWithoutBoxes_GetsNoSet()
+    {
+        var (w, owner, placement) = NewWriter();
+        int door = AddProduct(w, "IFCDOOR", "GZGD7y6S5209$mGLi_sPlj", owner, placement);
+
+        Apply(w, owner, new() { [94] = new Element { Id = 94 } }, new() { [door] = 94 });
+
+        Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
+    }
+
     private static Parameter Dimension(int id, double feet) =>
         new() { Id = id, Value = feet, StorageType = StorageType.Double, Definition = new Definition { Id = id, Name = "P" + id } };
 
