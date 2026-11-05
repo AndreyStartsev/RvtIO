@@ -1106,16 +1106,28 @@ public partial class IfcExporter
         // the solid along the width of the instance frame.
         double? width = ExactNamedParameterFeetCurrent(element, type, "Width", true, -1001301, -1010301) * FeetToMetres
             ?? InstanceFrameExtentMetresCurrent(element, 0);
+        // Without any dimension from a parameter, a frame or a curtain wall (a door of a storefront holds none) they are the stored
+        // boxes: the height the extent of the box of the instance, the width the extent of the box of its family symbol along the
+        // family width axis.
+        bool fromBoxes = false;
+        if (height == null && width == null
+            && (element.Geometry?.BoundingBox ?? element.BoundingBox) is { Length: >= 6 } instanceBox
+            && Math.Abs(instanceBox[5] - instanceBox[2]) * FeetToMetres is > 0 and var boxHeight && double.IsFinite(boxHeight)
+            && SymbolBoxCurrent(LinkedFamilyType(element, context.Elements)) is { Length: >= 6 } symbolBox
+            && Math.Abs(symbolBox[3] - symbolBox[0]) * FeetToMetres is > 0 and var boxWidth && double.IsFinite(boxWidth))
+        {
+            (height, width, fromBoxes) = (boxHeight, boxWidth, true);
+        }
         if (height != null) result.Add(new(QuantityKind.Length, "Height", height.Value));
         if (width != null) result.Add(new(QuantityKind.Length, "Width", width.Value));
         // The "Area" of the instance is half the surface of the solids of its Coarse detail level (see
         // ElementBuilder.ApplyCoarseDoorWindowSurfaces); a window without Coarse alternatives has the Fine solids at that level.
         double surface = element.CoarseSurfaceArea is { } coarse
             ? coarse * SquareFeetToSquareMetres : SolidTotalsCurrent(ShellsOfCurrent(element.Geometry))?.Area ?? 0;
-        if (!inCurtainWall && surface > 1e-9)
+        if (!inCurtainWall && !fromBoxes && surface > 1e-9)
             result.Add(new(QuantityKind.Area, "Area", surface / 2));
         // Without solids at that level an element of its own has no area; an insert of a curtain wall holds both dimensions.
-        else if ((inCurtainWall || element.CoarseSurfaceArea == null) && height != null && width != null)
+        else if ((inCurtainWall || fromBoxes || element.CoarseSurfaceArea == null) && height != null && width != null)
             result.Add(new(QuantityKind.Area, "Area", height.Value * width.Value));
         return result;
     }
