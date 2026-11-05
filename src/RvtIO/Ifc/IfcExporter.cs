@@ -66963,9 +66963,12 @@ public partial class IfcExporter
             if (groupEntityIds.TryGetValue(groupId, out int? done)) return done;
             groupEntityIds[groupId] = null; // a cycle yields no group
             if (!elemById.TryGetValue(groupId, out var group) || group.CategoryId != -2000095
-                || group.SerializedGroupFamilyLabel is not { Length: > 0 } label
                 || !membersByGroup.TryGetValue(groupId, out var memberIds))
                 return null;
+            // The current profile names every group "Model Group"; only the legacy profile needs the localized label,
+            // so a file without localized names (a release before 2022) still gets its groups.
+            string? label = group.SerializedGroupFamilyLabel;
+            if (!CurrentProfile && string.IsNullOrEmpty(label)) return null;
             string? typeName = group.RefStrings?.GetValueOrDefault("Ref_T1333")?.FirstOrDefault() ?? group.Name;
             if (string.IsNullOrEmpty(typeName)) return null;
             var memberEntities = new List<int>();

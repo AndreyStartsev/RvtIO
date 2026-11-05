@@ -46,4 +46,31 @@ public class IfcExporterCurrentGroupOpeningsTests
     {
         Assert.Equal(["#7", "#11"], GroupMembers(IfcProfile.Legacy, 9, 10));
     }
+
+    private static List<string> GroupsWritten(IfcProfile version, string? label)
+    {
+        var group = new Element { Id = 50, CategoryId = -2000095, Name = "Lift", SerializedGroupFamilyLabel = label };
+        var wall = new Element { Id = 100, SerializedGroupId = 50 };
+        var elements = new Dictionary<int, Element> { [50] = group, [100] = wall };
+        var writer = new StepWriter();
+        typeof(IfcExporter).GetMethod("WriteModelGroups", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(new IfcExporter { Profile = version }, [writer, 20, elements,
+                new Dictionary<int, (int entityId, int placementId, string ifcType)> { [100] = (7, 8, "IFCWALLSTANDARDCASE") }]);
+        return Enumerable.Range(0, writer.EntityCount).Select(writer.EntityAt).Where(entity => entity.Type == "IFCGROUP")
+            .Select(entity => entity.Args).ToList();
+    }
+
+    [Fact]
+    public void Current_GroupWithoutLocalizedLabel_IsWrittenOnceAsModelGroup()
+    {
+        var groups = GroupsWritten(IfcProfile.Current, null);
+        Assert.Single(groups);
+        Assert.Contains("'Model Group:Lift:50'", groups[0]);
+    }
+
+    [Fact]
+    public void Legacy_GroupWithoutLocalizedLabel_IsNotWritten()
+    {
+        Assert.Empty(GroupsWritten(IfcProfile.Legacy, null));
+    }
 }
