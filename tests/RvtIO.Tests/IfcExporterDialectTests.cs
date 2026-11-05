@@ -423,14 +423,15 @@ public class IfcExporterDialectTests
         Assert.Contains("'Basic Wall:Generic'", ArgsOf(w, 1));
     }
 
-    private static Element StairRun(int id, int stairsId, int baseRiser, int topRiser, int begin = 1, int end = 1)
+    private static Element StairRun(int id, int stairsId, int baseRiser, int topRiser, int begin = 1, int end = 1, bool sketched = false)
     {
         var numbers = new RvtIO.Parsing.TfBlockDeserializer.StairRunNumbers(0.0, 1.5, 3.0, baseRiser, topRiser, begin, end);
         return new Element
         {
             Id = id,
             SerializedStairRunInput = new RvtIO.Parsing.TfBlockDeserializer.StairRunInput(
-                id, stairsId, RvtIO.Parsing.TfBlockDeserializer.StairRunStyle.Straight, [new(1, 0, 0)], numbers),
+                id, stairsId, sketched ? RvtIO.Parsing.TfBlockDeserializer.StairRunStyle.Sketched : RvtIO.Parsing.TfBlockDeserializer.StairRunStyle.Straight,
+                [new(1, 0, 0)], numbers),
         };
     }
 
@@ -447,12 +448,58 @@ public class IfcExporterDialectTests
     }
 
     [Fact]
+    public void StairFlightAttributes_RiserCountAndHeightArePerRun_NotTheStairValues()
+    {
+        var stairs = new Element
+        {
+            Id = 100, SerializedActualNumberOfRisers = 5, SerializedActualRiserHeightFeet = 0.6, SerializedActualTreadDepthFeet = 1.0,
+        };
+        var run = StairRun(200, 100, baseRiser: 0, topRiser: 3);   // elevations 0 to 1.5 over 3 risers: 0.5 per riser
+        var byId = new Dictionary<int, Element> { [100] = stairs, [200] = run };
+
+        string[] attributes = IfcExporter.SplitStepArguments(IfcExporter.StairFlightAttributes(run, byId));
+
+        Assert.Equal("3", attributes[0]);
+        Assert.Equal(StepWriter.RealFromMillimetres(0.5 * 304.8), attributes[2]);
+    }
+
+    [Fact]
+    public void StairFlightAttributes_RiserHeightDividesByTheRiserIndexSpan()
+    {
+        var stairs = new Element { Id = 100, SerializedActualRiserHeightFeet = 0.6 };
+        var run = StairRun(200, 100, baseRiser: 2, topRiser: 5);
+        var byId = new Dictionary<int, Element> { [100] = stairs, [200] = run };
+
+        string[] attributes = IfcExporter.SplitStepArguments(IfcExporter.StairFlightAttributes(run, byId));
+
+        Assert.Equal(StepWriter.RealFromMillimetres(1.5 / 3 * 304.8), attributes[2]);
+    }
+
+    [Fact]
+    public void StairFlightAttributes_SketchedRunWithoutEndRiser_HasOneRiserLessThanItsIndexSpan()
+    {
+        // Indices 0..4 (span 4), the run does not end with a riser: 3 risers, 3 treads; the riser height still divides by the span.
+        var stairs = new Element { Id = 100, SerializedActualNumberOfRisers = 3, SerializedActualRiserHeightFeet = 0.9 };
+        var sketched = StairRun(200, 100, baseRiser: 0, topRiser: 4, begin: 1, end: 0, sketched: true);
+        var straight = StairRun(201, 100, baseRiser: 0, topRiser: 4, begin: 1, end: 0);
+        var byId = new Dictionary<int, Element> { [100] = stairs, [200] = sketched };
+
+        string[] sketchedAttributes = IfcExporter.SplitStepArguments(IfcExporter.StairFlightAttributes(sketched, byId));
+        string[] straightAttributes = IfcExporter.SplitStepArguments(IfcExporter.StairFlightAttributes(straight, new Dictionary<int, Element> { [100] = stairs, [201] = straight }));
+
+        Assert.Equal("3", sketchedAttributes[0]);
+        Assert.Equal("3", sketchedAttributes[1]);
+        Assert.Equal(StepWriter.RealFromMillimetres(1.5 / 4 * 304.8), sketchedAttributes[2]);
+        Assert.Equal("4", straightAttributes[0]);   // a straight run with the same flag keeps its index span
+    }
+
+    [Fact]
     public void StairFlightAttributes_UnknownSourcesStayUnset()
     {
         var run = StairRun(200, 100, baseRiser: 0, topRiser: 3);
         var noStairs = new Dictionary<int, Element> { [200] = run };
 
-        Assert.Equal("3,2,$,$", IfcExporter.StairFlightAttributes(run, noStairs));
+        Assert.Equal($"3,2,{StepWriter.RealFromMillimetres(0.5 * 304.8)},$", IfcExporter.StairFlightAttributes(run, noStairs));
         Assert.Equal("$,$,$,$", IfcExporter.StairFlightAttributes(new Element { Id = 7 }, noStairs));
     }
 
