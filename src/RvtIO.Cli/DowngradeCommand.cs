@@ -84,7 +84,7 @@ internal static class DowngradeCommand
         output.WriteLine($"Classes only in the source: {plan.ClassesOnlyInSource.Count.ToString(inv)}{elements}");
         output.WriteLine($"Classes only in the profile: {plan.ClassesOnlyInTarget.Count.ToString(inv)}; classes with different fields: {plan.FieldDifferences.Count.ToString(inv)}");
         int emptied = plan.GuidLists.Count(g => g.Result == 0);
-        if (emptied > 0) output.WriteLine($"Upgrade-identifier lists that become empty: {emptied.ToString(inv)} (the profile lists none for them)");
+        if (emptied > 0) output.WriteLine($"Upgrade-identifier lists that become empty: {emptied.ToString(inv)} (the rule yields no identifier for them)");
         if (result.CountFailure != null) error.WriteLine($"warning: the elements were not counted: {result.CountFailure}.");
         output.WriteLine("Check only: no file was written" + (reportPath == null ? "." : $" except the report {reportPath}."));
         return WriteReport(error, reportPath, Report(result, sourceName, profileName), RvtExitCodes.Success);
