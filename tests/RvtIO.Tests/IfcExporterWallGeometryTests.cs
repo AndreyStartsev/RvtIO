@@ -22444,7 +22444,8 @@ public class IfcExporterWallGeometryTests
             Assert.Equal(1, Count(ifc, "=IFCOPENINGELEMENT("));
             Assert.Equal(1, Count(ifc, "=IFCRELVOIDSELEMENT("));
             Assert.DoesNotContain("=IFCRELFILLSELEMENT(", ifc);
-            Assert.Contains(",304.8,305.);", ifc);
+            // The opening is extruded over the whole host: its depth is the wall thickness, with no clearance added to either side.
+            Assert.Contains(",304.8,304.8);", ifc);
         }
         finally
         {
