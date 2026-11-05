@@ -6,6 +6,10 @@ public partial class IfcExporter
 {
     private readonly Dictionary<int, List<QuantityValue>> _ownCutPairOpeningQuantitiesCurrent = new();
 
+    /// <summary>The openings written from a resolved box whose depth earlier output made 0.2 mm larger (see
+    /// <see cref="HostedOpeningGeometry.HadDepthClearance"/>).</summary>
+    internal readonly HashSet<int> _openingsWithFormerDepthClearanceCurrent = new();
+
     internal bool TryCreateOwnCutPairOpeningBodyCurrent(StepWriter writer, Element cutter, Element host,
         HostedOpeningGeometry opening, int subContext, out int shape, out List<QuantityValue>? quantities)
         => TryCreateOwnCutPairOpeningBodyCurrent(writer, cutter, host, opening, subContext, out shape, out quantities, out _);

@@ -376,7 +376,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
     /// <summary>A wall placed with its X axis along <paramref name="direction"/>, and an opening placed in the wall frame whose
     /// body is the vertical box 0.8 along the wall by 0.202 across by 2.1 up.</summary>
     private static (StepWriter W, int Owner, int Wall) VerticalOpeningInWall(
-        string direction, string hostType = "IFCWALLSTANDARDCASE", double? wallWidth = null, bool filled = false)
+        string direction, string hostType = "IFCWALLSTANDARDCASE", double? wallWidth = null, bool filled = false,
+        string fillerType = "IFCDOOR")
     {
         var (w, owner, placement) = NewWriter();
         int point = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
@@ -391,39 +392,87 @@ public class IfcExporterBaseQuantitiesCurrentTests
         w.Add("IFCRELVOIDSELEMENT", $"'4ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{wall},#{opening}");
         if (filled)
         {
-            int door = AddProduct(w, "IFCDOOR", "3ZGD7y6S5209$mGLi_sPlj", owner, placement);
+            int door = AddProduct(w, fillerType, "3ZGD7y6S5209$mGLi_sPlj", owner, placement);
             w.Add("IFCRELFILLSELEMENT", $"'5ZGD7y6S5209$mGLi_sPlj',#{owner},$,$,#{opening},#{door}");
         }
         return (w, owner, wall);
     }
 
+    /// <summary>The exporter with the legacy sides, told that the opening of the writer was written from a box whose depth earlier output
+    /// made 0.2 mm larger (an opening that is not told about is one of an exact depth).</summary>
+    private static IfcExporter LegacyWithFormerClearance(StepWriter w)
+    {
+        var exporter = Legacy;
+        for (int i = 0; i < w.EntityCount; i++)
+            if (w.EntityAt(i).Type == "IFCOPENINGELEMENT") exporter._openingsWithFormerDepthClearanceCurrent.Add(w.EntityAt(i).Id);
+        return exporter;
+    }
+
     [Theory]
-    // Whatever the width of the wall, whether a door fills the opening or not: the model frame (wall along Y: height up, width
-    // along the wall), and the Depth is the extrusion length of the opening solid itself, not the width of the wall.
-    // A depth equal to the width of the wall does not mark an opening made from the cut loops of a symbol: a wall opening or
-    // a door without cut loops reaches through the wall as well.
-    [InlineData(0.202, true)]
-    [InlineData(0.3, true)]
-    [InlineData(0.202, false)]
-    public void Pass_OpeningInAWallAlongTheModelYAxis_IsMeasuredInTheModelFrameWhateverItsDepthOrFiller(double wallWidth, bool filled)
+    // The legacy sides of an opening of a depth that was exact and equal to the width of its wall: made from the cut loops of the
+    // family instance and measured in the frame of the wall (height along the wall, width up).
+    [InlineData(0.202, true, 0.8, 2.1)]
+    // The opening solid has a depth of its own: measured in the model frame (wall along Y: height up, width along the wall).
+    [InlineData(0.3, true, 2.1, 0.8)]
+    // Nothing fills the opening: the model frame again.
+    [InlineData(0.202, false, 2.1, 0.8)]
+    public void Legacy_OpeningInAWallAlongTheModelYAxis_IsMeasuredInTheFrameOfTheWallOnlyForAnExactDepthAsWideAsTheWall(
+        double wallWidth, bool filled, double height, double width)
     {
         var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)", wallWidth: wallWidth, filled: filled);
 
         Apply(w, owner, exporter: Legacy);
 
-        var lengths = Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList();
-        AssertQuantities(lengths, ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", height), ("Width", width));
+    }
+
+    [Theory]
+    [InlineData(0.202)]
+    [InlineData(0.3)]
+    public void Legacy_FilledOpeningWhoseDepthEarlierOutputMadeLarger_IsMeasuredInTheModelFrame(double wallWidth)
+    {
+        // The depth is written without the clearance now; before it was 0.2 mm more than the wall, which is why it was not taken for
+        // an opening as deep as the wall.
+        var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)", wallWidth: wallWidth, filled: true);
+
+        Apply(w, owner, exporter: LegacyWithFormerClearance(w));
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
     }
 
     [Fact]
-    public void Pass_FilledOpeningAsDeepAsItsSlightlyTurnedWall_KeepsTheContourMeasuredInTheModelFrame()
+    public void Legacy_FilledOpeningOfAnExactDepthInASlightlyTurnedWall_KeepsTheContourMeasuredInTheFrameOfTheWall()
     {
-        // A frame in a wall 202 mm wide, turned by 1.6 degrees: the sides are the extents of the loop along X and Y,
-        // not the sides of the loop in the frame of the wall.
+        // A frame in a wall 202 mm wide, turned by 1.6 degrees: the sides of the loop in the frame of the wall, not the extents of the
+        // loop along X and Y.
         const string direction = "(0.999616557444871,-0.0276900357902244,0.)";
         var (w, owner, _) = VerticalOpeningInWall(direction, hostType: "IFCWALL", wallWidth: 0.202, filled: true);
 
         Apply(w, owner, exporter: Legacy);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
+    }
+
+    [Fact]
+    public void Default_FilledOpeningOfAnExactDepthInASlightlyTurnedWall_IsMeasuredInTheModelFrame()
+    {
+        // The filler is no door or window, so the host-axes measure does not apply; the default does not take the frame of the wall.
+        const string direction = "(0.999616557444871,-0.0276900357902244,0.)";
+        var (w, owner, _) = VerticalOpeningInWall(direction, hostType: "IFCWALL", wallWidth: 0.202, filled: true, fillerType: "IFCFURNISHINGELEMENT");
+
+        Apply(w, owner, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(),
+            ("Depth", 0.202), ("Height", 0.8 * 0.999616557444871), ("Width", 0.8 * 0.0276900357902244));
+    }
+
+    [Fact]
+    public void Legacy_FilledOpeningWhoseDepthEarlierOutputMadeLargerInASlightlyTurnedWall_KeepsTheContourMeasuredInTheModelFrame()
+    {
+        const string direction = "(0.999616557444871,-0.0276900357902244,0.)";
+        var (w, owner, _) = VerticalOpeningInWall(direction, hostType: "IFCWALL", wallWidth: 0.202, filled: true);
+
+        Apply(w, owner, exporter: LegacyWithFormerClearance(w));
 
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(),
             ("Depth", 0.202), ("Height", 0.8 * 0.999616557444871), ("Width", 0.8 * 0.0276900357902244));
@@ -682,10 +731,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
 
         Apply(w, owner, new() { [41] = element }, new() { [wall] = 41 }, exporter: Legacy);
 
-        // The frame of the wall (from its location line) finds the loop in the plane of the wall, 0.8 long and 0.202 across, so the Depth
-        // is 0.202. The loop is then measured in the model frame: the 0.8 along the wall, turned by 45 degrees, projects on both axes.
-        double projection = 0.8 / Math.Sqrt(2);
-        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", projection), ("Width", projection));
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
     }
 
     [Fact]

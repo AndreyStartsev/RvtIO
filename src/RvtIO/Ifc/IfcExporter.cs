@@ -29,7 +29,8 @@ public partial class IfcExporter
         bool IsExactRecoveredClosedFamilyCutProfile = false,
         bool IsExactAuthoredRevealWriterBox = false,
         bool IsExactJoinedWallEndProfile = false,
-        int OwnPrimaryFamilyHostId = 0);
+        int OwnPrimaryFamilyHostId = 0,
+        bool HadDepthClearance = false);
 
     internal readonly record struct ExactForwardHostOpeningPartition(
         int DirectHostId,
@@ -379,6 +380,7 @@ public partial class IfcExporter
         _storeyGlobalIds.Clear();
         _recessOpeningEntityIds.Clear();
         _ownCutPairOpeningQuantitiesCurrent.Clear();
+        _openingsWithFormerDepthClearanceCurrent.Clear();
         LengthRuleRunsCurrent.Clear();
         _bodyItemOrigins.Clear();
         _spaceBodyGeometry.Clear();
@@ -51840,12 +51842,13 @@ public partial class IfcExporter
         double depthRoundoff = 1024 * MachineEpsilon * depthScale;
         // A door or window opening is extruded over the whole host and a wall opening keeps the extrusion length of its
         // solid: the depth is written as measured, with no clearance added to either side.
+        bool authoredDepthWins = hasAuthoredNormalDepth
+            && authoredNormalDepthFt > wallThicknessFt + depthRoundoff;
         double depthFt = hasCommonOpening
             ? commonOpening.DepthFt
-            : hasAuthoredNormalDepth
-                && authoredNormalDepthFt > wallThicknessFt + depthRoundoff
-                ? authoredNormalDepthFt
-                : wallThicknessFt;
+            : authoredDepthWins ? authoredNormalDepthFt : wallThicknessFt;
+        // Earlier output added the clearance to every depth but an exact one; the legacy-axes quantities need to tell them apart.
+        bool hadDepthClearance = hasCommonOpening ? !commonOpening.ExactDepth : !authoredDepthWins;
         double baseZFt = hasCommonOpening
             ? commonOpening.BaseZFt : hasAuthoredSpan
                 ? authoredBaseZFt : bbox[2];
@@ -51868,7 +51871,8 @@ public partial class IfcExporter
                 hasCommonOpening
                 && commonOpening.IsExactAuthoredMultiHostEnvelope,
             IsExactFamilyCutLoopWriterBox:
-                hasCommonOpening && commonOpening.IsFamilyCutLoop);
+                hasCommonOpening && commonOpening.IsFamilyCutLoop,
+            HadDepthClearance: hadDepthClearance);
         if (hasAuthoredOpening
             && authoredOpening.Faces.Count == 6
             && TryGetExactVerticalRectangularPrismSweptOpening(
@@ -52241,6 +52245,7 @@ public partial class IfcExporter
             exactReferenceValueId: exactReferenceValueId,
             useExactReferenceValueId: exactReferenceValueId.HasValue);
         if (ownCutPair) _ownCutPairOpeningQuantitiesCurrent[openElemId] = ownQuantities!;
+        if (opening.HadDepthClearance) _openingsWithFormerDepthClearanceCurrent.Add(openElemId);
         w.Add("IFCRELVOIDSELEMENT",
             $"{S(IfcGuid.FromName($"hosted-void:{hostedElem.Id}:{wallElem.Id}"))},"
             + $"{R(ownerHistId)},$,$,{R(wallEntityId)},{R(openElemId)}");

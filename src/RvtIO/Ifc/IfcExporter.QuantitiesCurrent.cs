@@ -140,6 +140,8 @@ public partial class IfcExporter
         public IReadOnlyDictionary<int, double>? StoreyHeights { get; init; }
         /// <summary>See <see cref="IfcExporter.OpeningQuantitiesInHostAxes"/>.</summary>
         public bool OpeningsInHostAxes { get; init; }
+        /// <summary>The openings written with a depth that earlier output made 0.2 mm larger.</summary>
+        public HashSet<int> OpeningsWithFormerDepthClearance { get; init; } = new();
         /// <summary>Parent container entity of each aggregated child (IfcRelAggregates).</summary>
         public Dictionary<int, int> ParentByChild { get; } = new();
     }
@@ -654,10 +656,15 @@ public partial class IfcExporter
         return result;
     }
 
+    /// <summary>The clearance (both sides together) that earlier output added to the depth of a door or window opening that was not exact, in
+    /// metres.</summary>
+    private const double FormerDepthClearanceM = 2.0e-4;
+
     /// <summary>The quantities of an opening. The loop is measured in the model frame. Only the opening made from the cut loop of a
     /// family symbol is measured in the frame of the wall; the door and window pass rewrites those from the decoded loop. A depth equal
     /// to the width of the wall does not mark that opening: a wall opening and a door without cut loops reach through the wall as well,
-    /// and they keep the model frame.</summary>
+    /// and they keep the model frame. With <see cref="OpeningQuantitiesSwapped"/> the earlier selection stays: a filled opening whose
+    /// depth was the width of its wall without a clearance is measured in the frame of the wall.</summary>
     private static List<QuantityValue> OpeningQuantitiesCurrent(
         QuantityContextCurrent context, int openingId, string[] openingArguments, ProfileExtrusion body)
     {
@@ -673,7 +680,20 @@ public partial class IfcExporter
                 return alongTheWall;
             }
             if (WallPlaneOpeningLoopCurrent(placement, host.Wall, body) is { } wallPlane)
+            {
                 (depth, loop) = wallPlane;
+                // The legacy sides keep the earlier selection: a filled opening that was written as deep as its wall, with no
+                // clearance, is measured in the frame of the wall. Depths now carry no clearance, so the one an earlier output
+                // added is put back for the comparison.
+                double zAxisZ = body.AxisZ is { } az ? Math.Abs(placement.Apply(az)[2]) : 0;
+                double earlierDepth = depth + (context.OpeningsWithFormerDepthClearance.Contains(openingId) ? FormerDepthClearanceM : 0);
+                if (!context.OpeningsInHostAxes && zAxisZ > 0.9 && context.FilledOpenings.Contains(openingId)
+                    && WallWidthCurrent(context, host.HostId) is { } width && Math.Abs(earlierDepth - width) <= 5e-5)
+                {
+                    loop = loop.Select(host.Wall.ToLocal).ToList();
+                    depth = width;
+                }
+            }
         }
         return OpeningQuantitiesCurrent(depth, loop);
     }
@@ -699,6 +719,7 @@ public partial class IfcExporter
         {
             W = w, IndexById = indexById, Elements = elementsById, ElementIdByEntity = productElementIdByEntity, Products = products,
             StoreyHeights = storeyHeights, OpeningsInHostAxes = OpeningQuantitiesInHostAxes,
+            OpeningsWithFormerDepthClearance = _openingsWithFormerDepthClearanceCurrent,
         };
 
         for (int index = 0; index < entityCount; index++)
