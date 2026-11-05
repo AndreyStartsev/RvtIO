@@ -64023,22 +64023,27 @@ public partial class IfcExporter
             $"{S(IfcGuid.FromName($"{seedPrefix}-rel:{elem.Id}"))},{R(ownerHistId)},$,$,{StepWriter.List(R(elemEntityId))},{R(psetId)}");
     }
 
-    private static int StairRunRisers(TfBlockDeserializer.StairRunNumbers numbers) =>
+    /// <summary>The span of the riser indices of a run; the riser height of a flight divides the elevation range by it.</summary>
+    private static int StairRunIndexSpan(TfBlockDeserializer.StairRunNumbers numbers) =>
         numbers.TopRiserIndex - numbers.BaseRiserIndex;
 
+    /// <summary>The number of risers of a run: the index span; in the current profile one less for a sketched run that does not end with a riser.</summary>
+    private static int StairRunRisers(Element run, TfBlockDeserializer.StairRunNumbers numbers, bool current = false) =>
+        StairRunIndexSpan(numbers) - (current && run.SerializedStairRunInput?.Style == TfBlockDeserializer.StairRunStyle.Sketched && numbers.EndWithRiser == 0 ? 1 : 0);
+
     private static bool StairRunCountsAgree(Element run, IReadOnlyDictionary<int, Element> elementsById,
-        TfBlockDeserializer.StairRunNumbers numbers)
+        TfBlockDeserializer.StairRunNumbers numbers, bool current = false)
     {
         int stairsId = run.SerializedStairRunInput!.StairsId;
         if (!elementsById.TryGetValue(stairsId, out var stairs) || stairs.SerializedActualNumberOfRisers is not int stored)
             return true;
         int runsOfStairs = elementsById.Values.Count(other => other.SerializedStairRunInput?.StairsId == stairsId);
-        return runsOfStairs != 1 || stored == StairRunRisers(numbers);
+        return runsOfStairs != 1 || stored == StairRunRisers(run, numbers, current);
     }
 
-    private static int? StairRunTreads(TfBlockDeserializer.StairRunNumbers numbers) =>
+    private static int? StairRunTreads(Element run, TfBlockDeserializer.StairRunNumbers numbers, bool current = false) =>
         numbers.BeginWithRiser is 0 or 1 && numbers.EndWithRiser is 0 or 1
-            ? StairRunRisers(numbers) - 1 + (numbers.BeginWithRiser == 0 ? 1 : 0) + (numbers.EndWithRiser == 0 ? 1 : 0)
+            ? StairRunRisers(run, numbers, current) - 1 + (numbers.BeginWithRiser == 0 ? 1 : 0) + (numbers.EndWithRiser == 0 ? 1 : 0)
             : null;
 
     /// <summary>
@@ -64052,7 +64057,7 @@ public partial class IfcExporter
         foreach (var run in elementsById.Values)
         {
             if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.StairsId != stair.Id) continue;
-            if (!StairRunCountsAgree(run, elementsById, numbers) || StairRunTreads(numbers) is not int runTreads) return;
+            if (!StairRunCountsAgree(run, elementsById, numbers) || StairRunTreads(run, numbers) is not int runTreads) return;
             treads += runTreads; runs++;
         }
         if (runs == 0 || treads <= 0) return;
@@ -64088,7 +64093,7 @@ public partial class IfcExporter
         if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.OwnerId != run.Id
             || !elementsById.TryGetValue(run.FamilyTypeId > 0 ? run.FamilyTypeId : run.TypeId, out var runType)
             || runType.Id == run.Id || runType.CategoryId != run.CategoryId
-            || StairRunRisers(numbers) <= 0) return;
+            || StairRunIndexSpan(numbers) <= 0) return;
         elementsById.TryGetValue(input.StairsId, out var stairs);
         Element? stairsType = stairs?.SerializedStairTypeId is int stairsTypeId
             && elementsById.TryGetValue(stairsTypeId, out var foundType) ? foundType : null;
@@ -64096,10 +64101,10 @@ public partial class IfcExporter
         void Add(string name, string value) => valueIds.Add(w.Add("IFCPROPERTYSINGLEVALUE", $"{S(name)},$,{value},$"));
         string Length(string measure, double millimetres) => $"{measure}({D17(millimetres)})";
 
-        int risers = StairRunRisers(numbers);
+        int risers = StairRunIndexSpan(numbers);
         bool countsAgree = StairRunCountsAgree(run, elementsById, numbers);
         if (includeCounts && countsAgree && Free("NumberOfRiser")) Add("NumberOfRiser", $"IFCCOUNTMEASURE({D17(risers)})");
-        if (includeCounts && countsAgree && Free("NumberOfTreads") && StairRunTreads(numbers) is int treads && treads > 0)
+        if (includeCounts && countsAgree && Free("NumberOfTreads") && StairRunTreads(run, numbers) is int treads && treads > 0)
             Add("NumberOfTreads", $"IFCCOUNTMEASURE({D17(treads)})");
         double riserHeight = (numbers.TopElevation - numbers.BottomElevation) / risers * 304.8;
         if (Free("RiserHeight") && double.IsFinite(riserHeight) && riserHeight > 0)
@@ -66963,9 +66968,12 @@ public partial class IfcExporter
             if (groupEntityIds.TryGetValue(groupId, out int? done)) return done;
             groupEntityIds[groupId] = null; // a cycle yields no group
             if (!elemById.TryGetValue(groupId, out var group) || group.CategoryId != -2000095
-                || group.SerializedGroupFamilyLabel is not { Length: > 0 } label
                 || !membersByGroup.TryGetValue(groupId, out var memberIds))
                 return null;
+            // The current profile names every group "Model Group"; only the legacy profile needs the localized label,
+            // so a file without localized names (a release before 2022) still gets its groups.
+            string? label = group.SerializedGroupFamilyLabel;
+            if (!CurrentProfile && string.IsNullOrEmpty(label)) return null;
             string? typeName = group.RefStrings?.GetValueOrDefault("Ref_T1333")?.FirstOrDefault() ?? group.Name;
             if (string.IsNullOrEmpty(typeName)) return null;
             var memberEntities = new List<int>();
