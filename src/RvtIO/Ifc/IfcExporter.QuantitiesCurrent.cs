@@ -1005,7 +1005,8 @@ public partial class IfcExporter
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
         double sideArea = LargestVerticalFaceAreaCurrent(shells) * SquareFeetToSquareMetres;
-        AddIfPositive(result, QuantityKind.Length, "Height", OwnSimpleWallHeightCurrent(element) ?? body.Depth);
+        double? zRange = OwnWallHeightCurrent(element, bodyRoute: true);
+        AddIfPositive(result, QuantityKind.Length, "Height", zRange ?? body.Depth);
         // A wall that is not "simple rectangular" is exported as the body of the generic exporter, whose extrusion data carry the
         // depth as the length; the others keep the axis length.
         bool simple = shells.Count > 0 && WallExtrusion.IsSimpleRectangularWall(shells[0].Faces, element.OwnWallHelper,
@@ -1018,7 +1019,7 @@ public partial class IfcExporter
             double trimmedLength = Math.Sqrt(Math.Pow(trimmed[1][0] - trimmed[0][0], 2) + Math.Pow(trimmed[1][1] - trimmed[0][1], 2)) * FeetToMetres;
             if (trimmedLength > 1e-9 && Math.Abs(trimmedLength - length) > 1e-5) length = trimmedLength;
         }
-        AddIfPositive(result, QuantityKind.Length, "Length", simple ? length : body.Depth);
+        AddIfPositive(result, QuantityKind.Length, "Length", simple ? length : zRange ?? body.Depth);
         AddIfPositive(result, QuantityKind.Length, "Width", body.ExtentY);
         double topArea = LargestHorizontalFaceAreaCurrent(shells) * SquareFeetToSquareMetres;
         // A simple rectangular wall gets its footprint from the whole location curve and the total width of the layers,
@@ -1033,7 +1034,7 @@ public partial class IfcExporter
             footprint = rebuiltArea * SquareFeetToSquareMetres;
         double? netVolume = element.Location?.CurveType == "Arc" && body.Depth > 1e-9
             && !shells.Any(shell => shell.SourceMeasured)
-            ? footprint * (OwnSimpleWallHeightCurrent(element) ?? body.Depth)
+            ? footprint * (zRange ?? body.Depth)
             : SolidTotalsCurrent(shells)?.Volume;
         AddIfPositive(result, QuantityKind.Area, "GrossFootprintArea", footprint);
         if (body.Depth > 1e-9 && body.ExtentY > 1e-9 && sideArea > 1e-12)
@@ -1044,19 +1045,33 @@ public partial class IfcExporter
         return result;
     }
 
-    internal static double? OwnSimpleWallHeightCurrent(Element wall)
+    /// <summary>The height of a wall: the Z range of the bounding box of all its stored solids, as long as none of its faces
+    /// stands outside a solid (a mesh). It is the depth of the extrusion written for a simple rectangular wall (the first solid
+    /// decides) and the Height of the quantities; the profile helper and the cross-section attribute play no part in it. Null,
+    /// and the caller keeps the extrusion depth it wrote, when a stored solid is open or empty, when the solids do not cover
+    /// every face, when a face is in two solids, or when the first solid is not a simple rectangular wall. Metres.</summary>
+    internal static double? OwnSimpleWallHeightCurrent(Element wall) => OwnWallHeightCurrent(wall, bodyRoute: false);
+
+    /// <summary>With <paramref name="bodyRoute"/> the height of a wall that is not simple rectangular as well (curved, leaning
+    /// or edited walls): the generic body exporter writes it, and the quantities still take the Z range of the solid as Height
+    /// (and the extrusion depth as Length), where the extrusion depth that is written first may come from the height
+    /// parameter of the wall instead. Such a wall needs exactly one solid.</summary>
+    private static double? OwnWallHeightCurrent(Element wall, bool bodyRoute)
     {
-        if (wall.Geometry?.InactiveFaces is { Count: > 0 } && PassesSimpleRectangularWallCurrent(wall) == false) return null;
-        if (wall.OwnWallCrossSection != 1 || wall.OwnWallHelper is not { } helper
-            || wall.OwnCurrentCutPairBodyCurrent is not { } source
-            || source.BrepSolids is not [{ IsClosed: true } solid]
-            || solid.FaceIndices.Count != source.Faces.Count
-            || !WallExtrusion.IsSimpleRectangularWall(source.Faces, helper, wall.Geometry?.InactiveFaces)) return null;
-        var points = source.Faces.SelectMany(face => (face.OuterVertices ?? [])
+        // Inactive faces that make the wall not simple leave it to the body exporter (a tilted classifier face of the first solid).
+        if (!bodyRoute && wall.Geometry?.InactiveFaces is { Count: > 0 } && PassesSimpleRectangularWallCurrent(wall) == false) return null;
+        if ((wall.OwnCurrentCutPairBodyCurrent ?? wall.Geometry) is not { BrepSolids: { Count: > 0 } solids } body
+            || solids.Any(solid => !solid.IsClosed || solid.FaceIndices.Count == 0)
+            || solids.Sum(solid => solid.FaceIndices.Count) != body.Faces.Count
+            || solids.SelectMany(solid => solid.FaceIndices).Distinct().Count() != body.Faces.Count
+            || solids.SelectMany(solid => solid.FaceIndices).Any(index => (uint)index >= (uint)body.Faces.Count)
+            || !(WallExtrusion.IsSimpleRectangularWall(solids[0].FaceIndices.Select(index => body.Faces[index]).ToList(),
+                    wall.OwnWallHelper, wall.Geometry?.InactiveFaces)
+                || bodyRoute && solids.Count == 1)) return null;
+        var points = body.Faces.SelectMany(face => (face.OuterVertices ?? [])
             .Concat((face.InnerVertices ?? []).SelectMany(loop => loop))).ToList();
         if (points.Count < 8 || points.Any(point => point.Length != 3 || point.Any(value => !double.IsFinite(value))))
             return null;
-        // The z span comes from the collected solids before the axis extrusion is recreated.
         double height = points.Max(point => point[2]) - points.Min(point => point[2]);
         return height > 0 && double.IsFinite(height) ? height * FeetToMetres : null;
     }
