@@ -155,15 +155,15 @@ public sealed class ElementCensusTests : IDisposable
     }
 
     [Fact]
-    public void AFramingThatDoesNotHold_GivesNoCounts_AndSaysWhichStream()
+    public void AFramingThatDoesNotHold_IsDamage_AndSaysWhichStream()
     {
         byte[] partition = Partition(new Block(false, [(1, "Alpha")]));
         partition[^1] = 0; // the terminal marker no longer ends the stream
 
-        var (counts, failure) = Count(partition);
+        var exception = Assert.Throws<RvtInputException>(() => Count(partition));
 
-        Assert.Null(counts);
-        Assert.Contains("partition stream 1", failure);
+        Assert.Equal("truncated-or-damaged", exception.Kind);
+        Assert.Contains("Partition stream 1", exception.Message);
     }
 
     [Fact]

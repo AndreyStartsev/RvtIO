@@ -12,8 +12,9 @@ namespace RvtIO.Writing;
 /// </summary>
 internal static class ElementCensus
 {
-    /// <summary>Elements per class name, or null with the reason in <paramref name="failure"/> when the table, the id width or the
-    /// framing of a partition stream does not decode.</summary>
+    /// <summary>Elements per class name, or null with the reason in <paramref name="failure"/> when the count cannot be made from this
+    /// file's layout: the class table has no framing classes, the id width is not known, or there is no partition stream.</summary>
+    /// <exception cref="RvtInputException">A partition stream is present but its framing does not hold or a record has no class tag.</exception>
     internal static Dictionary<string, int>? CountByClass(RootStorage root, SchemaDocument document, out string? failure)
     {
         failure = null;
@@ -42,8 +43,8 @@ internal static class ElementCensus
                 if (record.Body.Length < 2) { bad = true; return; }
                 tagOfOwner[record.Owner] = BinaryPrimitives.ReadUInt16LittleEndian(record.Body.Span);
             }, out string? walkFailure, out _);
-            if (!ok) { failure = $"the framing of partition stream {name} does not hold ({walkFailure})"; return null; }
-            if (bad) { failure = $"partition stream {name} holds a record without a class tag"; return null; }
+            if (!ok) throw new RvtInputException("truncated-or-damaged", $"Partition stream {name} is damaged: its framing does not hold ({walkFailure}).");
+            if (bad) throw new RvtInputException("truncated-or-damaged", $"Partition stream {name} is damaged: it holds a record without a class tag.");
         }
 
         var nameOfTag = document.ById;

@@ -9,7 +9,7 @@ namespace RvtIO.Cli;
 /// <summary>
 /// <c>rvtio downgrade &lt;source&gt; --target-profile &lt;file&gt; --check [--guid-rule exact|minimal] [--report report.json]</c>: plans the edit of the
 /// class table of a newer project so that an older release may load it, and reports it. It writes nothing but the report. Exit codes:
-/// 0 planned, 1 usage error, 2 a file cannot be read, 5 refused (the releases are out of scope or the edit does not apply).
+/// 0 planned, 1 usage error (also an unusable path), 2 a file cannot be read or a partition stream is damaged, 5 refused (the releases are out of scope or the edit does not apply).
 /// </summary>
 internal static class DowngradeCommand
 {
@@ -55,8 +55,7 @@ internal static class DowngradeCommand
         if (source == null) return Usage(error, "downgrade requires the source file.");
         if (profile == null) return Usage(error, "downgrade requires --target-profile <file>, a project or family saved by the target release.");
         if (!check) return Usage(error, "downgrade only plans in this version: add --check. No converted file can be written.");
-        if (reportPath != null && (ExportReport.SameFile(reportPath, source) || ExportReport.SameFile(reportPath, profile)))
-            return Usage(error, "--report must not name the source file or the profile file; nothing was read or written.");
+        if (PathProblem(source, profile, reportPath) is { } problem) return Usage(error, problem + " Nothing was read or written.");
 
         string sourceName = Path.GetFileName(source), profileName = Path.GetFileName(profile);
         DowngradePlanner.Result result;
@@ -88,6 +87,26 @@ internal static class DowngradeCommand
         if (result.CountFailure != null) error.WriteLine($"warning: the elements were not counted: {result.CountFailure}.");
         output.WriteLine("Check only: no file was written" + (reportPath == null ? "." : $" except the report {reportPath}."));
         return WriteReport(error, reportPath, Report(result, sourceName, profileName), RvtExitCodes.Success);
+    }
+
+    // Normalising a path can throw; every such failure, an empty path and a directory as report are usage errors found before any file is read.
+    private static string? PathProblem(string source, string profile, string? report)
+    {
+        foreach (var (option, path) in new[] { ("downgrade source", source), ("--target-profile", profile), ("--report", report) })
+            if (path != null && string.IsNullOrWhiteSpace(path)) return $"The path of {option} is empty.";
+        try
+        {
+            Path.GetFullPath(source);
+            Path.GetFullPath(profile);
+            if (report == null) return null;
+            if (Directory.Exists(report)) return "--report names a directory, not a file.";
+            if (ExportReport.SameFile(report, source) || ExportReport.SameFile(report, profile)) return "--report must not name the source file or the profile file.";
+            return null;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or IOException or UnauthorizedAccessException)
+        {
+            return $"A path is not usable ({exception.Message}).";
+        }
     }
 
     private static string RuleName(GuidRule rule) => rule == GuidRule.Exact ? "exact" : "minimal";
@@ -147,7 +166,7 @@ internal static class DowngradeCommand
             File.WriteAllText(temporary, JsonSerializer.Serialize(report, JsonOptions), new UTF8Encoding(false));
             File.Move(temporary, reportPath, overwrite: true);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             if (File.Exists(temporary)) File.Delete(temporary);
             error.WriteLine($"error: the report cannot be written to '{reportPath}': {exception.Message}");

@@ -44,7 +44,7 @@ public sealed class DowngradeCommandTests : IDisposable
     }
 
     /// <summary>Writes a compound file with Formats/Latest as a paged gzip stream and, when given, a BasicFileInfo that names the saving release.</summary>
-    private string File_(string name, int markerId, Cls[] classes, int? savedRelease = null, bool withTable = true, bool damageTable = false)
+    private string File_(string name, int markerId, Cls[] classes, int? savedRelease = null, bool withTable = true, bool damageTable = false, byte[]? partition = null)
     {
         string path = P(name);
         using var root = RootStorage.Create(path, OpenMcdf.Version.V3);
@@ -54,6 +54,11 @@ public sealed class DowngradeCommandTests : IDisposable
             if (damageTable) stored[20] ^= 0xFF; // inside the deflate data, behind the 10-byte gzip header
             using var stream = root.CreateStorage("Formats").CreateStream("Latest");
             stream.Write(stored);
+        }
+        if (partition != null)
+        {
+            using var stream = root.CreateStorage("Partitions").CreateStream("1");
+            stream.Write(partition);
         }
         if (savedRelease is int year)
         {
@@ -271,6 +276,66 @@ public sealed class DowngradeCommandTests : IDisposable
 
         Assert.Equal(2, exit);
         Assert.Contains("profile file 'profile.rvt'", error);
+    }
+
+    // A source whose class table names the framing classes, so that the elements are counted; the partition stream is what the test gives.
+    private string CountableSource(byte[]? partition) => File_("countable.rvt", Marker2026,
+        [C("ContentKey", 1), C("SegmentMarker", 1), C("SegmentCheckback", 1), C("SignatureMarker", 1), C("Stays", 3)], savedRelease: 2026, partition: partition);
+
+    [Fact]
+    public void ADamagedPartitionStream_IsAnInputError_NotAWarning()
+    {
+        string profile = Profile();
+        string report = P("damaged-report.json");
+        string source = CountableSource([0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42]);
+
+        Assert.Equal("truncated-or-damaged", Assert.Throws<RvtInputException>(() => DowngradePlanner.Plan(source, profile, GuidRule.Exact)).Kind);
+        var (exit, output, error) = Run(source, "--target-profile", profile, "--check", "--report", report);
+
+        Assert.Equal(2, exit);
+        Assert.Equal("", output);
+        Assert.Contains("Partition stream 1 is damaged", error);
+        using var json = JsonDocument.Parse(File.ReadAllText(report));
+        Assert.Equal(("unreadable", "truncated-or-damaged"), (json.RootElement.GetProperty("status").GetString(), json.RootElement.GetProperty("kind").GetString()));
+    }
+
+    [Fact]
+    public void ALayoutThatCannotBeCounted_IsStillAWarning_NotDamage()
+    {
+        // no partition stream at all: the count is not made, the plan is
+        var (exit, _, error) = Run(CountableSource(null), "--target-profile", Profile(), "--check");
+
+        Assert.Equal(0, exit);
+        Assert.Contains("warning: the elements were not counted", error);
+    }
+
+    [Fact]
+    public void AnUnusableReportOrInputPath_IsAUsageError_WithExitCode1_AndNothingIsWritten()
+    {
+        string source = Source(), profile = Profile();
+        Directory.CreateDirectory(P("folder"));
+        string[] before = Listing();
+        string[][] bad =
+        [
+            [source, "--target-profile", profile, "--check", "--report", ""],
+            [source, "--target-profile", profile, "--check", "--report", "   "],
+            [source, "--target-profile", profile, "--check", "--report", P("a\u0000b.json")],
+            [source, "--target-profile", profile, "--check", "--report", P("folder")],
+            ["", "--target-profile", profile, "--check"],
+            [source, "--target-profile", " ", "--check"],
+            [source, "--target-profile", P("a\u0000b.rvt"), "--check"],
+            [P("a\u0000b.rvt"), "--target-profile", profile, "--check"],
+        ];
+        foreach (var args in bad)
+        {
+            var (exit, output, error) = Run(args);
+
+            Assert.True(exit == 1, $"{string.Join(' ', args.Select(a => a.Length == 0 ? "''" : a))}: exit {exit}");
+            Assert.Equal("", output);
+            Assert.Contains("Nothing was read or written.", error);
+            Assert.DoesNotContain('\n', error.TrimEnd());
+        }
+        Assert.Equal(before, Listing());
     }
 
     // ---- usage -------------------------------------------------------------------------------------------------------------------
