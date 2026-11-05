@@ -26,6 +26,9 @@ A file may lie directly in the folder or in one level of subfolders (`2020`, `20
 `ContainerRewriterSampleTests` copies every `.rvt` file in the folder and in one level of subfolders to a temporary file (deleted after
 each file; it needs free disk space for the largest file) and compares the compact JSON of the copy with that of the source for the ten largest files of up to 8 MB.
 
+`SchemaStreamEditorSampleTests` reads the `Formats/Latest` stream of every `.rvt` file in the folder and in one level of subfolders,
+whatever its name, and tests one stream per distinct schema, so one project per release is enough.
+
 The attributes `[SkippableFact]` and `[SkippableTheory]` (`SkippableFact.cs`) report a test that throws `SkipException` as
 skipped; xunit 2.9.3 has no runtime skip of its own. `TestFiles.Find`, `FindRelative` and `OpenBlock` throw it, so a test
 needs no code of its own to skip. Tests that write diagnostic dumps write them to `rvtio-tests` in the system temporary
