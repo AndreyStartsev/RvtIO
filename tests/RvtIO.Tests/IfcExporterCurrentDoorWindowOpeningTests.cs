@@ -369,6 +369,14 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     }
 
     [Fact]
+    public void OverallSize_ACutOfTheNominalSizeUpToRoundingNoise_KeepsTheWrittenText()
+    {
+        var overall = OverallSizeAfterTheRewrite(true, "IFCDOOR", "2100.0000000000005,800.0000000000001");
+
+        Assert.Equal(["2100.0000000000005", "800.0000000000001"], overall);
+    }
+
+    [Fact]
     public void OverallSize_NoDecodedCutLoop_KeepsTheNominalSize()
     {
         Assert.Equal(["2135.", "885."], OverallSizeAfterTheRewrite(false, "IFCDOOR", "2135.,885."));

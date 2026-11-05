@@ -184,9 +184,15 @@ public partial class IfcExporter
             if (indexById.TryGetValue(fillingId, out int fillerAttributeIndex) && w.EntityAt(fillerAttributeIndex).Type is "IFCDOOR" or "IFCWINDOW"
                 && SplitStepArguments(w.EntityAt(fillerAttributeIndex).Args) is { Length: 10 } fillerAttributes)
             {
-                if (built.HostHeight is { } overallHeight) fillerAttributes[8] = StepWriter.Real(overallHeight * 1000);
-                if (built.HostWidth is { } overallWidth) fillerAttributes[9] = StepWriter.Real(overallWidth * 1000);
-                w.ReplaceArgs(fillerAttributeIndex, string.Join(",", fillerAttributes));
+                // (a nominal size that is the cut size up to rounding noise keeps its written text)
+                bool changed = false;
+                foreach (var (slot, cutMetres) in new[] { (8, built.HostHeight), (9, built.HostWidth) })
+                    if (cutMetres is { } cut && !SameSizeCurrent(fillerAttributes[slot], cut * 1000))
+                    {
+                        fillerAttributes[slot] = StepWriter.Real(cut * 1000);
+                        changed = true;
+                    }
+                if (changed) w.ReplaceArgs(fillerAttributeIndex, string.Join(",", fillerAttributes));
             }
 
             rewritten++;
