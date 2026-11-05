@@ -102,14 +102,28 @@ public class StairRunInputTests
         => Assert.Null(Decode(Build(duplicateCell: true).Bytes));
 
     [Fact]
-    public void UnsupportedStyleRemainsUnvalidated()
-        => Assert.Null(Decode(Build(3723).Bytes));
+    public void ASpiralCellWithArcsAsBaseLineIsDecodedWithoutAPath()
+    {
+        var input = Decode(Build(3723, 2, curveClass: 1974).Bytes);
+        Assert.NotNull(input);
+        Assert.Equal((42, 43, TfBlockDeserializer.StairRunStyle.Spiral), (input.OwnerId, input.StairsId, input.Style));
+        Assert.Empty(input.Directions);
+    }
+
+    [Theory]
+    [InlineData(3725)] [InlineData(3721)] [InlineData(3743)]
+    public void OnlyASpiralCellMayHaveArcsAsBaseLine(int cellClass)
+        => Assert.Null(Decode(Build((ushort)cellClass, 1, curveClass: 1974).Bytes));
+
+    [Fact]
+    public void AWinderCellRemainsUnsupported()
+        => Assert.Null(Decode(Build(3743).Bytes));
 
     private static TfBlockDeserializer.StairRunInput? Decode(byte[] bytes)
         => TfBlockDeserializer.ExtractStairRunInput(bytes, 0, BitConverter.ToUInt32(bytes, 8), 3708);
 
     internal static (byte[] Bytes, Dictionary<string, int> Positions) Build(ushort cellClass = 3725,
-        int curves = 1, bool baseLine = false, bool duplicateCell = false)
+        int curves = 1, bool baseLine = false, bool duplicateCell = false, ushort curveClass = 1736)
     {
         using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
         var positions = new Dictionary<string, int>(); var queue = new List<ushort>();
@@ -142,7 +156,7 @@ public class StairRunInputTests
                 }
                 if (cls == 938 && field.Name == "m_curves")
                 {
-                    writer.Write((uint)curves); for (int i = 0; i < curves; i++) Pointer(1736); continue;
+                    writer.Write((uint)curves); for (int i = 0; i < curves; i++) Pointer(curveClass); continue;
                 }
                 if (cls == 3725 && baseLine && field.Name == "m_baseLines") { writer.Write(1u); Pointer(1736); continue; }
                 if (cls == 1736 && field.Name == "m_endParams") { writer.Write(0.0); writer.Write(1.0); continue; }
