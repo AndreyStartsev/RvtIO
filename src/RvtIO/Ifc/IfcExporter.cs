@@ -1611,6 +1611,8 @@ public partial class IfcExporter
             // Orphan blocks commonly contain reusable family/type geometry.
             if (elem.IsBlockOnly) { Skip(elem, "block-only-record"); continue; }
             if (elem.IsGroupTemplate) { Skip(elem, "group-template"); continue; }
+            // The reveal kind of wall sweep (OST_Reveals) is only subtracted from its wall, never a product.
+            if (elem.CategoryId == -2000182) { Skip(elem, "reveal-sweep"); continue; }
             if (CurrentProfile && info.ElemTableIsExact && elem.IsDiscovered) { Skip(elem, "record-outside-exact-element-table"); continue; }
             if (CurrentProfile && elem.SerializedFamilyId is > 0) { Skip(elem, "owned-by-family-nonspatial"); continue; }
             // Reinforcement bars are written whole (placement, swept discs, Pset) and contained by
