@@ -1269,12 +1269,70 @@ public class IfcExporterBaseQuantitiesCurrentTests
         var (w, owner, placement) = NewWriter();
         int shape = AddExtrusionBody(w, 5, 0.3, 3);
         int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "DZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
-        // An L-shaped footprint whose vertical faces do not cancel in pairs by area.
-        var element = new Element { Id = 12, CategoryId = -2000011, Geometry = PrismOver([(0, 0), (5, 0), (5, 1), (2, 1), (2, 3), (0, 3)], 3) };
+        // An L-shaped footprint whose vertical faces do not cancel in pairs by area; the solid is 3 m high like the written extrusion.
+        var element = new Element { Id = 12, CategoryId = -2000011, Geometry = PrismOver([(0, 0), (5, 0), (5, 1), (2, 1), (2, 3), (0, 3)], 3 / 0.3048) };
 
         Apply(w, owner, new() { [12] = element }, new() { [wall] = 12 });
 
         Assert.Equal(3.0, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Length").Value, 9);
+        Assert.Equal(3.0, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Height").Value, 9);
+    }
+
+    [Fact]
+    public void Pass_WallThatIsNotSimpleRectangular_HeightAndLengthAreTheZRangeOfItsSolidNotTheWrittenDepth()
+    {
+        var (w, owner, placement) = NewWriter();
+        // The extrusion that is written first is 3.3 m high (the height parameter of the wall) and the solid is 3 m high:
+        // Height and, for the extrusion of the body exporter, Length are the 3 m of the solid.
+        int shape = AddExtrusionBody(w, 5, 0.3, 3.3);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "DZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var element = new Element { Id = 12, CategoryId = -2000011, Geometry = PrismOver([(0, 0), (5, 0), (5, 1), (2, 1), (2, 3), (0, 3)], 3 / 0.3048) };
+
+        Apply(w, owner, new() { [12] = element }, new() { [wall] = 12 });
+
+        var lengths = Quantities(w, "IFCQUANTITYLENGTH");
+        Assert.Equal(3.0, lengths.Single(q => q.Name == "Height").Value, 9);
+        Assert.Equal(3.0, lengths.Single(q => q.Name == "Length").Value, 9);
+    }
+
+    [Fact]
+    public void Pass_WallWhoseInactiveFacesMakeItNotSimple_HeightAndLengthAreTheZRangeOfItsSolid()
+    {
+        var (w, owner, placement) = NewWriter();
+        // A classifier-only face with a tilted normal on the node of the solid makes the wall not simple rectangular; the body
+        // exporter writes it (3.3 m extrusion, 3 m solid) and Height and Length are still the Z range of the solid.
+        int shape = AddExtrusionBody(w, 5, 0.3, 3.3);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "DZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var geometry = Box(5 / 0.3048, 0.3 / 0.3048, 3 / 0.3048);
+        foreach (var face in geometry.Faces) face.GeometryNode = 7;
+        geometry.InactiveFaces = [new() { GeometryNode = 7, Normal = [1, 1, 1] }];
+        var element = new Element { Id = 12, CategoryId = -2000011, Geometry = geometry };
+
+        Apply(w, owner, new() { [12] = element }, new() { [wall] = 12 });
+
+        var lengths = Quantities(w, "IFCQUANTITYLENGTH");
+        Assert.Equal(3.0, lengths.Single(q => q.Name == "Height").Value, 9);
+        Assert.Equal(3.0, lengths.Single(q => q.Name == "Length").Value, 9);
+    }
+
+    [Fact]
+    public void Pass_WallThatIsNotSimpleRectangular_WithSeveralSolidsKeepsTheWrittenDepth()
+    {
+        var (w, owner, placement) = NewWriter();
+        // The body exporter makes an IfcWallStandardCase of a single solid only: with a second solid the Height stays the
+        // written depth.
+        int shape = AddExtrusionBody(w, 5, 0.3, 3.3);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "DZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var geometry = PrismOver([(0, 0), (5, 0), (5, 1), (2, 1), (2, 3), (0, 3)], 3 / 0.3048);
+        var second = PrismOver(Rectangle(1, 1), 1);
+        int first = geometry.Faces.Count;
+        geometry.Faces.AddRange(second.Faces);
+        geometry.BrepSolids!.Add(new GeoBrepSolid { IsClosed = true, FaceIndices = Enumerable.Range(first, second.Faces.Count).ToList() });
+        var element = new Element { Id = 12, CategoryId = -2000011, Geometry = geometry };
+
+        Apply(w, owner, new() { [12] = element }, new() { [wall] = 12 });
+
+        Assert.Equal(3.3, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Height").Value, 9);
     }
 
     [Fact]
