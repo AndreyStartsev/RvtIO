@@ -4,7 +4,7 @@ using System.Text;
 namespace RvtIO.Lookup;
 
 /// <summary>The user interface names the reader needs, embedded as Resources/revit_ui_names.tsv (UTF-8, tab separated:
-/// culture, resource file, string id, text; backslash, tab, line feed and carriage return are written as \\, \t, \n and \r).
+/// culture, string group, string id, text; backslash, tab, line feed and carriage return are written as \\, \t, \n and \r).
 /// It holds exactly the strings that <see cref="RevitSystemFamilyNames"/> can request, for the bundle version in
 /// <see cref="BundleVersion"/>. A malformed line fails loudly instead of yielding a partial table.</summary>
 internal static class RevitUiNameTable
@@ -17,7 +17,7 @@ internal static class RevitUiNameTable
     private static readonly Lazy<IReadOnlyDictionary<(string Culture, string File), IReadOnlyDictionary<int, string>>> Tables =
         new(() => Parse(OpenResource()));
 
-    /// <summary>The strings of one resource file in one culture, or null when the table has none for it.</summary>
+    /// <summary>The strings of one string group in one culture, or null when the table has none for it.</summary>
     internal static IReadOnlyDictionary<int, string>? Get(string culture, string file) =>
         Tables.Value.GetValueOrDefault((culture, file));
 

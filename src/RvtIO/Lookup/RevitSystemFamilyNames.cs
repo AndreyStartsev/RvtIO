@@ -221,7 +221,7 @@ internal sealed class RevitSystemFamilyNames
         Func<string, IReadOnlyDictionary<int, string>?> open;
         if (string.IsNullOrEmpty(root))
         {
-            // The embedded strings are those of the 2022 bundle; an older file gets no names, as with a missing bundle directory.
+            // The embedded strings are those of version 2022; an older file gets no names, as with a missing localization folder.
             if (!int.TryParse(revitVersion, out int version) || version < RevitUiNameTable.BundleVersion) return null;
             open = dll => RevitUiNameTable.Get(locale.Culture, dll);
         }
