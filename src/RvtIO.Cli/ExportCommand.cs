@@ -266,8 +266,8 @@ internal static partial class Program
         return report.ExitCode;
     }
 
-    // --revit-localization <dir> reads the system family names from the resource DLLs of a Revit installation
-    // (<dir>/<version>/<culture>/*.dll) instead of the names embedded in the library.
+    // --revit-localization <dir> reads the system family names from the localization folders of the user's own
+    // installation (<dir>/<version>/<culture>) instead of the names embedded in the library.
     private static string? FindRevitLocalizationDirectory(string[] arguments)
     {
         int index = Array.IndexOf(arguments, "--revit-localization");

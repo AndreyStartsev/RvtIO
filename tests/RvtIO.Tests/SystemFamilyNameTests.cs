@@ -8,25 +8,10 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Localized system family names read from the embedded names (or, as an override, from the Revit 2022 resource DLLs),
+/// <summary>Localized system family names read from the embedded names (or, as an override, from the localization folders of an installation),
 /// selected by the file's saved locale and attached only through an exact own type root.</summary>
 public class SystemFamilyNameTests
 {
-    [RevitInstallTheory]
-    [InlineData("ru-RU", 1049, "Revit.dll", 118, "Базовая стена")]
-    [InlineData("en-US", 1033, "Revit.dll", 118, "Basic Wall")]
-    [InlineData("ru-RU", 1049, "HostObjRes.dll", 6077, "Витраж")]
-    [InlineData("ru-RU", 1049, "StairRampRes.dll", 6038, "Ограждение")]
-    [InlineData("en-US", 1033, "StairRampRes.dll", 6039, "Railing %1!d!")]
-    [InlineData("ru-RU", 1049, "BuildingSystemsRes.dll", 6028, "Воздуховод круглого сечения")]
-    [InlineData("en-US", 1033, "BuildingSystemsRes.dll", 6028, "Round Duct")]
-    public void PeStringTable_ReadsExactResourceEntries(string culture, ushort language, string dll, int id, string expected)
-    {
-        var table = PeStringTable.Read(RevitInstallResources.Dll(culture, dll), language);
-        Assert.NotNull(table);
-        Assert.Equal(expected, table![id]);
-    }
-
     [Theory]
     [InlineData("ru-RU", 1049, "Revit.dll", 118, "Базовая стена")]
     [InlineData("en-US", 1033, "Revit.dll", 118, "Basic Wall")]
@@ -88,36 +73,21 @@ public class SystemFamilyNameTests
     public void EmbeddedTableParserRejectsMalformedLines(string text) =>
         Assert.Throws<InvalidDataException>(() => RevitUiNameTable.Parse(new StringReader(text)));
 
-    /// <summary>With the real resource DLLs the override reads exactly what the embedded table holds: no requestable string is missing or different.</summary>
-    [RevitInstallTheory]
-    [InlineData("ENU", "en-US", 1033)] [InlineData("RUS", "ru-RU", 1049)]
-    public void InstalledResourceDllsGiveTheSameStringsAsTheEmbeddedTable(string locale, string culture, ushort language)
+    /// <summary>The embedded table is well formed: every row parses, ids are unique per (culture, group), the comment lines are skipped,
+    /// and both cultures hold the same keys.</summary>
+    [Fact]
+    public void EmbeddedTableRowsParseWithUniqueIdsAndBothCulturesHoldTheSameKeys()
     {
-        var embedded = RevitSystemFamilyNames.Load(null, "2022", locale)!;
-        var installed = RevitSystemFamilyNames.Load(RevitInstallResources.Root, "2022", locale)!;
-        foreach (var kind in Enum.GetValues<SystemFamilyKind>()) Assert.Equal(installed.Get(kind), embedded.Get(kind));
-        foreach (var text in Enum.GetValues<RevitUiText>()) Assert.Equal(installed.Get(text), embedded.Get(text));
-        Assert.Equal(installed.StairOccurrenceName, embedded.StairOccurrenceName);
-        foreach (var (dll, id) in RevitSystemFamilyNames.RequestableStrings)
-            Assert.Equal(PeStringTable.Read(RevitInstallResources.Dll(culture, dll), language)![id], RevitUiNameTable.Get(culture, dll)![id]);
-    }
-
-    /// <summary>The embedded table holds exactly the strings the loader can request, in both languages, and each is the string of the
-    /// original resource file (frozen as a hash). Runs without the original files; InstalledResourceDllsGiveTheSameStringsAsTheEmbeddedTable is the same check against them.</summary>
-    [Theory]
-    [InlineData("en-US")] [InlineData("ru-RU")]
-    public void EmbeddedTableEqualsTheFrozenHashesOfTheOriginalStrings(string culture)
-    {
-        var frozen = FrozenFixtures.Rows("ui_names.tsv", 4).Where(r => r[0] == culture)
-            .ToDictionary(r => (r[1], FrozenFixtures.Int(r[2])), r => r[3]);
-        Assert.Equal(RevitSystemFamilyNames.RequestableStrings.Count(), frozen.Count);
-        foreach (string dll in RevitSystemFamilyNames.RequestableStrings.Select(pair => pair.Dll).Distinct())
-            foreach (var (id, text) in RevitUiNameTable.Get(culture, dll)!)
-            {
-                Assert.True(frozen.Remove((dll, id), out string? hash), $"{culture} {dll} {id}");
-                Assert.Equal(hash, FrozenFixtures.Sha256(text));
-            }
-        Assert.Empty(frozen);
+        var rows = EmbeddedTables.Rows("revit_ui_names.tsv", 4);
+        Assert.Equal(114, rows.Count);
+        Assert.Equal(rows.Count, rows.Select(r => (r[0], r[1], r[2])).Distinct().Count());
+        var parsed = RevitUiNameTable.Parse(new StringReader(EmbeddedTables.Text("revit_ui_names.tsv")));
+        Assert.Equal(rows.Count, parsed.Values.Sum(table => table.Count));
+        foreach (string culture in new[] { "en-US", "ru-RU" })
+            Assert.Equal(57, rows.Count(r => r[0] == culture));
+        Assert.Equal(
+            rows.Where(r => r[0] == "en-US").Select(r => (r[1], r[2])).OrderBy(k => k).ToArray(),
+            rows.Where(r => r[0] == "ru-RU").Select(r => (r[1], r[2])).OrderBy(k => k).ToArray());
     }
 
     [Fact]

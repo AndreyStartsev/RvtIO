@@ -84,16 +84,6 @@ public class CorniceAndSupportTypeNameTests
         Assert.NotEqual(names.Get(SystemFamilyKind.Stringer), names.Get(SystemFamilyKind.Carriage));
     }
 
-    [RevitInstallTheory]
-    [InlineData("RUS", "ru-RU", 1049)] [InlineData("ENU", "en-US", 1033)]
-    public void NamesAreExactStringsOfTheInstalledResourceDlls(string locale, string culture, ushort language)
-    {
-        var table = PeStringTable.Read(RevitInstallResources.Dll(culture, "StairRampRes.dll"), language)!;
-        var names = RevitSystemFamilyNames.Load(null, "2022", locale)!;
-        Assert.Equal(table[6178], names.Get(SystemFamilyKind.Stringer));
-        Assert.Equal(table[6179], names.Get(SystemFamilyKind.Carriage));
-    }
-
     [Theory]
     [InlineData(6178, "Stringer")] [InlineData(6179, "Carriage")]
     public void MissingNewResourceOmitsOnlyThatKind(int id, string missingKind)

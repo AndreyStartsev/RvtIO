@@ -4,36 +4,6 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Where the tests find the resource DLLs of a Revit installation, which are not part of the repository. Point
-/// RVTIO_REVIT_RESOURCES at a root laid out as &lt;root&gt;/2022/&lt;culture&gt;/*.dll (and &lt;root&gt;/2022/GeneratedResourceIds.inl for
-/// the tests that need the symbol list) to run the tests that compare the embedded data with the originals.</summary>
-internal static class RevitInstallResources
-{
-    public const string EnvironmentVariable = "RVTIO_REVIT_RESOURCES";
-
-    public static string? Root =>
-        Environment.GetEnvironmentVariable(EnvironmentVariable) is { Length: > 0 } directory && Directory.Exists(directory) ? directory : null;
-
-    public static string? SkipReason =>
-        Root == null ? $"Set {EnvironmentVariable} to a Revit resource root to run this test." : null;
-
-    public static byte[] Dll(string culture, string name) => File.ReadAllBytes(Path.Combine(Root!, "2022", culture, name));
-
-    public static string BundleFile(string name) => Path.Combine(Root!, "2022", name);
-}
-
-/// <summary>A fact that runs only when <see cref="RevitInstallResources.Root"/> is available; otherwise it is reported as skipped.</summary>
-public sealed class RevitInstallFactAttribute : FactAttribute
-{
-    public RevitInstallFactAttribute() => Skip = RevitInstallResources.SkipReason;
-}
-
-/// <summary>A theory that runs only when <see cref="RevitInstallResources.Root"/> is available; otherwise it is reported as skipped.</summary>
-public sealed class RevitInstallTheoryAttribute : TheoryAttribute
-{
-    public RevitInstallTheoryAttribute() => Skip = RevitInstallResources.SkipReason;
-}
-
 /// <summary>Builds a minimal PE image whose only content is an RT_STRING table for one language.</summary>
 internal static class SyntheticPe
 {

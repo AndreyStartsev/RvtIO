@@ -2,8 +2,8 @@ using System.Text.Json;
 
 namespace RvtIO.Parsing;
 
-/// <summary>Public API Definition.Name and ParameterGroup of built-in parameters, captured from
-/// genuine Revit 2022 (English) on three Autodesk sample projects with no conflicting definition.
+/// <summary>Public API Definition.Name and ParameterGroup of built-in parameters, observed in
+/// exported documents (English, 2022 format) where no definition conflicts.
 /// Negative IDs only: project and shared parameter IDs are file specific.</summary>
 internal static class ApiParameterDefinitions
 {

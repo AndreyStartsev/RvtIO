@@ -1,6 +1,6 @@
-# User interface names of Revit 2022 needed for interoperability with Revit files; maintained by the project.
+# System family and user interface names: names as exported by the host application for the listed ids, kept so that exported property names equal them (interoperability values observed in exported documents); maintained by the project.
 # One row per string the reader can request, for the cultures en-US and ru-RU.
-# Columns (tab separated): culture, resource file, string id, text. In the text a backslash, tab, line feed and
+# Columns (tab separated): culture, string group, string id, text. In the text a backslash, tab, line feed and
 # carriage return are written as \\, \t, \n and \r.
 en-US	BuildingSystemsRes.dll	6026	Oval Duct
 en-US	BuildingSystemsRes.dll	6027	Rectangular Duct

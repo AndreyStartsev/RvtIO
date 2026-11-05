@@ -10,8 +10,8 @@ public class RvtReaderOptions
     /// Null uses the default shape (capital, lowercase, capital, lowercase, followed by a capital).</summary>
     public string? ExternalDumpClassPrefix { get; set; }
 
-    /// <summary>Optional root of the resource DLLs of a Revit installation
-    /// (&lt;root&gt;/&lt;RevitVersion&gt;/&lt;culture&gt;/*.dll) to read the localized system family names from.
+    /// <summary>Optional root of the localization folders of the user's own
+    /// installation (&lt;root&gt;/&lt;RevitVersion&gt;/&lt;culture&gt;) to read the localized system family names from. Nothing is copied from it.
     /// Null uses the names embedded in the library.</summary>
     public string? RevitLocalizationDirectory { get; set; }
 

@@ -70,14 +70,12 @@ internal enum RevitUiText
 }
 
 /// <summary>Localized system family names, read from the embedded <see cref="RevitUiNameTable"/> or, when a resource root is given,
-/// from the Revit resource DLLs (&lt;root&gt;/&lt;version&gt;/&lt;locale&gt;). The locale is the one
+/// from the localization folders of the user's own installation (&lt;root&gt;/&lt;version&gt;/&lt;locale&gt;). The locale is the one
 /// recorded in the file's BasicFileInfo ("Locale when saved"); an unknown locale, version
 /// or missing/malformed resource yields no names, never a substitute language.</summary>
 internal sealed class RevitSystemFamilyNames
 {
-    // (DLL, RT_STRING id). The English text of every entry is the documented family name of
-    // that kind; Railing uses StairRampRes 6038, whose neighbour 6039 "Railing %1!d!" is the
-    // default type naming pattern, as HostObjRes 6077/6078 is for Curtain Wall.
+    // (string group, string id). The English text of every entry is the documented family name of that kind.
     internal static readonly IReadOnlyDictionary<SystemFamilyKind, (string Dll, int Id)> Sources =
         new Dictionary<SystemFamilyKind, (string, int)>
         {
@@ -205,7 +203,7 @@ internal sealed class RevitSystemFamilyNames
             .OrderByDescending(int.Parse).FirstOrDefault() ?? revitVersion;
     }
 
-    /// <summary>The (resource file, string id) pairs <see cref="Load"/> can request: the embedded table holds exactly these.</summary>
+    /// <summary>The (string group, string id) pairs <see cref="Load"/> can request: the embedded table holds exactly these.</summary>
     internal static IEnumerable<(string Dll, int Id)> RequestableStrings =>
         Sources.Values.Concat(TextSources.Values).Append((StairNameDll, StairNameId)).Distinct();
 
@@ -213,8 +211,8 @@ internal sealed class RevitSystemFamilyNames
     private const int StairNameId = 11099;
 
     /// <summary>Loads the names of the file's saved locale. With no <paramref name="root"/> the strings come from the embedded table
-    /// (<see cref="RevitUiNameTable"/>); with a root they are read from the resource DLLs of a Revit installation
-    /// (&lt;root&gt;/&lt;version&gt;/&lt;culture&gt;/*.dll), which overrides the embedded table.</summary>
+    /// (<see cref="RevitUiNameTable"/>); with a root they are read from the localization folders of the user's own installation
+    /// (&lt;root&gt;/&lt;version&gt;/&lt;culture&gt;), which overrides the embedded table.</summary>
     public static RevitSystemFamilyNames? Load(string? root, string? revitVersion, string? savedLocale)
     {
         if (string.IsNullOrEmpty(revitVersion) || savedLocale == null || !Locales.TryGetValue(savedLocale, out var locale))

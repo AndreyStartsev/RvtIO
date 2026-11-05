@@ -18,7 +18,6 @@ A file may lie directly in the folder or in one level of subfolders (`2020`, `20
 | `bim_dump.txt` | the dump of an independent BIM reader for `TESTFILE.rvt`, read by `ReferenceApiTests` |
 | `formats_latest_decompressed.bin` | the decompressed `Formats/Latest` stream, read by `FormatsLatestAnalysisTests` |
 | `TestData/*.bin` | class blocks captured from project files (38 files, below) |
-| `TestData/compact_label_vectors.tsv` | only to re-derive `label_vectors.tsv` (see `docs/frozen-resource-fixtures.md`) |
 
 `PageCodecSampleTests` reads every `.rvt` file in the folder and in one level of subfolders, whatever its name, and skips streams over
 128 MB.
@@ -42,8 +41,8 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 ## What runs without the private files
 
 With no private file at all, 9244 of the 9608 test cases run and pass and 364 are skipped: 330 need the private files listed
-below and 34 need optional inputs (the original resource files of `docs/frozen-resource-fixtures.md`, `bim_dump.txt`,
-`formats_latest_decompressed.bin`). The tests that run use synthetic data built in the tests, the frozen hash fixtures
+below and 34 need optional inputs (`bim_dump.txt`,
+`formats_latest_decompressed.bin`). The tests that run use synthetic data built in the tests
 and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
 remaining cases run as well.
 
@@ -125,8 +124,7 @@ same test. The tests therefore read the blocks from `TestData` of the fixture fo
 | `VkConnectorBlockTests` | `vk_flex_pipe_9123013`, `vk_proxy_directional_5919313`, `vk_proxy_mixed_domain_2823056` |
 
 (The blocks listed without extension are `.bin` files.) The remaining tests of these classes, which build their input in the
-test, still run everywhere. The label vector table of `CompactLabelsTests` is not private: its 362 rows are frozen as hashes (`docs/frozen-resource-fixtures.md`) and the 362 theory rows
-run everywhere.
+test, still run everywhere.
 
 ## Inline captures
 

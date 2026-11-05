@@ -9,8 +9,6 @@
       href: export-report.md
     - name: Dependencies
       href: dependencies.md
-    - name: Frozen resource fixtures
-      href: frozen-resource-fixtures.md
     - name: Private test fixtures
       href: test-fixtures.md
 - name: API reference
