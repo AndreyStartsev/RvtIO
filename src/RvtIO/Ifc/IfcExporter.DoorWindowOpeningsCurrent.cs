@@ -179,6 +179,16 @@ public partial class IfcExporter
                 }
             }
 
+            // OverallHeight and OverallWidth (millimetres) of the door or window are the vertical and the along-the-wall extent of the
+            // cut loop, which can be larger than the nominal size; the openings that are not rewritten here keep the nominal size.
+            if (indexById.TryGetValue(fillingId, out int fillerAttributeIndex) && w.EntityAt(fillerAttributeIndex).Type is "IFCDOOR" or "IFCWINDOW"
+                && SplitStepArguments(w.EntityAt(fillerAttributeIndex).Args) is { Length: 10 } fillerAttributes)
+            {
+                if (built.HostHeight is { } overallHeight) fillerAttributes[8] = StepWriter.Real(overallHeight * 1000);
+                if (built.HostWidth is { } overallWidth) fillerAttributes[9] = StepWriter.Real(overallWidth * 1000);
+                w.ReplaceArgs(fillerAttributeIndex, string.Join(",", fillerAttributes));
+            }
+
             rewritten++;
             if (built.WidthFromParameter) fromParameter++;
         }
