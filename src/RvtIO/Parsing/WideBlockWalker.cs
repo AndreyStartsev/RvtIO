@@ -381,6 +381,16 @@ internal sealed class WideBlockWalker
         {
             uint handle = U32(c);
             int tag = 0;
+            // An extensible storage entity without stored values is its schema GUID again after the handle, with no class tag
+            // (the pair key in front of it is the same GUID); nothing is queued.
+            if (handle == 0xFFFFFFFF && declaring.Name == "ESEntity" && f.Name == "m_blob" && c.Pos >= 20 && c.Pos + 16 <= c.End
+                && c.D.AsSpan(c.Pos - 20, 16).SequenceEqual(c.D.AsSpan(c.Pos, 16)))
+            {
+                Take(c, 16);
+                if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, -1, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+                if (record != null) record[f.Name] = 0L;
+                return;
+            }
             if (handle != 0)
             {
                 tag = BitConverter.ToUInt16(c.D, Take(c, 2));

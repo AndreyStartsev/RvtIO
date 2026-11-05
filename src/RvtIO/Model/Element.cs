@@ -496,6 +496,11 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal IReadOnlyList<int>? SerializedConnectorSystems { get; set; }
 
+        /// <summary>The mode of each connector of <see cref="SerializedConnectorGraph"/>, in the same order; null when the walk of
+        /// the file does not know the mode (Revit 2022 layout).</summary>
+        [JsonIgnore]
+        internal IReadOnlyList<int>? SerializedConnectorModes { get; set; }
+
         /// <summary>The vertical extent (feet) of a Grid's finite surface: the interval of levels the grid belongs to.
         /// Null for a grid whose surface was not decoded.</summary>
         [JsonIgnore]
