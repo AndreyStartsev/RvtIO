@@ -24,9 +24,11 @@ internal sealed record ContainerRewriteResult(IReadOnlyDictionary<string, Contai
 /// meant to be written (the bytes read from the source, or the replacement). The temporary file is removed when anything fails, and an
 /// existing output is never replaced.
 ///
-/// The source is opened for reading with writers denied for as long as it is read, so the copy is one state of the source and not a
-/// mix of two. When another process already holds the source open for writing (an application that has the file open), the open
-/// fails with an <see cref="IOException"/> and nothing is written; there is no fall back to a shared read.
+/// On Windows the source is opened for reading with writers denied for as long as it is read, so the copy is one state of the source
+/// and not a mix of two. When another process already holds the source open for writing (an application that has the file open), the
+/// open fails with an <see cref="IOException"/> and nothing is written; there is no fall back to a shared read.
+/// On other systems the share mode is advisory and a writer that already has the file open keeps working: there the caller must make
+/// sure that nothing writes to the source while it is copied, and the copy is not guarded against a concurrent change.
 /// </summary>
 internal static class ContainerRewriter
 {
@@ -42,7 +44,7 @@ internal static class ContainerRewriter
     /// <param name="beforeCheck">Called with the path of the temporary file once it is written and before it is read back; tests change the file there.</param>
     /// <exception cref="ArgumentException">A key names no stream of the source (it may name a storage), or two keys name the same stream.</exception>
     /// <exception cref="IOException">The output exists (the source itself included), its folder is missing, the source is open for writing in
-    /// another process, or a file cannot be read or written.</exception>
+    /// another process (Windows only), or a file cannot be read or written.</exception>
     /// <exception cref="InvalidDataException">The source directory is damaged, or the written file differs from what was meant to be written.</exception>
     internal static ContainerRewriteResult Rewrite(string sourcePath, string outputPath, IReadOnlyDictionary<string, byte[]> replacements,
         Action<string>? beforeCheck = null)
