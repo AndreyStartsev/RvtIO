@@ -8,107 +8,74 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Localized system family names read from the embedded names (or, as an override, from the localization folders of an installation),
+/// <summary>Localized system family names read from the embedded names,
 /// selected by the file's saved locale and attached only through an exact own type root.</summary>
 public class SystemFamilyNameTests
 {
     [Theory]
-    [InlineData("ru-RU", 1049, "Revit.dll", 118, "Базовая стена")]
-    [InlineData("en-US", 1033, "Revit.dll", 118, "Basic Wall")]
-    [InlineData("ru-RU", 1049, "HostObjRes.dll", 6077, "Витраж")]
-    [InlineData("ru-RU", 1049, "StairRampRes.dll", 6038, "Ограждение")]
-    [InlineData("ru-RU", 1049, "BuildingSystemsRes.dll", 6028, "Воздуховод круглого сечения")]
-    [InlineData("en-US", 1033, "BuildingSystemsRes.dll", 6028, "Round Duct")]
-    public void EmbeddedTableHasTheExactResourceEntries(string culture, ushort language, string dll, int id, string expected)
-    {
-        var embedded = RevitUiNameTable.Get(culture, dll);
-        Assert.NotNull(embedded);
-        Assert.Equal(expected, embedded![id]);
-        Assert.Equal(expected, PeStringTable.Read(SyntheticPe.Build(language, embedded), language)![id]);
-    }
+    [InlineData("ru-RU", "BasicWall", "Базовая стена")]
+    [InlineData("en-US", "BasicWall", "Basic Wall")]
+    [InlineData("ru-RU", "CurtainWall", "Витраж")]
+    [InlineData("ru-RU", "Railing", "Ограждение")]
+    [InlineData("ru-RU", "RoundDuct", "Воздуховод круглого сечения")]
+    [InlineData("en-US", "RoundDuct", "Round Duct")]
+    public void EmbeddedTableHasTheExactEntries(string culture, string key, string expected) =>
+        Assert.Equal(expected, RevitUiNameTable.Get(culture, key));
 
-    /// <summary>Every string the loader can request is in the embedded table, in both cultures: a miss would silently drop a name.</summary>
+    /// <summary>Every key the loader can request is in the embedded table, in both cultures: a miss would silently drop a name.</summary>
     [Theory]
     [InlineData("en-US")] [InlineData("ru-RU")]
-    public void EmbeddedTableHoldsEveryRequestableString(string culture)
+    public void EmbeddedTableHoldsEveryRequestableKey(string culture)
     {
-        foreach (var (dll, id) in RevitSystemFamilyNames.RequestableStrings)
-        {
-            var table = RevitUiNameTable.Get(culture, dll);
-            Assert.True(table != null && table.TryGetValue(id, out string? text) && !string.IsNullOrWhiteSpace(text), $"{culture} {dll} {id}");
-        }
+        var keys = Enum.GetNames<SystemFamilyKind>().Concat(Enum.GetNames<RevitUiText>()).Append(RevitSystemFamilyNames.StairNameKey);
+        foreach (string key in keys)
+            Assert.False(string.IsNullOrWhiteSpace(RevitUiNameTable.Get(culture, key)), $"{culture} {key}");
     }
 
-    [Theory]
-    [InlineData("en-US")] [InlineData("ru-RU")]
-    public void EmbeddedTableHoldsNothingElse(string culture)
-    {
-        var requestable = RevitSystemFamilyNames.RequestableStrings.ToHashSet();
-        foreach (string dll in requestable.Select(pair => pair.Dll).Distinct())
-            foreach (int id in RevitUiNameTable.Get(culture, dll)!.Keys)
-                Assert.Contains((dll, id), requestable);
-    }
-
-    /// <summary>The resource-DLL override reads the same names as the embedded table, for every kind and text and both locales.</summary>
     [Theory]
     [InlineData("ENU")] [InlineData("RUS")]
-    public void OverrideRootGivesTheSameNamesAsTheEmbeddedTable(string locale)
+    public void LoadedNamesCoverEveryKindAndText(string locale)
     {
-        using var root = new SyntheticRevitRoot();
-        var embedded = RevitSystemFamilyNames.Load(null, "2022", locale)!;
-        var overridden = RevitSystemFamilyNames.Load(root.Path, "2022", locale)!;
-        foreach (var kind in Enum.GetValues<SystemFamilyKind>()) Assert.Equal(embedded.Get(kind), overridden.Get(kind));
-        foreach (var text in Enum.GetValues<RevitUiText>()) Assert.Equal(embedded.Get(text), overridden.Get(text));
-        Assert.Equal(embedded.StairOccurrenceName, overridden.StairOccurrenceName);
-        Assert.NotNull(embedded.Get(SystemFamilyKind.BasicWall));
-        Assert.NotNull(embedded.StairOccurrenceName);
+        var names = RevitSystemFamilyNames.Load("2022", locale)!;
+        foreach (var kind in Enum.GetValues<SystemFamilyKind>()) Assert.NotNull(names.Get(kind));
+        foreach (var text in Enum.GetValues<RevitUiText>()) Assert.NotNull(names.Get(text));
+        Assert.NotNull(names.StairOccurrenceName);
     }
 
     [Theory]
-    [InlineData("en-US\tRevit.dll\t1")]
-    [InlineData("en-US\tRevit.dll\tx\ttext")]
-    [InlineData("en-US\tRevit.dll\t1\ta\\qb")]
-    [InlineData("en-US\tRevit.dll\t1\tabc\\")]
-    [InlineData("en-US\tRevit.dll\t1\ta\nen-US\tRevit.dll\t1\tb")]
+    [InlineData("en-US\tBasicWall")]
+    [InlineData("en-US\tBasicWall\ta\tb")]
+    [InlineData("\tBasicWall\ttext")]
+    [InlineData("en-US\t\ttext")]
+    [InlineData("en-US\tBasicWall\ta\\qb")]
+    [InlineData("en-US\tBasicWall\tabc\\")]
+    [InlineData("en-US\tBasicWall\ta\nen-US\tBasicWall\tb")]
     public void EmbeddedTableParserRejectsMalformedLines(string text) =>
         Assert.Throws<InvalidDataException>(() => RevitUiNameTable.Parse(new StringReader(text)));
 
-    /// <summary>The embedded table is well formed: every row parses, ids are unique per (culture, group), the comment lines are skipped,
+    /// <summary>The embedded table is well formed: every row parses, keys are unique per culture, the comment lines are skipped,
     /// and both cultures hold the same keys.</summary>
     [Fact]
-    public void EmbeddedTableRowsParseWithUniqueIdsAndBothCulturesHoldTheSameKeys()
+    public void EmbeddedTableRowsParseWithUniqueKeysAndBothCulturesHoldTheSameKeys()
     {
-        var rows = EmbeddedTables.Rows("revit_ui_names.tsv", 4);
+        var rows = EmbeddedTables.Rows("revit_ui_names.tsv", 3);
         Assert.Equal(114, rows.Count);
-        Assert.Equal(rows.Count, rows.Select(r => (r[0], r[1], r[2])).Distinct().Count());
+        Assert.Equal(rows.Count, rows.Select(r => (r[0], r[1])).Distinct().Count());
         var parsed = RevitUiNameTable.Parse(new StringReader(EmbeddedTables.Text("revit_ui_names.tsv")));
-        Assert.Equal(rows.Count, parsed.Values.Sum(table => table.Count));
+        Assert.Equal(rows.Count, parsed.Count);
         foreach (string culture in new[] { "en-US", "ru-RU" })
             Assert.Equal(57, rows.Count(r => r[0] == culture));
         Assert.Equal(
-            rows.Where(r => r[0] == "en-US").Select(r => (r[1], r[2])).OrderBy(k => k).ToArray(),
-            rows.Where(r => r[0] == "ru-RU").Select(r => (r[1], r[2])).OrderBy(k => k).ToArray());
+            rows.Where(r => r[0] == "en-US").Select(r => r[1]).OrderBy(k => k).ToArray(),
+            rows.Where(r => r[0] == "ru-RU").Select(r => r[1]).OrderBy(k => k).ToArray());
     }
 
     [Fact]
     public void EmbeddedTableEscapesRoundTrip()
     {
         const string text = "a\nb\tc\\d\re";
-        var parsed = RevitUiNameTable.Parse(new StringReader("# comment\n\nen-US\tRevit.dll\t7\t" + RevitUiNameTable.Escape(text)));
-        Assert.Equal(text, parsed[("en-US", "Revit.dll")][7]);
-    }
-
-    [Fact]
-    public void PeStringTable_OtherLanguageAndMalformedImagesYieldNothingUseful()
-    {
-        byte[] image = SyntheticPe.Build(1049, RevitUiNameTable.Get("ru-RU", "Revit.dll")!);
-        Assert.Empty(PeStringTable.Read(image, 1033)!);
-        Assert.NotEmpty(PeStringTable.Read(image, 1049)!);
-        Assert.Null(PeStringTable.Read(image[..0x200], 1049));
-        byte[] notPe = (byte[])image.Clone();
-        notPe[0] = 0;
-        Assert.Null(PeStringTable.Read(notPe, 1049));
-        Assert.Null(PeStringTable.Read([], 1049));
+        var parsed = RevitUiNameTable.Parse(new StringReader("# comment\n\nen-US\tBasicWall\t" + RevitUiNameTable.Escape(text)));
+        Assert.Equal(text, parsed[("en-US", "BasicWall")]);
     }
 
     [Theory]
@@ -120,36 +87,20 @@ public class SystemFamilyNameTests
     [InlineData("RUS", "RoundDuct", "Воздуховод круглого сечения")]
     [InlineData("ENU", "RoundDuct", "Round Duct")]
     public void Load_UsesTheSavedLocaleOfTheFile(string locale, string kind, string expected) =>
-        Assert.Equal(expected, RevitSystemFamilyNames.Load(null, "2022", locale)!
+        Assert.Equal(expected, RevitSystemFamilyNames.Load("2022", locale)!
             .Get(Enum.Parse<SystemFamilyKind>(kind)));
 
     [Theory]
     [InlineData("2022", "DEU")] [InlineData("2022", null)] [InlineData("2020", "RUS")] [InlineData("2021", "ENU")]
     [InlineData(null, "RUS")] [InlineData("beta", "ENU")]
-    public void Load_UnknownLocaleOrVersionGivesNoNames(string? version, string? locale)
-    {
-        Assert.Null(RevitSystemFamilyNames.Load(null, version, locale));
-        using var root = new SyntheticRevitRoot();
-        Assert.Null(RevitSystemFamilyNames.Load(root.Path, version, locale));
-    }
+    public void Load_UnknownLocaleOrVersionGivesNoNames(string? version, string? locale) =>
+        Assert.Null(RevitSystemFamilyNames.Load(version, locale));
 
-    // Hypothesis behind RevitSystemFamilyNames.BundleVersion: the newest bundle not newer than the file version is used.
+    // The embedded names apply to every version from 2022 on.
     [Theory]
-    [InlineData("2023")] [InlineData("2026")]
-    public void Load_NewerVersionUsesTheNewestOlderBundle(string version)
-    {
-        Assert.Equal("Basic Wall", RevitSystemFamilyNames.Load(null, version, "ENU")!.Get(SystemFamilyKind.BasicWall));
-        using var root = new SyntheticRevitRoot();
-        Assert.Equal("Basic Wall", RevitSystemFamilyNames.Load(root.Path, version, "ENU")!.Get(SystemFamilyKind.BasicWall));
-    }
-
-    [Fact]
-    public void Load_WithoutRootUsesTheEmbeddedNamesAndAMissingRootGivesNone()
-    {
-        Assert.Equal("Базовая стена", RevitSystemFamilyNames.Load(null, "2022", "RUS")!.Get(SystemFamilyKind.BasicWall));
-        Assert.Equal("Базовая стена", RevitSystemFamilyNames.Load("", "2022", "RUS")!.Get(SystemFamilyKind.BasicWall));
-        Assert.Null(RevitSystemFamilyNames.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), "2022", "RUS"));
-    }
+    [InlineData("2022")] [InlineData("2023")] [InlineData("2026")]
+    public void Load_NewerVersionUsesTheEmbeddedNames(string version) =>
+        Assert.Equal("Basic Wall", RevitSystemFamilyNames.Load(version, "ENU")!.Get(SystemFamilyKind.BasicWall));
 
     [Theory]
     [InlineData(512, null, -2000011, "BasicWall")]
@@ -345,7 +296,7 @@ public class SystemFamilyNameTests
         state.StairComponentTypeNames[9051] = (1, cls, "arbitrary type name");
         ElementBuilder.ApplyValidatedStairComponentTypeNames([occurrence, type], state);
         Assert.Equal(1, ElementBuilder.ApplyValidatedSystemFamilyNames([occurrence, type], state,
-            RevitSystemFamilyNames.Load(null, "2022", "RUS")));
+            RevitSystemFamilyNames.Load("2022", "RUS")));
         string ifc = Export(occurrence, type);
         Assert.Contains($"'{Encode(family + ":arbitrary type name:9050")}'", ifc);
         Assert.Contains($"'{Encode(family + ":arbitrary type name")}'", ifc);
@@ -364,7 +315,7 @@ public class SystemFamilyNameTests
         state.DuctTypeNames[9071] = (1, "Own type name");
         ElementBuilder.ApplyValidatedDuctTypeNames([occurrence, type], state);
         ElementBuilder.ApplyValidatedSystemFamilyNames([occurrence, type], state,
-            RevitSystemFamilyNames.Load(null, "2022", "RUS"));
+            RevitSystemFamilyNames.Load("2022", "RUS"));
         string ifc = Export(occurrence, type);
         Assert.Contains($"'{Encode("Воздуховод круглого сечения:Own type name:9070")}'", ifc);
         Assert.Contains($"'{Encode("Воздуховод круглого сечения:Own type name")}'", ifc);
@@ -373,16 +324,6 @@ public class SystemFamilyNameTests
         Assert.Equal("general occurrence name", occurrence.Name);
         Assert.Equal("general type name", type.Name);
         Assert.Null(type.FamilyName);
-    }
-
-    [Fact]
-    public void MissingDuctResourceDoesNotDiscardPreviouslySupportedFamilies()
-    {
-        using var root = new SyntheticRevitRoot(omitDlls: ["BuildingSystemsRes.dll", "EssentialsRes.dll", "GeneratedRes.dll"]);
-        var names = RevitSystemFamilyNames.Load(root.Path, "2022", "ENU");
-        Assert.NotNull(names);
-        Assert.Equal("Basic Wall", names!.Get(SystemFamilyKind.BasicWall));
-        Assert.Null(names.Get(SystemFamilyKind.RoundDuct));
     }
 
     private static Parameter TypeLink(int typeId) => new()

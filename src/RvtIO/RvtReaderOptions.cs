@@ -10,12 +10,11 @@ public class RvtReaderOptions
     /// Null uses the default shape (capital, lowercase, capital, lowercase, followed by a capital).</summary>
     public string? ExternalDumpClassPrefix { get; set; }
 
-    /// <summary>Optional root of the localization folders of the user's own
-    /// installation (&lt;root&gt;/&lt;RevitVersion&gt;/&lt;culture&gt;) to read the localized system family names from. Nothing is copied from it.
-    /// Null uses the names embedded in the library.</summary>
+    /// <summary>Ignored: the localized system family names are built into the library. Kept so that existing callers still compile.</summary>
+    [Obsolete("Ignored: texts are built in.")]
     public string? RevitLocalizationDirectory { get; set; }
 
-    /// <summary>Locale code (such as "ENU" or "RUS") of the localization resources that name system families, instead
+    /// <summary>Locale code (such as "ENU" or "RUS") of the built-in texts that name system families, instead
     /// of the locale the file was saved in. The current profile names them in English whatever the file's locale. Null keeps
     /// the saved locale.</summary>
     public string? SystemFamilyNameLocale { get; set; }

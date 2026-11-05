@@ -17,12 +17,12 @@ internal static partial class Program
     private static int Export(ExportArguments arguments)
     {
         var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes) = arguments;
+        WarnIfRevitLocalization(args);
         var options = new RvtReaderOptions
         {
             DiagnosticOutput = Console.Error,
             ExternalDumpPath = externalDumpPath,
             ExternalDumpClassPrefix = externalDumpClassPrefix,
-            RevitLocalizationDirectory = FindRevitLocalizationDirectory(args),
             SystemFamilyNameLocale = profile == RvtIO.Ifc.IfcProfile.Current ? "ENU" : null,
             SeparateFacesWithDistinctOpenings = profile == RvtIO.Ifc.IfcProfile.Current,
             // IFC export reads the geometry with the Revit 2022 readers; --no-r22-layout keeps the 64-bit schema path alone
@@ -266,11 +266,10 @@ internal static partial class Program
         return report.ExitCode;
     }
 
-    // --revit-localization <dir> reads the system family names from the localization folders of the user's own
-    // installation (<dir>/<version>/<culture>) instead of the names embedded in the library.
-    private static string? FindRevitLocalizationDirectory(string[] arguments)
+    // --revit-localization <dir> is a deprecated no-op: the system family names are built in.
+    private static void WarnIfRevitLocalization(string[] arguments)
     {
-        int index = Array.IndexOf(arguments, "--revit-localization");
-        return index >= 0 && index + 1 < arguments.Length ? arguments[index + 1] : null;
+        if (Array.IndexOf(arguments, "--revit-localization") >= 0)
+            Console.Error.WriteLine("warning: --revit-localization is ignored: texts are built in");
     }
 }

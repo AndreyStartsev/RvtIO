@@ -148,7 +148,7 @@ public class CompactOwnValueRulesTests
     [InlineData("ENU", "<None>")]
     public void LookupNoneText_IsTheResourceTextOfTheSavedLocale(string locale, string expected)
     {
-        Assert.Equal(expected, RvtIO.Lookup.RevitSystemFamilyNames.Load(null, "2022", locale)!.Get(RvtIO.Lookup.RevitUiText.LookupNone));
+        Assert.Equal(expected, RvtIO.Lookup.RevitSystemFamilyNames.Load("2022", locale)!.Get(RvtIO.Lookup.RevitUiText.LookupNone));
     }
 
 

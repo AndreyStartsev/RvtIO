@@ -1,118 +1,118 @@
-# System family and user interface names: names as exported by the host application for the listed ids, kept so that exported property names equal them (interoperability values observed in exported documents); maintained by the project.
-# One row per string the reader can request, for the cultures en-US and ru-RU.
-# Columns (tab separated): culture, string group, string id, text. In the text a backslash, tab, line feed and
-# carriage return are written as \\, \t, \n and \r.
-en-US	BuildingSystemsRes.dll	6026	Oval Duct
-en-US	BuildingSystemsRes.dll	6027	Rectangular Duct
-en-US	BuildingSystemsRes.dll	6028	Round Duct
-en-US	BuildingSystemsRes.dll	6161	Flex Duct Rectangular
-en-US	BuildingSystemsRes.dll	6163	Flex Duct Round
-en-US	BuildingSystemsRes.dll	6166	Flex Pipe Round
-en-US	BuildingSystemsRes.dll	6624	Cable Tray with Fittings
-en-US	BuildingSystemsRes.dll	6625	Cable Tray without Fittings
-en-US	BuildingSystemsRes.dll	6626	Conduit with Fittings
-en-US	BuildingSystemsRes.dll	6627	Conduit without Fittings
-en-US	BuildingSystemsRes.dll	6888	Pipe Types
-en-US	EssentialsRes.dll	6225	<not associated>
-en-US	GeneratedRes.dll	6762	Model
-en-US	GeneratedRes.dll	7251	Surface
-en-US	HostObjRes.dll	6077	Curtain Wall
-en-US	HostObjRes.dll	6095	Sloped Glazing
-en-US	Revit.dll	35	Subregion
-en-US	Revit.dll	118	Basic Wall
-en-US	Revit.dll	474	Basic Roof
-en-US	Revit.dll	5321	Exhaust Air
-en-US	Revit.dll	5367	Other Air
-en-US	Revit.dll	5384	Return Air
-en-US	Revit.dll	5388	Supply Air
-en-US	Revit.dll	5391	Undefined
-en-US	Revit.dll	5854	Other
-en-US	Revit.dll	5911	Sanitary
-en-US	Revit.dll	5991	Vent
-en-US	Revit.dll	6114	Hydronic Supply
-en-US	Revit.dll	6115	Hydronic Return
-en-US	Revit.dll	6268	Domestic Hot Water
-en-US	Revit.dll	6269	Domestic Cold Water
-en-US	Revit.dll	7248	Fire Protection Wet
-en-US	Revit.dll	7249	Fire Protection Dry
-en-US	Revit.dll	7250	Fire Protection Pre-Action
-en-US	Revit.dll	7251	Fire Protection Other
-en-US	Revit.dll	10195	Floor
-en-US	Revit.dll	10273	Level
-en-US	Revit.dll	11013	Reference Plane
-en-US	Revit.dll	11099	Stair
-en-US	Revit.dll	11308	Pad
-en-US	Revit.dll	11696	Compound Ceiling
-en-US	Revit.dll	11746	<None>
-en-US	Revit.dll	37263	Pipe Insulation\nPipe Insulation
-en-US	Revit.dll	39347	Wall Sweep
-en-US	Revit.dll	46241	Wall Foundation
-en-US	Revit.dll	46779	Foundation Slab
-en-US	Revit.dll	48369	Boundary Conditions
-en-US	StairRampRes.dll	6038	Railing
-en-US	StairRampRes.dll	6178	Stringer
-en-US	StairRampRes.dll	6179	Carriage
-en-US	StairRampRes.dll	6192	Cast-In-Place Stair
-en-US	StairRampRes.dll	6193	Precast Stair
-en-US	StairRampRes.dll	6194	Assembled Stair
-en-US	StairRampRes.dll	6195	Monolithic Run
-en-US	StairRampRes.dll	6196	Non-Monolithic Run
-en-US	StairRampRes.dll	6197	Monolithic Landing
-en-US	StairRampRes.dll	6198	Non-Monolithic Landing
-ru-RU	BuildingSystemsRes.dll	6026	Воздуховод овального сечения
-ru-RU	BuildingSystemsRes.dll	6027	Воздуховод прямоугольного сечения
-ru-RU	BuildingSystemsRes.dll	6028	Воздуховод круглого сечения
-ru-RU	BuildingSystemsRes.dll	6161	Гибкий воздуховод прямоугольного сечения
-ru-RU	BuildingSystemsRes.dll	6163	Гибкий воздуховод круглого сечения
-ru-RU	BuildingSystemsRes.dll	6166	Гибкий трубопровод круглого сечения
-ru-RU	BuildingSystemsRes.dll	6624	Кабельный лоток с соединительными деталями
-ru-RU	BuildingSystemsRes.dll	6625	Кабельный лоток без соединительных деталей
-ru-RU	BuildingSystemsRes.dll	6626	Короб с соединительными деталями
-ru-RU	BuildingSystemsRes.dll	6627	Короб без соединительных деталей
-ru-RU	BuildingSystemsRes.dll	6888	Типы трубопроводов
-ru-RU	EssentialsRes.dll	6225	<не связано>
-ru-RU	GeneratedRes.dll	6762	Группа модели
-ru-RU	GeneratedRes.dll	7251	Поверхность
-ru-RU	HostObjRes.dll	6077	Витраж
-ru-RU	HostObjRes.dll	6095	Наклонное остекление
-ru-RU	Revit.dll	35	Область поверхности
-ru-RU	Revit.dll	118	Базовая стена
-ru-RU	Revit.dll	474	Базовая крыша
-ru-RU	Revit.dll	5321	Отработанный воздух
-ru-RU	Revit.dll	5367	Другие воздушные
-ru-RU	Revit.dll	5384	Рециркулирующий воздух
-ru-RU	Revit.dll	5388	Приточный воздух
-ru-RU	Revit.dll	5391	Не определено
-ru-RU	Revit.dll	5854	Прочее
-ru-RU	Revit.dll	5911	Канализация
-ru-RU	Revit.dll	5991	Вентиляционное отверстие
-ru-RU	Revit.dll	6114	Приточная жидкость
-ru-RU	Revit.dll	6115	Обратная жидкость
-ru-RU	Revit.dll	6268	Горячее водоснабжение
-ru-RU	Revit.dll	6269	Холодное водоснабжение
-ru-RU	Revit.dll	7248	Водяная система пожаротушения
-ru-RU	Revit.dll	7249	Газовая система пожаротушения
-ru-RU	Revit.dll	7250	Дренчерная система пожаротушения
-ru-RU	Revit.dll	7251	Другие системы пожаротушения
-ru-RU	Revit.dll	10195	Перекрытие
-ru-RU	Revit.dll	10273	Уровень
-ru-RU	Revit.dll	11013	Опорная плоскость
-ru-RU	Revit.dll	11099	Лестница
-ru-RU	Revit.dll	11308	Основание
-ru-RU	Revit.dll	11696	Многослойный потолок
-ru-RU	Revit.dll	11746	<Нет>
-ru-RU	Revit.dll	37263	Изоляция трубы\nИзоляция трубы
-ru-RU	Revit.dll	39347	Выступающий профиль
-ru-RU	Revit.dll	46241	Ленточный фундамент
-ru-RU	Revit.dll	46779	Фундаментная плита
-ru-RU	Revit.dll	48369	Граничные условия
-ru-RU	StairRampRes.dll	6038	Ограждение
-ru-RU	StairRampRes.dll	6178	Тетива
-ru-RU	StairRampRes.dll	6179	Косоур
-ru-RU	StairRampRes.dll	6192	Монолитная лестница
-ru-RU	StairRampRes.dll	6193	Сборная лестница
-ru-RU	StairRampRes.dll	6194	Смонтированная лестница
-ru-RU	StairRampRes.dll	6195	Монолитный марш
-ru-RU	StairRampRes.dll	6196	Немонолитный марш
-ru-RU	StairRampRes.dll	6197	Монолитная площадка
-ru-RU	StairRampRes.dll	6198	Немонолитная площадка
+# Built-in display names of system families and other interface texts, kept so that exported property names equal the names found in exported documents (interoperability values); maintained by the project.
+# One row per text the reader can request, for the cultures en-US and ru-RU.
+# Columns (tab separated): culture, key, text. The key is a SystemFamilyKind or RevitUiText member name, or StairOccurrenceName.
+# In the text a backslash, tab, line feed and carriage return are written as \\, \t, \n and \r.
+en-US	OvalDuct	Oval Duct
+en-US	RectangularDuct	Rectangular Duct
+en-US	RoundDuct	Round Duct
+en-US	FlexDuctRectangular	Flex Duct Rectangular
+en-US	FlexDuctRound	Flex Duct Round
+en-US	FlexPipeRound	Flex Pipe Round
+en-US	CableTrayWithFittings	Cable Tray with Fittings
+en-US	CableTrayWithoutFittings	Cable Tray without Fittings
+en-US	ConduitWithFittings	Conduit with Fittings
+en-US	ConduitWithoutFittings	Conduit without Fittings
+en-US	PipeTypes	Pipe Types
+en-US	NotAssociated	<not associated>
+en-US	ModelGroup	Model
+en-US	TopographySurface	Surface
+en-US	CurtainWall	Curtain Wall
+en-US	SlopedGlazing	Sloped Glazing
+en-US	Subregion	Subregion
+en-US	BasicWall	Basic Wall
+en-US	BasicRoof	Basic Roof
+en-US	ExhaustAir	Exhaust Air
+en-US	OtherAir	Other Air
+en-US	ReturnAir	Return Air
+en-US	SupplyAir	Supply Air
+en-US	SystemUndefined	Undefined
+en-US	PipingOther	Other
+en-US	Sanitary	Sanitary
+en-US	Vent	Vent
+en-US	HydronicSupply	Hydronic Supply
+en-US	HydronicReturn	Hydronic Return
+en-US	DomesticHotWater	Domestic Hot Water
+en-US	DomesticColdWater	Domestic Cold Water
+en-US	FireProtectionWet	Fire Protection Wet
+en-US	FireProtectionDry	Fire Protection Dry
+en-US	FireProtectionPreAction	Fire Protection Pre-Action
+en-US	FireProtectionOther	Fire Protection Other
+en-US	Floor	Floor
+en-US	LevelFamily	Level
+en-US	ReferencePlane	Reference Plane
+en-US	StairOccurrenceName	Stair
+en-US	Pad	Pad
+en-US	CompoundCeiling	Compound Ceiling
+en-US	LookupNone	<None>
+en-US	PipeInsulation	Pipe Insulation\nPipe Insulation
+en-US	WallSweep	Wall Sweep
+en-US	WallFoundation	Wall Foundation
+en-US	FoundationSlab	Foundation Slab
+en-US	BoundaryConditions	Boundary Conditions
+en-US	Railing	Railing
+en-US	Stringer	Stringer
+en-US	Carriage	Carriage
+en-US	CastInPlaceStair	Cast-In-Place Stair
+en-US	PrecastStair	Precast Stair
+en-US	AssembledStair	Assembled Stair
+en-US	MonolithicRun	Monolithic Run
+en-US	NonMonolithicRun	Non-Monolithic Run
+en-US	MonolithicLanding	Monolithic Landing
+en-US	NonMonolithicLanding	Non-Monolithic Landing
+ru-RU	OvalDuct	Воздуховод овального сечения
+ru-RU	RectangularDuct	Воздуховод прямоугольного сечения
+ru-RU	RoundDuct	Воздуховод круглого сечения
+ru-RU	FlexDuctRectangular	Гибкий воздуховод прямоугольного сечения
+ru-RU	FlexDuctRound	Гибкий воздуховод круглого сечения
+ru-RU	FlexPipeRound	Гибкий трубопровод круглого сечения
+ru-RU	CableTrayWithFittings	Кабельный лоток с соединительными деталями
+ru-RU	CableTrayWithoutFittings	Кабельный лоток без соединительных деталей
+ru-RU	ConduitWithFittings	Короб с соединительными деталями
+ru-RU	ConduitWithoutFittings	Короб без соединительных деталей
+ru-RU	PipeTypes	Типы трубопроводов
+ru-RU	NotAssociated	<не связано>
+ru-RU	ModelGroup	Группа модели
+ru-RU	TopographySurface	Поверхность
+ru-RU	CurtainWall	Витраж
+ru-RU	SlopedGlazing	Наклонное остекление
+ru-RU	Subregion	Область поверхности
+ru-RU	BasicWall	Базовая стена
+ru-RU	BasicRoof	Базовая крыша
+ru-RU	ExhaustAir	Отработанный воздух
+ru-RU	OtherAir	Другие воздушные
+ru-RU	ReturnAir	Рециркулирующий воздух
+ru-RU	SupplyAir	Приточный воздух
+ru-RU	SystemUndefined	Не определено
+ru-RU	PipingOther	Прочее
+ru-RU	Sanitary	Канализация
+ru-RU	Vent	Вентиляционное отверстие
+ru-RU	HydronicSupply	Приточная жидкость
+ru-RU	HydronicReturn	Обратная жидкость
+ru-RU	DomesticHotWater	Горячее водоснабжение
+ru-RU	DomesticColdWater	Холодное водоснабжение
+ru-RU	FireProtectionWet	Водяная система пожаротушения
+ru-RU	FireProtectionDry	Газовая система пожаротушения
+ru-RU	FireProtectionPreAction	Дренчерная система пожаротушения
+ru-RU	FireProtectionOther	Другие системы пожаротушения
+ru-RU	Floor	Перекрытие
+ru-RU	LevelFamily	Уровень
+ru-RU	ReferencePlane	Опорная плоскость
+ru-RU	StairOccurrenceName	Лестница
+ru-RU	Pad	Основание
+ru-RU	CompoundCeiling	Многослойный потолок
+ru-RU	LookupNone	<Нет>
+ru-RU	PipeInsulation	Изоляция трубы\nИзоляция трубы
+ru-RU	WallSweep	Выступающий профиль
+ru-RU	WallFoundation	Ленточный фундамент
+ru-RU	FoundationSlab	Фундаментная плита
+ru-RU	BoundaryConditions	Граничные условия
+ru-RU	Railing	Ограждение
+ru-RU	Stringer	Тетива
+ru-RU	Carriage	Косоур
+ru-RU	CastInPlaceStair	Монолитная лестница
+ru-RU	PrecastStair	Сборная лестница
+ru-RU	AssembledStair	Смонтированная лестница
+ru-RU	MonolithicRun	Монолитный марш
+ru-RU	NonMonolithicRun	Немонолитный марш
+ru-RU	MonolithicLanding	Монолитная площадка
+ru-RU	NonMonolithicLanding	Немонолитная площадка

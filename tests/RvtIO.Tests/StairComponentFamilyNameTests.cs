@@ -79,15 +79,14 @@ public class StairComponentFamilyNameTests
     }
 
     [Theory]
-    [InlineData("MonolithicRun", 6195, "Монолитный марш")]
-    [InlineData("NonMonolithicRun", 6196, "Немонолитный марш")]
-    [InlineData("MonolithicLanding", 6197, "Монолитная площадка")]
-    [InlineData("NonMonolithicLanding", 6198, "Немонолитная площадка")]
-    public void FamilyUsesOriginalResourcesInTheSavedLanguage(string kind, int resource, string russian)
+    [InlineData("MonolithicRun", "Monolithic Run", "Монолитный марш")]
+    [InlineData("NonMonolithicRun", "Non-Monolithic Run", "Немонолитный марш")]
+    [InlineData("MonolithicLanding", "Monolithic Landing", "Монолитная площадка")]
+    [InlineData("NonMonolithicLanding", "Non-Monolithic Landing", "Немонолитная площадка")]
+    public void FamilyUsesBuiltInNamesInTheSavedLanguage(string kind, string english, string russian)
     {
-        Assert.Equal(russian, RevitSystemFamilyNames.Load(null, "2022", "RUS")!.Get(Enum.Parse<SystemFamilyKind>(kind)));
-        var english = RevitUiNameTable.Get("en-US", "StairRampRes.dll")!;
-        Assert.Equal(english[resource], RevitSystemFamilyNames.Load(null, "2022", "ENU")!.Get(Enum.Parse<SystemFamilyKind>(kind)));
+        Assert.Equal(russian, RevitSystemFamilyNames.Load("2022", "RUS")!.Get(Enum.Parse<SystemFamilyKind>(kind)));
+        Assert.Equal(english, RevitSystemFamilyNames.Load("2022", "ENU")!.Get(Enum.Parse<SystemFamilyKind>(kind)));
     }
 
     [Theory]
@@ -106,7 +105,7 @@ public class StairComponentFamilyNameTests
         Assert.Equal((2, (ushort)0, (int?)null), state.SystemTypeRoots[id]);
         var type = new Element { Id = (int)id, CategoryId = -2000919, Name = "unrelated type name" };
         Assert.Equal(0, ElementBuilder.ApplyValidatedSystemFamilyNames([type], state,
-            RevitSystemFamilyNames.Load(null, "2022", "RUS")));
+            RevitSystemFamilyNames.Load("2022", "RUS")));
         Assert.Null(type.ValidatedSystemFamilyName);
     }
 
@@ -164,19 +163,6 @@ public class StairComponentFamilyNameTests
         var type = new Element { Id = (int)id, CategoryId = -2000919 };
         ElementBuilder.ApplyValidatedStairComponentTypeNames([type], state);
         Assert.Null(type.ValidatedStairComponentTypeName);
-    }
-
-    [Fact]
-    public void MissingNewResourceKeepsExistingNamesAndOmitsOnlyTheComponent()
-    {
-        using var root = new SyntheticRevitRoot(
-            omitDlls: ["BuildingSystemsRes.dll", "EssentialsRes.dll", "GeneratedRes.dll"], blank: [("StairRampRes.dll", 6195)]);
-        var names = RevitSystemFamilyNames.Load(root.Path, "2022", "ENU");
-        Assert.NotNull(names);
-        Assert.Equal("Basic Wall", names!.Get(SystemFamilyKind.BasicWall));
-        Assert.Equal("Precast Stair", names.Get(SystemFamilyKind.PrecastStair));
-        Assert.Null(names.Get(SystemFamilyKind.MonolithicRun));
-        Assert.NotNull(names.Get(SystemFamilyKind.NonMonolithicRun));
     }
 
     // Obtain the mutation offset by the same exact root-schema walk, not a byte
