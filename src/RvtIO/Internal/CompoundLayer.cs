@@ -10,7 +10,7 @@ internal record CompoundLayer
     /// <summary>Layer thickness in feet (Revit internal units).</summary>
     public double ThicknessFt { get; init; }
 
-    /// <summary>Material function: 1=Structure, 2=Substrate, 3=ThermalAir, 4=Finish, 5=Membrane.</summary>
+    /// <summary>Stored layer function: 0=None, 1=Structure, 2=Substrate, 3=Insulation, 4=Finish1, 5=Finish2, 100=Membrane, 200=StructuralDeck.</summary>
     public int Function { get; init; }
 
     /// <summary>Material element ID (0 or -1 if none).</summary>
@@ -18,4 +18,13 @@ internal record CompoundLayer
 
     /// <summary>Layer index (0-based, from exterior to interior).</summary>
     public int LayerIndex { get; init; }
+
+    /// <summary>True for the stored function values seen in files; other values are no layer array (the 0x1003 marker also occurs in unrelated blocks).</summary>
+    public static bool IsStoredFunction(int function) => function is (>= 0 and <= 5) or 100 or 200;
+
+    public static string FunctionName(int function) => function switch
+    {
+        0 => "None", 1 => "Structure", 2 => "Substrate", 3 => "Insulation", 4 => "Finish1", 5 => "Finish2",
+        100 => "Membrane", 200 => "StructuralDeck", _ => $"Function{function}",
+    };
 }

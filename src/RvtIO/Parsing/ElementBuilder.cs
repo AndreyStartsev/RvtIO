@@ -5618,7 +5618,6 @@ internal static partial class ElementBuilder
         // Attach CompoundStructure layers to wall type elements
         if (state?.CompoundLayers.Count > 0)
         {
-            string[] layerFuncNames = ["Unknown", "Structure", "Substrate", "ThermalAir", "Finish", "Membrane"];
             foreach (var (eid, layers) in state.CompoundLayers)
             {
                 var elem = rvtInfo.Elements.FirstOrDefault(e => e.Id == (int)eid);
@@ -5626,8 +5625,7 @@ internal static partial class ElementBuilder
                 elem.Layers = layers.Select(l => new Model.MaterialLayer
                 {
                     ThicknessMm = Math.Round(l.ThicknessFt * 304.8, 2),
-                    Function = l.Function >= 0 && l.Function < layerFuncNames.Length
-                        ? layerFuncNames[l.Function] : $"Function{l.Function}",
+                    Function = CompoundLayer.FunctionName(l.Function),
                     MaterialId = l.MaterialId,
                     MaterialName = l.MaterialId > 0 && idToName.TryGetValue(l.MaterialId, out var mn) ? mn : null,
                     LayerIndex = l.LayerIndex

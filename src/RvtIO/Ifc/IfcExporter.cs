@@ -5714,7 +5714,7 @@ public partial class IfcExporter
             var first = group.First();
             var layers = first.Native is { } nativeLayers
                 ? nativeLayers.Layers
-                : first.Element.Layers!.OrderBy(layer => layer.LayerIndex)
+                : first.Element.Layers!.OrderBy(layer => layer.LayerIndex).Where(layer => layer.ThicknessMm > 0)
                     .Select(layer => (MaterialId: layer.MaterialId, ThicknessMm: layer.ThicknessMm)).ToList();
             string layerSetKey = first.Native is { } ownType
                 ? $"native|{ownType.TypeId}" : $"legacy|{group.Key}";
