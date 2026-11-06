@@ -1592,18 +1592,13 @@ public partial class IfcExporter
             !e.IsBlockOnly && visibleWallIds.Contains(e.Id) && e.Location is { ArcRadius: null }).ToList();
 
         // Robust model centre: median of element bbox centres.
-        bool InvalidBbox(double[] b)
-        {
-            if (b.Length < 6) return true;
-            for (int bi = 0; bi < 6; bi++)
-                if (!double.IsFinite(b[bi])) return true;
-            return b[0] > b[3] || b[1] > b[4] || b[2] > b[5];
-        }
+        bool InvalidBbox(double[] b) => !BoundsAreValid(b);
 
         void Skip(Element skipped, string why) { skippedCount++; SkipLog?.Add(skipped.Id, RvtIO.SkipLog.ClassOf(skipped), why); }
-        // The bounds of a 64-bit-id file count as decoded when any element carries them.
+        // The bounds of a 64-bit-id file count as decoded when any element carries valid ones: damaged bounds are a failure of the
+        // decoder of that element, not a sign that the bounds of the file are read.
         bool boundsDecoded = info.GeometryUndecoded
-            && info.Elements.Any(e => (e.BoundingBox ?? e.Geometry?.BoundingBox) is { Length: >= 6 });
+            && info.Elements.Any(e => BoundsAreValid(e.BoundingBox ?? e.Geometry?.BoundingBox));
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
@@ -1755,8 +1750,8 @@ public partial class IfcExporter
                     bool hasHost = elem.SuperInstanceId is > 0
                         || ResolveHostedElementHostIds(
                             elem, elemById, visibleWallIds, inverseHostedHostIds).Count > 0;
-                    // A freestanding door or window that has a body is a real product; one without bounds has nothing to write.
-                    if (!hasHost && (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is not { Length: >= 6 })
+                    // A freestanding door or window that has a body is a real product; one without valid bounds has nothing to write.
+                    if (!hasHost && !BoundsAreValid(elem.BoundingBox ?? elem.Geometry?.BoundingBox))
                     { Skip(elem, "hosted-element-without-host"); continue; }
                 }
                 else
@@ -1780,7 +1775,8 @@ public partial class IfcExporter
             }
 
             // A file of the 64-bit-id layout writes a product without bounds as it is, with no representation; where
-            // the bounds are decoded, a product without them has no body and is not exported.
+            // the bounds are decoded, a product without them has no body and is not exported. Bounds that are there but
+            // damaged do not make a missing body: the product is rejected by them below, as it always was.
             if (boundsDecoded
                 && ShouldSkipRepresentationlessProduct(ifcType,
                     hasBounds: (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 },
@@ -63455,7 +63451,7 @@ public partial class IfcExporter
         "IFCBEAM" or "IFCBUILDINGELEMENTPROXY" or "IFCCOLUMN" or "IFCCOVERING"
             or "IFCCURTAINWALL" or "IFCDISTRIBUTIONFLOWELEMENT" or "IFCDOOR"
             or "IFCFLOWCONTROLLER" or "IFCFLOWFITTING" or "IFCFLOWSEGMENT" or "IFCFLOWTERMINAL"
-            or "IFCFURNISHINGELEMENT" or "IFCMEMBER" or "IFCOPENINGELEMENT"
+            or "IFCFOOTING" or "IFCFURNISHINGELEMENT" or "IFCMEMBER" or "IFCOPENINGELEMENT"
             or "IFCPLATE" or "IFCRAILING" or "IFCRAMP" or "IFCRAMPFLIGHT"
             or "IFCROOF" or "IFCSLAB" or "IFCSTAIR" or "IFCSTAIRFLIGHT" or "IFCREINFORCINGMESH"
             or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCWINDOW" => true,
@@ -63525,6 +63521,15 @@ public partial class IfcExporter
         !hasEmittedRepresentation
         && !isEmittedAggregateParent
         && IsIfcElementSubclassProduct(ifcType);
+
+    /// <summary>Whether bounds are six finite values, each minimum not above its maximum. Bounds of an element whose decoding failed are not.</summary>
+    internal static bool BoundsAreValid(double[]? bounds)
+    {
+        if (bounds is not { Length: >= 6 }) return false;
+        for (int i = 0; i < 6; i++)
+            if (!double.IsFinite(bounds[i])) return false;
+        return bounds[0] <= bounds[3] && bounds[1] <= bounds[4] && bounds[2] <= bounds[5];
+    }
 
     /// <summary>The classes that are written without a representation because they only group other products.</summary>
     internal static bool IsRepresentationlessContainerClass(string ifcType) =>
