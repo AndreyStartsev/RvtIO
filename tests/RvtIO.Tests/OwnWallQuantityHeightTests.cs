@@ -89,13 +89,13 @@ public class OwnWallQuantityHeightTests
     }
 
     [Fact]
-    public void SeveralSolidsAreMeasuredByTheZRangeOfAllOfThem()
+    public void SeveralSolidsAreMeasuredByTheZRangeOfTheFirstOne()
     {
-        // The height is the Z range of the box of all the solids; the first solid decides the class of the wall. The second
-        // solid here is a taller post beside the box: 2.1 .. 3.7 ft for the first, 2.1 .. 4.1 ft for both.
+        // The first solid decides the class of the wall and is the one that is extruded and measured. The second solid here is a
+        // taller post beside the box: 2.1 .. 3.7 ft for the first, 2.1 .. 4.1 ft for both.
         var wall = Wall();
         AddSolid(wall.OwnCurrentCutPairBodyCurrent!, zFrom: 2.1, zTo: 4.1);
-        Assert.Equal(2.0 * 0.3048, IfcExporter.OwnSimpleWallHeightCurrent(wall)!.Value, 12);
+        Assert.Equal(1.6 * 0.3048, IfcExporter.OwnSimpleWallHeightCurrent(wall)!.Value, 12);
     }
 
     [Fact]
