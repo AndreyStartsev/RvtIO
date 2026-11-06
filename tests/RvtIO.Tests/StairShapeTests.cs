@@ -47,6 +47,16 @@ public class StairShapeTests
         }
     }
 
+    [Theory]
+    [InlineData(0, false)] [InlineData(1, false)] [InlineData(0, true)] [InlineData(2, true)]
+    public void ASpiralRunMakesTheWholeStairSpiralWhateverElseItHolds(int landings, bool withStraightRun)
+    {
+        var spiral = Run(200) with { Style = TfBlockDeserializer.StairRunStyle.Spiral };
+        var runs = withStraightRun ? new[] { Run(201, new Direction(1, 0, 0)), spiral } : [spiral];
+        Assert.Equal("SPIRAL_STAIR", StairShape.Classify(runs, landings));
+        Assert.Equal("SPIRAL_STAIR", StairShape.Classify(runs, landings, sketchedIsFlight: false));
+    }
+
     [Fact]
     public void ASketchedRunIsNotAFlightInTheCurrentProfile()
     {

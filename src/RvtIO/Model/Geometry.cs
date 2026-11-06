@@ -285,6 +285,11 @@ namespace RvtIO.Model
         /// <summary>Curve length in feet.</summary>
         public double Length { get; set; }
 
+        /// <summary>Lines only: origin, direction (not unit) and end parameters of the curve driver the line was built from.</summary>
+        internal double[]? DriverOrigin { get; set; }
+        internal double[]? DriverDirection { get; set; }
+        internal double[]? DriverEndParams { get; set; }
+
         /// <summary>For arcs: center point [x, y, z] in feet (world coordinates).</summary>
         public double[]? ArcCenter { get; set; }
 
