@@ -4448,7 +4448,7 @@ public partial class IfcExporter
             // Element name: "FamilyName:TypeName:ElementId" format (matching Revit IFC export)
             string elemTypeName = ResolveProductFamilyAndTypeName(
                 elem, ifcType, elemById, elementIdOccurrenceCounts, CurrentProfile);
-            string elemName = $"{elemTypeName}:{elem.Id}";
+            string elemName = elemTypeName.Length == 0 ? elem.Id.ToString() : $"{elemTypeName}:{elem.Id}";
             if (CurrentProfile && IsRunLengthRuleCurrent(elem, ifcType, elemById, elementIdOccurrenceCounts)) LengthRuleRunsCurrent.Add(elem.Id);
             if (ifcType == "IFCSTAIR")
                 elemName = ResolveNativeStairName(elem, elemById, elementIdOccurrenceCounts, CurrentProfile) ?? elemName;
@@ -67649,17 +67649,35 @@ public partial class IfcExporter
         // A run or landing names its type through TypeId (the serialized association), not ELEM_TYPE_PARAM, which a run does not have.
         Element? componentType = currentProfile && resolveComponentType
             ? ResolveStairComponentType(element, ifcType, elementsById, elementIdOccurrenceCounts) : null;
-        string typeName = componentType?.ValidatedStairComponentTypeName
+        string? knownTypeName = componentType?.ValidatedStairComponentTypeName
             ?? ResolveValidatedProductTypeName(element, ifcType, elementsById, currentProfile)
-            ?? element.Name ?? $"Element {element.Id}";
+            ?? element.Name;
+        string typeName = knownTypeName ?? $"Element {element.Id}";
         if (currentProfile && ifcType == "IFCSLAB" && element.CategoryId == -2000920) return typeName;
+        // A sweep-like proxy with neither a type name nor a family has no "family:type" part; it is named by its id alone.
+        if (knownTypeName == null && ifcType == "IFCBUILDINGELEMENTPROXY" && FixedSystemFamilyName(element) != null
+            && ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts) == null && element.FamilyName == null)
+            return "";
         string familyName = (currentProfile && ifcType == "IFCSTAIR" && element.RootClassName == "Stairs" ? element.ValidatedStairOccurrenceName : null)
             ?? ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts)
             ?? (componentType?.ValidatedSystemFamilyName is { Length: > 0 } componentFamily ? componentFamily : null)
             ?? element.FamilyName
+            ?? FixedSystemFamilyName(element)
             ?? element.Category ?? ifcType;
         return $"{familyName}:{typeName}";
     }
+
+    /// <summary>The fixed family name of a sweep-like element that has no family of its own (wall sweep, slab edge, fascia,
+    /// gutter, roof soffit, 3D model text), or null.</summary>
+    internal static string? FixedSystemFamilyName(Element element) => element.CategoryId switch
+    {
+        -2000181 => "Wall Sweep",
+        -2001392 => "Slab Edge",
+        -2001390 => "Fascia",
+        -2001391 => "Gutter",
+        -2001393 => "Compound Ceiling",
+        _ => element.RootClassName == "Text3dElem" ? "Model Text" : null,
+    };
 
     /// <summary>The type element of a stair run or landing: the one its serialized TypeId names (a run has no ELEM_TYPE_PARAM, and the
     /// parameter of a landing names a sibling landing, see <see cref="ResolveTypeObjectElementId"/>), when it is a unique element of the
