@@ -69,9 +69,31 @@ public partial class IfcExporter
 
         var globals = new GlobalsCurrent(w);
         var detached = new List<int>();
-        int rewritten = 0, fromParameter = 0;
+        int rewritten = 0, fromParameter = 0, deepened = 0;
         var reasons = new SortedDictionary<string, int>(StringComparer.Ordinal);
         void Skip(string reason) => reasons[reason] = reasons.GetValueOrDefault(reason) + 1;
+        // The length quantities of the BaseQuantities set of an opening; a value returned for a quantity name replaces it.
+        void RewriteLengthQuantities(int openingId, Func<string, string, double?> newValue)
+        {
+            if (!psetByProduct.TryGetValue(openingId, out int psetId)
+                || !indexById.TryGetValue(psetId, out int psetIndex)
+                || w.EntityAt(psetIndex).Type != "IFCELEMENTQUANTITY")
+                return;
+            var psetArgs = SplitStepArguments(w.EntityAt(psetIndex).Args);
+            if (psetArgs.Length < 6 || psetArgs[2].Trim('\'') !="BaseQuantities") return;
+            string inner = psetArgs[5].Trim();
+            if (inner.StartsWith('(') && inner.EndsWith(')')) inner = inner[1..^1];
+            foreach (string qToken in SplitStepArguments(inner))
+            {
+                if (!TryEntityId(qToken, out int qId) || !indexById.TryGetValue(qId, out int qIndex)
+                    || w.EntityAt(qIndex).Type != "IFCQUANTITYLENGTH")
+                    continue;
+                var qArgs = SplitStepArguments(w.EntityAt(qIndex).Args);
+                if (qArgs.Length < 4) continue;
+                string qName = qArgs[0].Trim('\'');
+                if (newValue(qName, qArgs[3]) is { } value) w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(value)}");
+            }
+        }
         foreach (var (openingId, fillingId) in fillingByOpening)
         {
             if (!hostByOpening.TryGetValue(openingId, out int hostId)
@@ -95,6 +117,12 @@ public partial class IfcExporter
             if (!TryDoorWindowOpeningCurrent(w, indexById, elementsById, hosted, wall, wallAttributes, out var built, out string failure))
             {
                 Skip(failure);
+                // (the box of the opening stays, but a door or window opening reaches through the whole wall)
+                if (TryThroughDepthCurrent(w, indexById, elementsById, wall, wallAttributes, openingAttributes, globals, detached) is { } throughDepth)
+                {
+                    RewriteLengthQuantities(openingId, (qName, _) => qName == "Depth" ? throughDepth : null);
+                    deepened++;
+                }
                 continue;
             }
 
@@ -145,39 +173,16 @@ public partial class IfcExporter
             // (only the opening of a door or window is measured along the host axes, as in the quantity pass)
             bool hostAxes = OpeningQuantitiesInHostAxes && indexById.TryGetValue(fillingId, out int fillerIndex)
                 && w.EntityAt(fillerIndex).Type is "IFCDOOR" or "IFCWINDOW";
-            if (psetByProduct.TryGetValue(openingId, out int psetId)
-                && indexById.TryGetValue(psetId, out int psetIndex)
-                && w.EntityAt(psetIndex).Type == "IFCELEMENTQUANTITY")
+            RewriteLengthQuantities(openingId, (qName, written) =>
             {
-                var psetArgs = SplitStepArguments(w.EntityAt(psetIndex).Args);
-                if (psetArgs.Length >= 6 && psetArgs[2].Trim('\'') == "BaseQuantities")
-                {
-                    string inner = psetArgs[5].Trim();
-                    if (inner.StartsWith('(') && inner.EndsWith(')')) inner = inner[1..^1];
-                    foreach (string qToken in SplitStepArguments(inner))
-                    {
-                        if (TryEntityId(qToken, out int qId) && indexById.TryGetValue(qId, out int qIndex)
-                            && w.EntityAt(qIndex).Type == "IFCQUANTITYLENGTH")
-                        {
-                            var qArgs = SplitStepArguments(w.EntityAt(qIndex).Args);
-                            if (qArgs.Length >= 4)
-                            {
-                                string qName = qArgs[0].Trim('\'');
-                                // (along the host axes Height is the vertical and Width the side along the wall of the new outline. The decoded
-                                // cut loop is what Revit cuts, so it replaces the nominal size that the quantity pass took from the door or
-                                // window; where the two are the same size the nominal value stays, see OpeningQuantitiesInHostAxes)
-                                bool own(double cut) => hostAxes && SameSizeCurrent(qArgs[3], cut);
-                                if (qName == "Height" && (hostAxes ? built.HostHeight : built.Height) is { } newHeight && !own(newHeight))
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newHeight)}");
-                                else if (qName == "Width" && (hostAxes ? built.HostWidth : built.Width) is { } newWidth && !own(newWidth))
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newWidth)}");
-                                else if (qName == "Depth")
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Depth)}");
-                            }
-                        }
-                    }
-                }
-            }
+                // (along the host axes Height is the vertical and Width the side along the wall of the new outline. The decoded
+                // cut loop is what Revit cuts, so it replaces the nominal size that the quantity pass took from the door or
+                // window; where the two are the same size the nominal value stays, see OpeningQuantitiesInHostAxes)
+                bool own(double cut) => hostAxes && SameSizeCurrent(written, cut);
+                if (qName == "Height" && (hostAxes ? built.HostHeight : built.Height) is { } newHeight && !own(newHeight)) return newHeight;
+                if (qName == "Width" && (hostAxes ? built.HostWidth : built.Width) is { } newWidth && !own(newWidth)) return newWidth;
+                return qName == "Depth" ? built.Depth : null;
+            });
 
             // OverallHeight and OverallWidth (millimetres) of the door or window are the vertical and the along-the-wall extent of the
             // cut loop, which can be larger than the nominal size; the openings that are not rewritten here keep the nominal size.
@@ -198,8 +203,8 @@ public partial class IfcExporter
             rewritten++;
             if (built.WidthFromParameter) fromParameter++;
         }
-        if (rewritten > 0) RemoveDetachedCurrent(w, detached);
-        _diag?.WriteLine($"The current profile door and window openings of {fillingByOpening.Count} filled: {rewritten} rewritten ({fromParameter} with the wall width parameter, its layers or body being stale: wall-width-conflict); left as they were: "
+        if (detached.Count > 0) RemoveDetachedCurrent(w, detached);
+        _diag?.WriteLine($"The current profile door and window openings of {fillingByOpening.Count} filled: {rewritten} rewritten ({fromParameter} with the wall width parameter, its layers or body being stale: wall-width-conflict), {deepened} of the others given the depth of the wall; left as they were: "
             + string.Join(", ", reasons.Select(pair => $"{pair.Key}={pair.Value}")));
         return rewritten;
     }
@@ -338,9 +343,10 @@ public partial class IfcExporter
         symbol?.Geometry is { } geometry ? geometry.RootBoundingBox ?? geometry.BoundingBox : null;
 
     /// <summary>
-    /// The total width of the layers of the host wall, metres: the width of the extrusion that is its Body, else the width of
-    /// its type. A wall whose type thickness is not validated (the type root and its compound structure read once) and whose layers (or
-    /// body) disagree with its own width parameter has a stale copy among them (a file saved in several increments), so none of the two
+    /// The total width of the layers of the host wall, metres: the layers of its type, else the width of the extrusion that is its
+    /// Body (a wall with banding or other parts has a body narrower than its layers), else its width parameter. A wall whose type
+    /// thickness is not validated (the type root and its compound structure read once) and whose layers (or body) disagree with its
+    /// own width parameter has a stale copy among them (a file saved in several increments), so none of the two
     /// is confirmed: <paramref name="conflict"/> is set and no width is returned.
     /// </summary>
     private static double? WallTotalWidthCurrent(StepWriter w, Dictionary<int, int> indexById, string[] wallAttributes, Element wall,
@@ -348,8 +354,9 @@ public partial class IfcExporter
     {
         conflict = false;
         double? declared = ExactParameterFeetCurrent(wall, TypeOfCurrent(wall, elementsById), WallWidthParameterId) * FeetToMetres;
-        double? used = ReadBodyExtrusionCurrent(w, indexById, wallAttributes[6]) is { } body ? body.ExtentY
-            : TryGetSerializedWallWidthFeet(wall, out double layersFeet) ? layersFeet * FeetToMetres : declared;
+        double? used = (wall.ValidatedWallTypeThicknessFeet is > 0 || wall.Layers is { Count: > 0 }) && TryGetSerializedWallWidthFeet(wall, out double layersFeet)
+            ? layersFeet * FeetToMetres
+            : ReadBodyExtrusionCurrent(w, indexById, wallAttributes[6]) is { } body ? body.ExtentY : declared;
         if (wall.ValidatedWallTypeThicknessFeet is not > 0 && used is { } value && declared is { } stated && Math.Abs(value - stated) > WallWidthAgreementMetres)
         {
             // (the width parameter is read exactly from the wall or its type and is positive; it is the width Revit cuts through)
