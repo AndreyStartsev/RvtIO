@@ -540,6 +540,52 @@ public class WallExtrusionTests
 
     private static GeoFace Face(params double[][] ring) => new() { OuterVertices = ring.Select(point => (double[])point.Clone()).ToList() };
 
+    /// <summary>A body of two solids: <paramref name="firstFaces"/> (node 7) and a leaning box (node 8) beside it.</summary>
+    private static GeometryData TwoSolids(List<GeoFace> firstFaces)
+    {
+        foreach (var face in firstFaces) face.GeometryNode = 7;
+        var second = Prism([[20, 0], [21, 0], [21, 1], [20, 1]], 0, 1);
+        foreach (var face in second) face.GeometryNode = 8;
+        second[2].Normal = [Math.Sqrt(1 - 0.01), 0, 0.1];
+        var geometry = new GeometryData { Faces = [.. firstFaces, .. second] };
+        geometry.BrepSolids =
+        [
+            new() { IsClosed = true, FaceIndices = Enumerable.Range(0, firstFaces.Count).ToList() },
+            new() { IsClosed = true, FaceIndices = Enumerable.Range(firstFaces.Count, second.Count).ToList() },
+        ];
+        return geometry;
+    }
+
+    [Fact]
+    public void WallOfSeveralSolids_IsStandardCaseWhenItsFirstSolidIsSimple_WhateverTheOthersAre()
+    {
+        var geometry = TwoSolids(Prism(Rectangle, 0, 3));
+        // A tilted inactive face of the node of the first solid: the full test fails, the first solid's own faces pass.
+        geometry.InactiveFaces = [new() { GeometryNode = 7, Normal = [0, 0.11, 0.99] }];
+        Assert.False(WallExtrusion.IsSimpleRectangularWall(geometry.Faces!.Take(6).ToList(), null, geometry.InactiveFaces));
+        Assert.True(WallExtrusion.IsStandardCaseBody(geometry));
+    }
+
+    [Fact]
+    public void WallOfSeveralSolids_IsAnIfcWallWhenItsFirstSolidIsNotSimple()
+    {
+        var perforated = Prism(Rectangle, 0, 3);
+        perforated[2].InnerVertices = [[[2, 0, 1], [3, 0, 1], [3, 0, 2], [2, 0, 2]]];
+        Assert.False(WallExtrusion.IsStandardCaseBody(TwoSolids(perforated)));
+    }
+
+    [Fact]
+    public void CurvedFaceOfAnotherSolid_DoesNotStopTheFirstSolidFromBeingSimple()
+    {
+        var geometry = TwoSolids(Prism(Rectangle, 0, 3));
+        geometry.MeshNodes =
+        [
+            new(7, 0, [], 1),
+            new(8, 1, [new() { SurfaceKind = RvtIO.Geometry.Meshing.SurfaceKind.Cylinder, Loops = [] }], 1),
+        ];
+        Assert.True(WallExtrusion.IsStandardCaseBody(geometry));
+    }
+
     [Fact]
     public void SimpleBody_StaysStandardCaseWithSeveralSolids()
     {

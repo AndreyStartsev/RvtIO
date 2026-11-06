@@ -1450,15 +1450,14 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void Pass_WallThatIsNotSimpleRectangular_WithSeveralSolidsKeepsTheWrittenDepth()
+    public void Pass_WallOfSeveralSolids_HeightIsTheZRangeOfItsFirstSolid()
     {
         var (w, owner, placement) = NewWriter();
-        // The body exporter makes an IfcWallStandardCase of a single solid only: with a second solid the Height stays the
-        // written depth.
+        // A standard-case wall of several solids is the extrusion of its first solid: a taller second solid does not count.
         int shape = AddExtrusionBody(w, 5, 0.3, 3.3);
         int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "DZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
         var geometry = PrismOver([(0, 0), (5, 0), (5, 1), (2, 1), (2, 3), (0, 3)], 3 / 0.3048);
-        var second = PrismOver(Rectangle(1, 1), 1);
+        var second = PrismOver(Rectangle(1, 1), 20);
         int first = geometry.Faces.Count;
         geometry.Faces.AddRange(second.Faces);
         geometry.BrepSolids!.Add(new GeoBrepSolid { IsClosed = true, FaceIndices = Enumerable.Range(first, second.Faces.Count).ToList() });
@@ -1466,7 +1465,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
 
         Apply(w, owner, new() { [12] = element }, new() { [wall] = 12 });
 
-        Assert.Equal(3.3, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Height").Value, 9);
+        Assert.Equal(3.0, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Height").Value, 9);
     }
 
     [Fact]

@@ -32,7 +32,8 @@ namespace RvtIO.Model
 
         /// <summary>A Geometry node written as a triangle set has a face that is not a plane (a round end, a hole): the body is the face meshes,
         /// whatever the dense polygons of the planar faces close into.</summary>
-        internal bool HasCurvedFace => MeshNodes?.Any(node => node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane)) == true;
+        internal bool HasCurvedFace(IReadOnlyCollection<int>? nodes = null) => MeshNodes?.Any(node => (nodes == null || nodes.Contains(node.Node))
+            && node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane)) == true;
 
         /// <summary>List of edges with 3D coordinates.</summary>
         public List<GeoEdge>? Edges { get; set; }

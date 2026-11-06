@@ -1018,6 +1018,8 @@ public partial class IfcExporter
     {
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
+        // A standard-case wall of several solids is the extrusion of its first solid; the others count neither in areas, volumes nor height.
+        if (shells.Count > 1) shells = shells.GetRange(0, 1);
         double sideArea = LargestVerticalFaceAreaCurrent(shells) * SquareFeetToSquareMetres;
         double? zRange = OwnWallHeightCurrent(element, bodyRoute: true);
         AddIfPositive(result, QuantityKind.Length, "Height", zRange ?? body.Depth);
@@ -1072,6 +1074,9 @@ public partial class IfcExporter
     /// parameter of the wall instead. Such a wall needs exactly one solid.</summary>
     private static double? OwnWallHeightCurrent(Element wall, bool bodyRoute)
     {
+        if (bodyRoute && (wall.OwnCurrentCutPairBodyCurrent ?? wall.Geometry) is { BrepSolids: { Count: > 1 } many } multi)
+            return many[0].IsClosed && many[0].FaceIndices.Where(index => (uint)index < (uint)multi.Faces.Count).Select(index => multi.Faces[index]).ToList()
+                is { Count: > 0 } firstFaces ? ZRangeMetresCurrent(firstFaces) : null;
         // Inactive faces that make the wall not simple leave it to the body exporter (a tilted classifier face of the first solid).
         if (!bodyRoute && wall.Geometry?.InactiveFaces is { Count: > 0 } && PassesSimpleRectangularWallCurrent(wall) == false) return null;
         if ((wall.OwnCurrentCutPairBodyCurrent ?? wall.Geometry) is not { BrepSolids: { Count: > 0 } solids } body
@@ -1082,7 +1087,12 @@ public partial class IfcExporter
             || !(WallExtrusion.IsSimpleRectangularWall(solids[0].FaceIndices.Select(index => body.Faces[index]).ToList(),
                     wall.OwnWallHelper, wall.Geometry?.InactiveFaces)
                 || bodyRoute && solids.Count == 1)) return null;
-        var points = body.Faces.SelectMany(face => (face.OuterVertices ?? [])
+        return ZRangeMetresCurrent(body.Faces);
+    }
+
+    private static double? ZRangeMetresCurrent(IEnumerable<GeoFace> faces)
+    {
+        var points = faces.SelectMany(face => (face.OuterVertices ?? [])
             .Concat((face.InnerVertices ?? []).SelectMany(loop => loop))).ToList();
         if (points.Count < 8 || points.Any(point => point.Length != 3 || point.Any(value => !double.IsFinite(value))))
             return null;
