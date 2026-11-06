@@ -237,18 +237,44 @@ public class IfcRampTests
         var ramp = Ramp(Solids(flight, landing));
         string ifc = ExportAll(ramp, Material(600, "Mat A"), Material(601, "Mat B"));
         Assert.Empty(Entities(ifc, "IFCMATERIALLIST"));
-        string flightId = Id(Assert.Single(Entities(ifc, "IFCRAMPFLIGHT")));
-        string landingId = Id(Assert.Single(Entities(ifc, "IFCSLAB")));
-        string MaterialOf(string product)
-        {
-            var relation = Assert.Single(Entities(ifc, "IFCRELASSOCIATESMATERIAL"), rel => Args(rel)[4].Split(',').Contains(product)
-                || Args(rel)[4].Trim('(', ')') == product);
-            Assert.Equal($"({product})", Args(relation)[4]);
-            var material = Entities(ifc, "IFCMATERIAL").Single(m => Id(m) == Args(relation)[5]);
-            return Args(material)[0];
-        }
-        Assert.Equal("'Mat A'", MaterialOf(flightId));
-        Assert.Equal("'Mat B'", MaterialOf(landingId));
+        Assert.Equal("'Mat A'", MaterialOf(ifc, Id(Assert.Single(Entities(ifc, "IFCRAMPFLIGHT")))));
+        Assert.Equal("'Mat B'", MaterialOf(ifc, Id(Assert.Single(Entities(ifc, "IFCSLAB")))));
+    }
+
+    [Fact]
+    public void Export_FlightAndLandingInOneGeometryNode_TakeTheMaterialOfTheirOwnSolid()
+    {
+        var flight = Box(0, 4, 0, 2, 0.5, 2.5).Select(face => InNode(Styled(face, 600), 1)).ToList();
+        var landing = Box(4, 6, 0, 2, 2.5, 2.5).Select(face => InNode(Styled(face, 601), 1)).ToList();
+        string ifc = ExportAll(Ramp(Solids(flight, landing)), Material(600, "Mat A"), Material(601, "Mat B"));
+        Assert.Empty(Entities(ifc, "IFCMATERIALLIST"));
+        Assert.Equal("'Mat A'", MaterialOf(ifc, Id(Assert.Single(Entities(ifc, "IFCRAMPFLIGHT")))));
+        Assert.Equal("'Mat B'", MaterialOf(ifc, Id(Assert.Single(Entities(ifc, "IFCSLAB")))));
+    }
+
+    [Fact]
+    public void Export_SolidsInAnotherOrderThanTheirGeometryNodes_TakeTheMaterialOfTheirOwnSolid()
+    {
+        // The landing is the first solid but its faces and its node come after those of the flight.
+        var flight = Box(0, 4, 0, 2, 0.5, 2.5).Select(face => InNode(Styled(face, 600), 1)).ToList();
+        var landing = Box(4, 6, 0, 2, 2.5, 2.5).Select(face => InNode(Styled(face, 601), 2)).ToList();
+        var geometry = Solids(flight, landing);
+        geometry.BrepSolids!.Reverse();
+        Assert.Equal([6, 7, 8, 9, 10, 11], geometry.BrepSolids[0].FaceIndices);
+        string ifc = ExportAll(Ramp(geometry), Material(600, "Mat A"), Material(601, "Mat B"));
+        Assert.Empty(Entities(ifc, "IFCMATERIALLIST"));
+        Assert.Equal("'Mat A'", MaterialOf(ifc, Id(Assert.Single(Entities(ifc, "IFCRAMPFLIGHT")))));
+        Assert.Equal("'Mat B'", MaterialOf(ifc, Id(Assert.Single(Entities(ifc, "IFCSLAB")))));
+    }
+
+    private static GeoFace InNode(GeoFace face, int node) { face.GeometryNode = node; return face; }
+
+    private static string MaterialOf(string ifc, string product)
+    {
+        var relation = Assert.Single(Entities(ifc, "IFCRELASSOCIATESMATERIAL"), rel => Args(rel)[4].Trim('(', ')').Split(',').Contains(product));
+        Assert.Equal($"({product})", Args(relation)[4]);
+        var material = Entities(ifc, "IFCMATERIAL").Single(m => Id(m) == Args(relation)[5]);
+        return Args(material)[0];
     }
 
     [Fact]

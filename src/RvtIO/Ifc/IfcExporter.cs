@@ -5951,6 +5951,12 @@ public partial class IfcExporter
                     pieceIdsBySource[geometrySource] = pieces = PieceMaterials(geometrySource.Geometry!,
                         id => elemById.TryGetValue(id, out var m) && IsSerializedMaterial(m),
                         style => info.GraphicsStyles?.GetValueOrDefault(style).Material ?? 0);
+                // The parts of a ramp made of its solids are written in the order of its solids, whatever the Geometry nodes group:
+                // each takes the material of the faces of its own solid.
+                if (materialEntities.Count > 1 && ClassifyRampSolids(element.Geometry) is { } rampParts && rampParts.Count == materialEntities.Count)
+                    pieces = RampPartMaterials(element.Geometry!, rampParts,
+                        id => elemById.TryGetValue(id, out var m) && IsSerializedMaterial(m),
+                        style => info.GraphicsStyles?.GetValueOrDefault(style).Material ?? 0);
                 // getBestMaterialIdFromParameter: a solid without a face material of a structural
                 // category takes the Structural Material parameter of the element or its type.
                 int? structuralFallback = null;
@@ -6131,6 +6137,19 @@ public partial class IfcExporter
                 : areaByMaterial.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key).First().Key;
         }
 
+        // The best material of the faces of one solid: the dominant face material, else that of its
+        // graphics style, else the null material (id 0).
+        static (int Material, int Style, int Node) PieceMaterial(List<GeoFace> faces, Func<int, bool> isMaterial, Func<int, int> styleMaterial) =>
+            (DominantFaceMaterialId(faces, isMaterial)
+                ?? (faces[0].GeometryStyle > 0 && styleMaterial(faces[0].GeometryStyle) is > 0 and int fromStyle
+                    && isMaterial(fromStyle) ? fromStyle : 0), Math.Max(faces[0].GeometryStyle, 0),
+                Math.Max(faces[0].GeometryNode, 0));
+
+        // The material of each part of a ramp made of its solids, in the order of the parts.
+        static List<(int Material, int Style, int Node)> RampPartMaterials(GeometryData geometry,
+            List<(List<int> FaceIndices, bool IsLanding)> parts, Func<int, bool> isMaterial, Func<int, int> styleMaterial) =>
+            parts.Select(part => PieceMaterial(part.FaceIndices.Select(index => geometry.Faces[index]).ToList(), isMaterial, styleMaterial)).ToList();
+
         // The body export: every solid of the exported geometry gets its best material
         // (the dominant face material, else the null material, id 0); one entry per solid, in the
         // order of the solids.
@@ -6156,10 +6175,7 @@ public partial class IfcExporter
             var ids = new List<(int Material, int Style, int Node)>();
             foreach (var faces in pieces)
                 if (faces.Count > 0)
-                    ids.Add((DominantFaceMaterialId(faces, isMaterial)
-                        ?? (faces[0].GeometryStyle > 0 && styleMaterial(faces[0].GeometryStyle) is > 0 and int fromStyle
-                            && isMaterial(fromStyle) ? fromStyle : 0), Math.Max(faces[0].GeometryStyle, 0),
-                        Math.Max(faces[0].GeometryNode, 0)));
+                    ids.Add(PieceMaterial(faces, isMaterial, styleMaterial));
             foreach (var (_, ghostStyle, ghostMaterial) in geometry.GhostNodes ?? [])
                 ids.Add((ghostMaterial > 0 && isMaterial(ghostMaterial) ? ghostMaterial
                     : ghostStyle > 0 && styleMaterial(ghostStyle) is > 0 and int ghostFromStyle && isMaterial(ghostFromStyle)
