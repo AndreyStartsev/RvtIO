@@ -1800,8 +1800,9 @@ public partial class IfcExporter
                 // representation.
                 if (info.GeometryUndecoded)
                 {
-                    // A wall without any solid body has nothing to show.
-                    if (ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 })
+                    // A wall with neither a solid body nor a face body has nothing to show.
+                    if (ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 }
+                        && elem.Geometry?.Faces is not { Count: > 0 })
                     { Skip(elem, "wall-without-solid"); continue; }
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                     goto productWithoutGeometry;

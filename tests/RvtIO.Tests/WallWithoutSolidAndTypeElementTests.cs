@@ -49,6 +49,14 @@ public class WallWithoutSolidAndTypeElementTests
         Assert.Equal(1, Walls(Export(true, Wall(100, solid: true, box: false))));
 
     [Fact]
+    public void WallWithFacesButNoSolid_InAFileWithUndecodedGeometry_IsExported()
+    {
+        var wall = Wall(100, solid: true, box: false);
+        wall.Geometry!.BrepSolids = [];
+        Assert.Equal(1, Walls(Export(true, wall)));
+    }
+
+    [Fact]
     public void WallTypeElement_IsNotExportedAsAWall()
     {
         // The type record is referenced by the system type parameter of the instance, names no phase and carries geometry of its own.
