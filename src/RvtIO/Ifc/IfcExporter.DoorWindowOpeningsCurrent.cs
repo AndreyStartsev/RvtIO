@@ -168,11 +168,11 @@ public partial class IfcExporter
                                 // window; where the two are the same size the nominal value stays, see OpeningQuantitiesInHostAxes)
                                 bool own(double cut) => hostAxes && SameSizeCurrent(qArgs[3], cut);
                                 if (qName == "Height" && (hostAxes ? built.HostHeight : built.Height) is { } newHeight && !own(newHeight))
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newHeight)}");
+                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{D17(newHeight)}");
                                 else if (qName == "Width" && (hostAxes ? built.HostWidth : built.Width) is { } newWidth && !own(newWidth))
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(newWidth)}");
+                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{D17(newWidth)}");
                                 else if (qName == "Depth")
-                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(built.Depth)}");
+                                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{D17(built.Depth)}");
                             }
                         }
                     }

@@ -42,7 +42,7 @@ internal static class IfcLengthUnit
         ["IFCCARTESIANPOINT"] = [0],
     };
 
-    internal static string ToMillimetres(string type, string args)
+    internal static string ToMillimetres(string type, string args, bool exactQuantities = false)
     {
         bool scalar = Scalars.TryGetValue(type, out var scalarIndices);
         bool list = Lists.TryGetValue(type, out var listIndices);
@@ -53,7 +53,7 @@ internal static class IfcLengthUnit
         {
             // (the -0. offset of a building pad's layer set usage is a written negative zero, which a shift would lose)
             if (scalar && Array.IndexOf(scalarIndices!, i) >= 0)
-                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : (type == "IFCQUANTITYLENGTH" ? ShiftQuantity(parts[i]) : ShiftNumber(parts[i]));
+                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : (exactQuantities && type == "IFCQUANTITYLENGTH" ? ShiftQuantity(parts[i]) : ShiftNumber(parts[i]));
             else if (list && Array.IndexOf(listIndices!, i) >= 0) parts[i] = ShiftList(parts[i]);
         }
         return string.Join(',', parts);
@@ -63,8 +63,8 @@ internal static class IfcLengthUnit
     /// (what every file wrote before the family existed); Metre keeps the metres of the table and moves the
     /// millimetre-written attributes; Foot divides every length, area and volume by its factor, which is what the Revit
     /// internal unit is, so those files are printed in the values of the document itself.</summary>
-    internal static Func<string, string, string> Converter(IfcUnitFamily family) =>
-        family == IfcUnitFamily.Millimetre ? ToMillimetres : (type, args) => ToFamily(type, args, family);
+    internal static Func<string, string, string> Converter(IfcUnitFamily family, bool exactQuantities = false) =>
+        family == IfcUnitFamily.Millimetre ? (type, args) => ToMillimetres(type, args, exactQuantities) : (type, args) => ToFamily(type, args, family);
 
     internal const double MetresPerFoot = 0.3048;
     internal const double SquareMetresPerSquareFoot = MetresPerFoot * MetresPerFoot;
@@ -209,23 +209,14 @@ internal static class IfcLengthUnit
         return "(" + string.Join(',', items) + ")";
     }
 
-    /// <summary>A quantity real times 1000. A literal of 16 or more significant digits is the exact text of a double (see
-    /// <see cref="StepWriter.RealExact"/>); moving its decimal point would give digits of no double, so the double is scaled and
-    /// printed again. Shorter literals (the 15-digit profile) keep the exact decimal shift.</summary>
+    /// <summary>A quantity real times 1000 for the current profile, whose quantity literals are the exact text of a double (see
+    /// <see cref="StepWriter.RealExact"/>): moving the decimal point of such a text gives digits of no double, so the double is scaled
+    /// and printed again.</summary>
     private static string ShiftQuantity(string token)
     {
         string text = token.Trim();
-        if (SignificantDigits(text) < 16 || !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)) return ShiftNumber(token);
-        return StepWriter.RealExact(value * 1000);
-    }
-
-    private static int SignificantDigits(string text)
-    {
-        int end = text.IndexOfAny(['E', 'e']);
-        int count = 0;
-        foreach (char c in end < 0 ? text : text[..end])
-            if (char.IsDigit(c) && (count > 0 || c != '0')) count++;
-        return count;
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && text.Length > 0 && !char.IsLetter(text[0])
+            ? StepWriter.RealExact(value * 1000) : token;
     }
 
     /// <summary>A real literal times 1000; anything that is not a plain number ($, *, a reference) is returned unchanged.</summary>

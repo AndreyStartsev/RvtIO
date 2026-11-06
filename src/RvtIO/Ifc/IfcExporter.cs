@@ -6463,7 +6463,7 @@ public partial class IfcExporter
             FinalizeUnitAssignmentCurrent(w, unitsCurrent!);
         }
         if (CurrentProfile) ApplyCurrentOpeningOrder(w, openingOrderKeys);
-        w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily));
+        w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily, CurrentProfile));
         w.WriteTo(output, headerFileName, "IFC2X3", desc, appName, headerOrganization);
 
         ExportedProducts = exportedCount;
