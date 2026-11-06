@@ -175,8 +175,6 @@ dotnet test
 
 Tests requiring real Revit files are skipped with a message unless `RVTIO_TEST_FILES` points to a folder containing the private fixtures. The repository includes no Revit models.
 
-Optional test variables are `RVTIO_REVIT_RESOURCES`, for a copy of Revit resource DLLs used to re-verify the built-in name tables, and `RVTIO_NATIVE_TABLE_DIR`.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Release changes are recorded in [CHANGELOG.md](CHANGELOG.md).

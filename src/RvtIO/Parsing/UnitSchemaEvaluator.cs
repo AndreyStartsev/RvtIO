@@ -110,7 +110,7 @@ internal static partial class UnitSchemaEvaluator
         using var json = JsonDocument.Parse(stream);
         var root = json.RootElement;
         if (root.GetProperty("formatVersion").GetInt32() != 1
-            || root.GetProperty("profile").GetString() != "Revit2022-installed-unit-corpus")
+            || root.GetProperty("profile").GetString() != "Revit2022-unit-catalog")
             throw new InvalidDataException("Unsupported built-in unit corpus");
         var known = new HashSet<string>(StringComparer.Ordinal);
         foreach (var key in root.GetProperty("knownTypeIds").EnumerateArray())

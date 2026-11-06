@@ -12,7 +12,7 @@ public class StairNativeNameTests
     [InlineData("RUS", "Лестница")] [InlineData("ENU", "Stair")]
     public void InstanceNameComesFromOriginalSavedLocaleResource(string locale, string expected)
     {
-        Assert.Equal(expected, RevitSystemFamilyNames.Load(null, "2022", locale)!.StairOccurrenceName);
+        Assert.Equal(expected, RevitSystemFamilyNames.Load("2022", locale)!.StairOccurrenceName);
     }
 
     [Fact]

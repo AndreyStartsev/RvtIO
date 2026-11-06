@@ -24,7 +24,7 @@ public class MepCurveNamingTests
     [InlineData("ConduitWithFittings", "Conduit with Fittings")]
     [InlineData("ConduitWithoutFittings", "Conduit without Fittings")]
     public void EnglishResourcesGiveTheFamilyNamesOfTheReference(string kind, string expected) =>
-        Assert.Equal(expected, RevitSystemFamilyNames.Load(null, "2022", "ENU")!
+        Assert.Equal(expected, RevitSystemFamilyNames.Load("2022", "ENU")!
             .Get(Enum.Parse<SystemFamilyKind>(kind)));
 
     [Theory]
@@ -32,7 +32,7 @@ public class MepCurveNamingTests
     [InlineData("RUS", "PipeTypes")]
     public void TheCommandTextOfPipeInsulationLosesItsTooltipLine(string locale, string kind)
     {
-        string? name = RevitSystemFamilyNames.Load(null, "2022", locale)!
+        string? name = RevitSystemFamilyNames.Load("2022", locale)!
             .Get(Enum.Parse<SystemFamilyKind>(kind));
         Assert.False(string.IsNullOrWhiteSpace(name));
         Assert.DoesNotContain('\n', name);
@@ -266,7 +266,7 @@ public class MepCurveNamingTests
 
         ElementBuilder.ApplyValidatedMepTypeNames(elements, state);
         ElementBuilder.ApplyMepCurveTypeLinks(elements, state);
-        ElementBuilder.ApplyValidatedSystemFamilyNames(elements, state, RevitSystemFamilyNames.Load(null, "2022", "ENU"));
+        ElementBuilder.ApplyValidatedSystemFamilyNames(elements, state, RevitSystemFamilyNames.Load("2022", "ENU"));
 
         Assert.Equal((int)typeId, occurrence.SerializedMepCurveTypeId);
         Assert.Equal(family, type.ValidatedMepFamilyName);

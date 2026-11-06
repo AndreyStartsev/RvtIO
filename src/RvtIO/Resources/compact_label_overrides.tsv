@@ -1,5 +1,5 @@
 # Label overrides of the current profile, derived from observed Revit output (group label and caption per builtin parameter id); do not edit.
-# builtin parameter id, group label, caption, number of elements that agree. Replaces the Revit 2022 text of compact_builtin_parameters.tsv.
+# builtin parameter id, group label, caption, number of elements that agree. Replaces the caption and group label of compact_builtin_parameters.tsv.
 -1001375	Dimensions	System Length	1087
 -1001384	Dimensions	Cut Length	595
 -1141050	Electrical - Circuiting	High-leg Phase	9

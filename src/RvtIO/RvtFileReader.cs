@@ -701,11 +701,11 @@ public partial class RvtFileReader
             + $"link differs from the general type={rvtInfo.Elements.Count(e => e.SerializedMepCurveTypeId != null && e.SerializedMepCurveTypeId != e.FamilyTypeId)}, "
             + $"types with an own name={rvtInfo.Elements.Count(e => e.ValidatedMepTypeName != null)}");
         var systemFamilyNames = Lookup.RevitSystemFamilyNames.Load(
-            _options.RevitLocalizationDirectory, rvtInfo.Metadata.RevitVersion, _options.SystemFamilyNameLocale ?? rvtInfo.Metadata.SavedLocale);
+            rvtInfo.Metadata.RevitVersion, _options.SystemFamilyNameLocale ?? rvtInfo.Metadata.SavedLocale);
         int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, systemFamilyNames);
         // the stored lookup entries are in the language the file was saved in, whatever locale the exported names use
         rvtInfo.SerializedLookupNoneText = Lookup.RevitSystemFamilyNames.Load(
-            _options.RevitLocalizationDirectory, rvtInfo.Metadata.RevitVersion, rvtInfo.Metadata.SavedLocale)?.Get(Lookup.RevitUiText.LookupNone);
+            rvtInfo.Metadata.RevitVersion, rvtInfo.Metadata.SavedLocale)?.Get(Lookup.RevitUiText.LookupNone);
         ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, systemFamilyNames);
         ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx);
         ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames);
