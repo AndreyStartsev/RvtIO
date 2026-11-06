@@ -1418,8 +1418,18 @@ public partial class IfcExporter
         return result;
     }
 
-    /// <summary>Runs whose flight takes the Length surrogate (<see cref="IsRunLengthRuleCurrent"/>), by element id.</summary>
-    internal readonly HashSet<int> LengthRuleRunsCurrent = new();
+    /// <summary>Runs whose flight takes the Length surrogate (<see cref="IsRunLengthRuleCurrent"/>), by element id, with the number of
+    /// treads that the surrogate multiplies by the tread length (<see cref="RunLengthTreadsCurrent"/>).</summary>
+    internal readonly Dictionary<int, int> LengthRuleRunsCurrent = new();
+
+    /// <summary>The number of treads of the Length surrogate of a run, counted as it was when the surrogate was calibrated: from the span of
+    /// the riser indices of the run (a sketched run without an end riser keeps all of it), and only where the risers agree with those stored
+    /// for its stair. It is not the NumberOfTreads attribute of the flight, which counts the risers of such a run one less, as the file does:
+    /// an assembled run whose attribute is set still takes no Length. Null without a run input or when the counts do not agree.</summary>
+    internal static int? RunLengthTreadsCurrent(Element run, IReadOnlyDictionary<int, Element> elementsById) =>
+        run.SerializedStairRunInput is { Numbers: { } numbers } input && input.OwnerId == run.Id
+            && StairRunRisers(run, numbers) > 0 && StairRunCountsAgree(run, elementsById, numbers)
+            && StairRunTreads(run, numbers) is int treads && treads > 0 ? treads : null;
 
     /// <summary>The inputs of the Length surrogate of a run are the ones it was calibrated on: the family of the run before its type was
     /// resolved through TypeId (a "Monolithic Run", or the category where no family was known; an assembled run counted none), and the run
@@ -1441,9 +1451,9 @@ public partial class IfcExporter
     {
         var result = new List<QuantityValue>();
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", SolidTotalsCurrent(ShellsOfCurrent(element.Geometry))?.Volume);
-        // The surrogate is decided by the inputs it was calibrated on (IsRunLengthRuleCurrent), not by the type resolved through TypeId.
-        if (flight.Length == 12 && LengthRuleRunsCurrent.Contains(element.Id)
-            && int.TryParse(flight[9], NumberStyles.None, CultureInfo.InvariantCulture, out int treads)
+        // The surrogate is decided by the inputs it was calibrated on (IsRunLengthRuleCurrent), not by the type resolved through TypeId,
+        // and counts the treads of those inputs, not the NumberOfTreads attribute of the flight.
+        if (flight.Length == 12 && LengthRuleRunsCurrent.TryGetValue(element.Id, out int treads)
             && TryParseStepReal(flight[11], out double treadLength))
             AddIfPositive(result, QuantityKind.Length, "Length", treads * treadLength);
         return result;
