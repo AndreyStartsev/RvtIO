@@ -57,10 +57,12 @@ public partial class IfcExporter
         var classByEntity = new Dictionary<int, string>(w.EntityCount);
         var parentOf = new Dictionary<int, int>();
         var typeRelations = new List<string[]>();
+        var globalIdByEntity = new Dictionary<int, string>();
         for (int i = 0; i < w.EntityCount; i++)
         {
             var (id, type, args) = w.EntityAt(i);
             classByEntity[id] = type;
+            if (args.Length > 2 && args[0] == '\'' && args.IndexOf('\'', 1) is int end and > 0) globalIdByEntity[id] = args[1..end];
             if (type is not ("IFCRELAGGREGATES" or "IFCRELDEFINESBYTYPE")) continue;
             string[] relation = SplitStepArguments(args);
             if (relation.Length != 6) continue;
@@ -120,10 +122,16 @@ public partial class IfcExporter
         {
             int reference = w.Add("IFCCLASSIFICATIONREFERENCE",
                 $"{S(UniformatUrlCurrent)},{AnsiStepStringCurrent(code)},{S("Uniformat")},$");
+            string relationGlobalId = ClassificationRelationGlobalIdCurrent("Uniformat", code, globalIdByEntity.GetValueOrDefault(membersByCode[code].Min, ""));
             w.Add("IFCRELASSOCIATESCLASSIFICATION",
-                $"{S(IfcGuid.FromName("classification:" + code))},{R(ownerHistId)},{S("Uniformat:" + code)},'',"
+                $"{S(relationGlobalId)},{R(ownerHistId)},{S("Uniformat:" + code)},'',"
                 + $"{StepWriter.List(membersByCode[code].Select(R))},{R(reference)}");
         }
         return codeOrder.Count;
     }
+
+    /// <summary>The GlobalId of a classification association: the reference name and the code each contribute only their first
+    /// character, followed by the GlobalId of the first related object. An empty text contributes nothing.</summary>
+    internal static string ClassificationRelationGlobalIdCurrent(string name, string code, string firstRelatedGlobalId) =>
+        IfcGuid.FromMd5($"IfcRelAssociatesClassification:{(name.Length > 0 ? name[0] : "")} {(code.Length > 0 ? code[0] : "")}:{firstRelatedGlobalId}");
 }

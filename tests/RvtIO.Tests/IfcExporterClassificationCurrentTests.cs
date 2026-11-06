@@ -80,6 +80,36 @@ public class IfcExporterClassificationCurrentTests
     }
 
     [Fact]
+    public void RelationGlobalId_UsesFirstCharactersOfNameAndCode_AndTheFirstRelatedGlobalId()
+    {
+        const string related = "3ZGD7y6S5209$mGLi_sPlj";
+        Assert.Equal(IfcGuid.FromMd5("IfcRelAssociatesClassification:U C:" + related),
+            IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1020", related));
+        // only the first character of the code counts
+        Assert.Equal(IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1020", related),
+            IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C9", related));
+        Assert.NotEqual(IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1", related),
+            IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "D1", related));
+        // empty texts and a missing related object are defined, not errors
+        Assert.Equal(IfcGuid.FromMd5("IfcRelAssociatesClassification: :"), IfcExporter.ClassificationRelationGlobalIdCurrent("", "", ""));
+    }
+
+    [Fact]
+    public void RelationGlobalId_FollowsTheFirstRelatedProduct()
+    {
+        var m = new Model();
+        m.Elements[200] = Symbol(200, "C1020");
+        m.Elements[100] = Typed(100, 200);
+        int door = m.W.Add("IFCDOOR", "'0abcdefghijklmnopqrstu',#5,'x',$,$,#1,$,'100'");
+        m.ProductElement[door] = 100;
+
+        Assert.Equal(1, m.Run());
+
+        string relation = Assert.Single(m.Entities("IFCRELASSOCIATESCLASSIFICATION")).Args;
+        Assert.StartsWith($"'{IfcGuid.FromMd5("IfcRelAssociatesClassification:U C:0abcdefghijklmnopqrstu")}',", relation);
+    }
+
+    [Fact]
     public void AnElementsOwnCodeWinsOverItsTypes_AndEmptyCodesMakeNoReference()
     {
         var m = new Model();
