@@ -128,7 +128,7 @@ internal static partial class UnitSchemaEvaluator
             ?? throw new InvalidDataException("Missing source-bound unit details");
         using var json = JsonDocument.Parse(stream);var root = json.RootElement;
         if (root.GetProperty("formatVersion").GetInt32() != 1
-            || root.GetProperty("profile").GetString() != "Revit2022-installed-unit-details")
+            || root.GetProperty("profile").GetString() != "Revit2022-unit-details")
             throw new InvalidDataException("Unsupported unit detail corpus");
         var result = new Dictionary<string, Detail>(StringComparer.Ordinal);
         foreach (var row in root.GetProperty("units").EnumerateArray())

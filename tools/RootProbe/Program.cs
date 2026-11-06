@@ -1175,13 +1175,13 @@ static object ReadDocumentUnitsLink(string path)
 }
 
 
-// The names embedded in the library are used; version and locale come from the file's own BasicFileInfo.
+// The embedded names are used; version and locale come from the file's own BasicFileInfo.
 static RvtIO.Lookup.RevitSystemFamilyNames? LoadNames(string path)
 {
     using var root = RootStorage.OpenRead(path);
     var info = BasicFileInfoReader.Read(root);
     return RvtIO.Lookup.RevitSystemFamilyNames.Load(
-        null, info.GetValueOrDefault("RevitVersion"), info.GetValueOrDefault("Locale when saved"));
+        info.GetValueOrDefault("RevitVersion"), info.GetValueOrDefault("Locale when saved"));
 }
 
 // The category that agrees with each kind's root class, so the probe reports the name the

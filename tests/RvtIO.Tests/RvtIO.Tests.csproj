@@ -18,11 +18,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Frozen hashes of the original Revit resources. -->
-    <EmbeddedResource Include="Fixtures\Frozen\*.tsv" LogicalName="Frozen.%(Filename)%(Extension)" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\..\src\RvtIO\RvtIO.csproj" />
     <!-- Compile the research decoder itself: no copied test implementation or CLI dependency. -->
     <Compile Include="..\..\tools\RootProbe\HistoryBoundaryProbe.cs" Link="RootProbe\HistoryBoundaryProbe.cs" />

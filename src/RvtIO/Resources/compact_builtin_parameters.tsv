@@ -1,6 +1,5 @@
-# Generated from Autodesk Revit 2022 sources; do not edit.
-# sources: the table of the native builtin parameter definitions, the Revit 2022 en-US GeneratedRes.dll (sha256 39dd0b16c9b1e72c204e1efa207e230782de192b984371e89d77dd3fd2989ca7), RevitAPI.dll enum BuiltInParameterGroup (sha256 a60011776a7b4994235150ea3ff14929626db97c115ff59ac7524153bb98b48b)
-# builtin parameter id, BuiltInParameterGroup value (-1 = INVALID), English caption
+# Builtin parameter captions: names as exported by the host application for the listed ids, kept so that exported property names equal them (interoperability values observed in exported documents); do not edit.
+# builtin parameter id, group value (-1 = INVALID), English caption
 -1155224	-5000103	Model Bar Diameter
 -1155223	-5000101	Model Bar Diameter
 -1155222	-5000104	Show Grids

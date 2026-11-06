@@ -36,7 +36,6 @@ internal sealed class CompactSolidQuantities
     {
         var reader = new RvtFileReader(new RvtReaderOptions
         {
-            RevitLocalizationDirectory = options.RevitLocalizationDirectory,
             SystemFamilyNameLocale = "ENU",
             SeparateFacesWithDistinctOpenings = true,
             R22Layout = true,

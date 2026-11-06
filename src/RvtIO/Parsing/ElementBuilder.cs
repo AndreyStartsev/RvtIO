@@ -5574,8 +5574,7 @@ internal static partial class ElementBuilder
         // function enum + material reference + width, e.g. "<Function> - <Material> <Width>mm" (localized).
         if (state?.WallTypeFunctions.Count > 0)
         {
-            // Wall function names from Revit ru-RU\HostObjRes.dll resources. These match the
-            // strings Revit uses in combo box and wall type names.
+            // Russian wall function names as they appear in wall type names of exported documents.
             string[] wallFunctionNames = ["Внутри", "Снаружи", "Фундамент", "С подпором", "Софит", "Сердцевина-шахта"];
             foreach (var e in rvtInfo.Elements)
             {

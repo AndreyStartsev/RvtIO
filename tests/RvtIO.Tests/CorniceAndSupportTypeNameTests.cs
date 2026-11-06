@@ -75,37 +75,12 @@ public class CorniceAndSupportTypeNameTests
 
     [Theory]
     [InlineData("RUS", "ru-RU")] [InlineData("ENU", "en-US")]
-    public void NamesAreExactOriginalResourcesInSavedLocale(string locale, string culture)
+    public void NamesAreBuiltInTextsInSavedLocale(string locale, string culture)
     {
-        var table = RevitUiNameTable.Get(culture, "StairRampRes.dll")!;
-        var names = RevitSystemFamilyNames.Load(null, "2022", locale)!;
-        Assert.Equal(table[6178], names.Get(SystemFamilyKind.Stringer));
-        Assert.Equal(table[6179], names.Get(SystemFamilyKind.Carriage));
+        var names = RevitSystemFamilyNames.Load("2022", locale)!;
+        Assert.Equal(RevitUiNameTable.Get(culture, "Stringer"), names.Get(SystemFamilyKind.Stringer));
+        Assert.Equal(RevitUiNameTable.Get(culture, "Carriage"), names.Get(SystemFamilyKind.Carriage));
         Assert.NotEqual(names.Get(SystemFamilyKind.Stringer), names.Get(SystemFamilyKind.Carriage));
-    }
-
-    [RevitInstallTheory]
-    [InlineData("RUS", "ru-RU", 1049)] [InlineData("ENU", "en-US", 1033)]
-    public void NamesAreExactStringsOfTheInstalledResourceDlls(string locale, string culture, ushort language)
-    {
-        var table = PeStringTable.Read(RevitInstallResources.Dll(culture, "StairRampRes.dll"), language)!;
-        var names = RevitSystemFamilyNames.Load(null, "2022", locale)!;
-        Assert.Equal(table[6178], names.Get(SystemFamilyKind.Stringer));
-        Assert.Equal(table[6179], names.Get(SystemFamilyKind.Carriage));
-    }
-
-    [Theory]
-    [InlineData(6178, "Stringer")] [InlineData(6179, "Carriage")]
-    public void MissingNewResourceOmitsOnlyThatKind(int id, string missingKind)
-    {
-        using var root = new SyntheticRevitRoot(
-            omitDlls: ["BuildingSystemsRes.dll", "EssentialsRes.dll", "GeneratedRes.dll"], blank: [("StairRampRes.dll", id)]);
-        var names = RevitSystemFamilyNames.Load(root.Path, "2022", "ENU")!;
-        Assert.NotNull(names);
-        Assert.Equal("Basic Wall", names.Get(SystemFamilyKind.BasicWall));
-        Assert.Equal("Monolithic Run", names.Get(SystemFamilyKind.MonolithicRun));
-        Assert.Null(names.Get(Enum.Parse<SystemFamilyKind>(missingKind)));
-        Assert.NotNull(names.Get(id == 6178 ? SystemFamilyKind.Carriage : SystemFamilyKind.Stringer));
     }
 
     [Theory]

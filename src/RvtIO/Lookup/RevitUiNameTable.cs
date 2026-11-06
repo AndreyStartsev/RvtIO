@@ -1,10 +1,9 @@
-using System.Globalization;
 using System.Text;
 
 namespace RvtIO.Lookup;
 
 /// <summary>The user interface names the reader needs, embedded as Resources/revit_ui_names.tsv (UTF-8, tab separated:
-/// culture, resource file, string id, text; backslash, tab, line feed and carriage return are written as \\, \t, \n and \r).
+/// culture, key, text; backslash, tab, line feed and carriage return are written as \\, \t, \n and \r).
 /// It holds exactly the strings that <see cref="RevitSystemFamilyNames"/> can request, for the bundle version in
 /// <see cref="BundleVersion"/>. A malformed line fails loudly instead of yielding a partial table.</summary>
 internal static class RevitUiNameTable
@@ -14,32 +13,30 @@ internal static class RevitUiNameTable
 
     private const string ResourceName = "RvtIO.Resources.revit_ui_names.tsv";
 
-    private static readonly Lazy<IReadOnlyDictionary<(string Culture, string File), IReadOnlyDictionary<int, string>>> Tables =
+    private static readonly Lazy<IReadOnlyDictionary<(string Culture, string Key), string>> Tables =
         new(() => Parse(OpenResource()));
 
-    /// <summary>The strings of one resource file in one culture, or null when the table has none for it.</summary>
-    internal static IReadOnlyDictionary<int, string>? Get(string culture, string file) =>
-        Tables.Value.GetValueOrDefault((culture, file));
+    /// <summary>The text of one key in one culture, or null when the table has none for it.</summary>
+    internal static string? Get(string culture, string key) =>
+        Tables.Value.GetValueOrDefault((culture, key));
 
     private static StreamReader OpenResource() =>
         new(typeof(RevitUiNameTable).Assembly.GetManifestResourceStream(ResourceName)
             ?? throw new InvalidOperationException($"Missing resource {ResourceName}."), Encoding.UTF8);
 
-    internal static IReadOnlyDictionary<(string Culture, string File), IReadOnlyDictionary<int, string>> Parse(TextReader reader)
+    internal static IReadOnlyDictionary<(string Culture, string Key), string> Parse(TextReader reader)
     {
-        var tables = new Dictionary<(string, string), Dictionary<int, string>>();
+        var table = new Dictionary<(string, string), string>();
         for (string? line = reader.ReadLine(); line != null; line = reader.ReadLine())
         {
             if (line.Length == 0 || line[0] == '#') continue;
             string[] fields = line.Split('\t');
-            if (fields.Length != 4 || !int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out int id))
+            if (fields.Length != 3 || fields[0].Length == 0 || fields[1].Length == 0)
                 throw new InvalidDataException($"Malformed line in revit_ui_names.tsv: {line}");
-            if (!tables.TryGetValue((fields[0], fields[1]), out var table))
-                tables[(fields[0], fields[1])] = table = new Dictionary<int, string>();
-            if (!table.TryAdd(id, Unescape(fields[3], line)))
-                throw new InvalidDataException($"Duplicate id in revit_ui_names.tsv: {line}");
+            if (!table.TryAdd((fields[0], fields[1]), Unescape(fields[2], line)))
+                throw new InvalidDataException($"Duplicate key in revit_ui_names.tsv: {line}");
         }
-        return tables.ToDictionary(pair => pair.Key, pair => (IReadOnlyDictionary<int, string>)pair.Value);
+        return table;
     }
 
     internal static string Escape(string text) =>
