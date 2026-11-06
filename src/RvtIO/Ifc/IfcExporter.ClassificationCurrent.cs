@@ -118,11 +118,13 @@ public partial class IfcExporter
         }
 
         w.Add("IFCCLASSIFICATION", $"{S(UniformatUrlCurrent)},{S("1998")},$,{S("Uniformat")}");
+        var usedRelationGlobalIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (string code in codeOrder)
         {
             int reference = w.Add("IFCCLASSIFICATIONREFERENCE",
                 $"{S(UniformatUrlCurrent)},{AnsiStepStringCurrent(code)},{S("Uniformat")},$");
-            string relationGlobalId = ClassificationRelationGlobalIdCurrent("Uniformat", code, globalIdByEntity.GetValueOrDefault(membersByCode[code].Min, ""));
+            string relationGlobalId = ClassificationRelationGlobalIdCurrent("Uniformat", code,
+                globalIdByEntity.GetValueOrDefault(membersByCode[code].Min, ""), usedRelationGlobalIds);
             w.Add("IFCRELASSOCIATESCLASSIFICATION",
                 $"{S(relationGlobalId)},{R(ownerHistId)},{S("Uniformat:" + code)},'',"
                 + $"{StepWriter.List(membersByCode[code].Select(R))},{R(reference)}");
@@ -134,4 +136,19 @@ public partial class IfcExporter
     /// character, followed by the GlobalId of the first related object. An empty text contributes nothing.</summary>
     internal static string ClassificationRelationGlobalIdCurrent(string name, string code, string firstRelatedGlobalId) =>
         IfcGuid.FromMd5($"IfcRelAssociatesClassification:{(name.Length > 0 ? name[0] : "")} {(code.Length > 0 ? code[0] : "")}:{firstRelatedGlobalId}");
+
+    /// <summary>The GlobalId of a classification association that no earlier association in <paramref name="used"/> has: where the
+    /// formula gives one that is taken (codes with the same first character and the same first related object, such as the codes of
+    /// a panel and of its curtain wall), the whole name and code stand in for their first characters. The GlobalId is added to
+    /// <paramref name="used"/>.</summary>
+    internal static string ClassificationRelationGlobalIdCurrent(string name, string code, string firstRelatedGlobalId, ISet<string> used)
+    {
+        string globalId = ClassificationRelationGlobalIdCurrent(name, code, firstRelatedGlobalId);
+        if (!used.Add(globalId))
+        {
+            globalId = IfcGuid.FromMd5($"IfcRelAssociatesClassification:{name}:{code}:{firstRelatedGlobalId}");
+            used.Add(globalId);
+        }
+        return globalId;
+    }
 }
