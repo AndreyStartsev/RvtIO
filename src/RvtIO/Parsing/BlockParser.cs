@@ -2210,7 +2210,7 @@ internal static class BlockParser
     /// Scans for marker 0x1003 followed by layer count and 29-byte layer entries:
     /// [thickness:f64][function:i32][-1:i32][materialId:i32][-1:i32][layerIndex:i32][wrapping:u8]
     /// </summary>
-    private static void ExtractCompoundLayers(byte[] d, int start, int end,
+    internal static void ExtractCompoundLayers(byte[] d, int start, int end,
         uint eid, Dictionary<uint, List<CompoundLayer>> layers)
     {
         // Scan for 0x1003 marker (u16) followed by a plausible layer count
@@ -2239,8 +2239,8 @@ internal static class BlockParser
                 // d[off+20] should be -1 (padding)
                 int layerIdx = BitConverter.ToInt32(d, off + 24);
 
-                // Validate: thickness in [0, 30] feet, func in [0..5], layerIdx matches j
-                if (thickness < 0 || thickness > 30 || func < 0 || func > 10 || layerIdx != j)
+                // Validate: thickness in [0, 30] feet, func one of the stored layer functions, layerIdx matches j
+                if (thickness < 0 || thickness > 30 || !CompoundLayer.IsStoredFunction(func) || layerIdx != j)
                 {
                     valid = false;
                     break;

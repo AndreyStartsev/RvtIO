@@ -12,6 +12,7 @@ internal static class StairShape
     internal static string? Classify(IReadOnlyList<TfBlockDeserializer.StairRunInput> runs, int landings, bool sketchedIsFlight = true)
     {
         if (landings < 0) return null;
+        if (runs.Any(run => run.Style is TfBlockDeserializer.StairRunStyle.Spiral)) return "SPIRAL_STAIR";
         var lines = new List<TfBlockDeserializer.StairPathDirection>();
         foreach (var run in runs)
         {

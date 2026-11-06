@@ -73,6 +73,17 @@ public class IfcTypeAttributesCurrentTests
     }
 
     [Fact]
+    public void FlightType_OfASpiralRun_IsSpiral_AndSplitsFromTheOtherStyles()
+    {
+        var elements = Runs(TfBlockDeserializer.StairRunStyle.Straight, TfBlockDeserializer.StairRunStyle.Spiral);
+        string text = Write(elements, [("IFCSTAIRFLIGHT", 1), ("IFCSTAIRFLIGHT", 2)], currentProfile: true);
+        var types = Lines(text, "IFCSTAIRFLIGHTTYPE");
+        Assert.Equal(2, types.Length);
+        Assert.Single(types, line => line.EndsWith(".SPIRAL.);"));
+        Assert.Single(types, line => line.EndsWith(".STRAIGHT.);"));
+    }
+
+    [Fact]
     public void FlightType_OfARunWithoutADecodedStyle_IsNotDefined_AndOlderReleaseHasNoRunTypes()
     {
         var elements = Runs(TfBlockDeserializer.StairRunStyle.Straight, TfBlockDeserializer.StairRunStyle.Sketched);
