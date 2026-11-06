@@ -29,8 +29,8 @@ public class OwnWallQuantityHeightTests
     }
 
     [Theory]
-    [InlineData("no-source")] [InlineData("open-source")] [InlineData("empty-second-solid")]
-    [InlineData("incomplete-coverage")] [InlineData("face-in-no-solid")] [InlineData("face-in-two-solids")]
+    [InlineData("no-source")] [InlineData("open-source")]
+    [InlineData("incomplete-coverage")] [InlineData("face-in-no-solid")]
     [InlineData("nonrectangular-helper")] [InlineData("nonfinite")]
     public void UnsupportedOrUnconfirmedSourceKeepsTheWrittenExtrusionHeight(string mutation)
     {
@@ -39,15 +39,11 @@ public class OwnWallQuantityHeightTests
         {
             case "no-source": wall.OwnCurrentCutPairBodyCurrent = null; wall.Geometry = null; break;
             case "open-source": wall.OwnCurrentCutPairBodyCurrent!.BrepSolids![0].IsClosed = false; break;
-            case "empty-second-solid": wall.OwnCurrentCutPairBodyCurrent!.BrepSolids!.Add(new() { IsClosed = true }); break;
             case "incomplete-coverage": wall.OwnCurrentCutPairBodyCurrent!.BrepSolids![0].FaceIndices.RemoveAt(0); break;
             // A triangle that belongs to no solid stands for a mesh: the wall is then measured by the box in its header, which
             // is not modelled, so the written height stays.
             case "face-in-no-solid":
                 wall.OwnCurrentCutPairBodyCurrent!.Faces.Add(new() { OuterVertices = [[0, 0, 9], [1, 0, 9], [0, 1, 9]], Normal = [0, 0, 1] });
-                break;
-            case "face-in-two-solids":
-                wall.OwnCurrentCutPairBodyCurrent!.BrepSolids!.Add(new() { IsClosed = true, FaceIndices = [0] });
                 break;
             case "nonrectangular-helper": wall.OwnWallHelper = new(3524, true, true, [8]); break;
             case "nonfinite": wall.OwnCurrentCutPairBodyCurrent!.Faces[0].OuterVertices![0][2] = double.NaN; break;
@@ -89,21 +85,48 @@ public class OwnWallQuantityHeightTests
     }
 
     [Fact]
-    public void SeveralSolidsAreMeasuredByTheZRangeOfAllOfThem()
+    public void SeveralSolidsAreMeasuredByTheZRangeOfTheFirstOne()
     {
-        // The height is the Z range of the box of all the solids; the first solid decides the class of the wall. The second
-        // solid here is a taller post beside the box: 2.1 .. 3.7 ft for the first, 2.1 .. 4.1 ft for both.
+        // The first solid decides the class of the wall and is the one that is extruded and measured. The second solid here is a
+        // taller post beside the box: 2.1 .. 3.7 ft for the first, 2.1 .. 4.1 ft for both.
         var wall = Wall();
         AddSolid(wall.OwnCurrentCutPairBodyCurrent!, zFrom: 2.1, zTo: 4.1);
-        Assert.Equal(2.0 * 0.3048, IfcExporter.OwnSimpleWallHeightCurrent(wall)!.Value, 12);
+        Assert.Equal(1.6 * 0.3048, IfcExporter.OwnSimpleWallHeightCurrent(wall)!.Value, 12);
+    }
+
+    [Theory]
+    [InlineData("open-second-solid")] [InlineData("empty-second-solid")] [InlineData("face-in-two-solids")]
+    public void TheOtherSolidsOfSeveralAreNotLookedAt_WhateverTheyAre(string mutation)
+    {
+        // The first solid decides, for the depth of the extrusion as for the Height: a second solid that is open, empty or shares a
+        // face with the first one does not make the wall keep the depth that was written.
+        var wall = Wall();
+        AddSolid(wall.OwnCurrentCutPairBodyCurrent!, zFrom: 2.1, zTo: 4.1);
+        var solids = wall.OwnCurrentCutPairBodyCurrent!.BrepSolids!;
+        switch (mutation)
+        {
+            case "open-second-solid": solids[1].IsClosed = false; break;
+            case "empty-second-solid": solids[1].FaceIndices.Clear(); break;
+            case "face-in-two-solids": solids[1].FaceIndices.Add(0); break;
+        }
+        Assert.Equal(1.6 * 0.3048, IfcExporter.OwnSimpleWallHeightCurrent(wall)!.Value, 12);
     }
 
     [Fact]
-    public void AnOpenSecondSolidKeepsTheWrittenHeight()
+    public void AnOpenFirstSolidOfSeveralKeepsTheWrittenHeight()
     {
         var wall = Wall();
         AddSolid(wall.OwnCurrentCutPairBodyCurrent!, zFrom: 2.1, zTo: 4.1);
-        wall.OwnCurrentCutPairBodyCurrent!.BrepSolids![1].IsClosed = false;
+        wall.OwnCurrentCutPairBodyCurrent!.BrepSolids![0].IsClosed = false;
+        Assert.Null(IfcExporter.OwnSimpleWallHeightCurrent(wall));
+    }
+
+    [Fact]
+    public void AFaceOfTheFirstSolidOutsideTheFacesKeepsTheWrittenHeight()
+    {
+        var wall = Wall();
+        AddSolid(wall.OwnCurrentCutPairBodyCurrent!, zFrom: 2.1, zTo: 4.1);
+        wall.OwnCurrentCutPairBodyCurrent!.BrepSolids![0].FaceIndices.Add(999);
         Assert.Null(IfcExporter.OwnSimpleWallHeightCurrent(wall));
     }
 

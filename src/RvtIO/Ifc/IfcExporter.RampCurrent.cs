@@ -102,7 +102,7 @@ public partial class IfcExporter
     internal static List<(List<int> FaceIndices, bool IsLanding)>? ClassifyRampSolids(GeometryData? geometry)
     {
         if (geometry?.Faces is not { Count: > 0 } faces || geometry.BrepSolids is not { Count: > 0 } solids
-            || geometry.HasCurvedFace) return null;
+            || geometry.HasCurvedFace()) return null;
         var parts = new List<(List<int>, bool)>();
         foreach (var solid in solids)
         {
