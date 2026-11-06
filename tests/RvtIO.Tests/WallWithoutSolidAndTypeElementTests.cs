@@ -24,12 +24,14 @@ public class WallWithoutSolidAndTypeElementTests
 
     private static string Export(params Element[] elements) => Export(false, elements);
 
-    private static string Export(bool undecoded, params Element[] elements)
+    private static string Export(bool undecoded, params Element[] elements) => Export(IfcProfile.Current, undecoded, elements);
+
+    private static string Export(IfcProfile profile, bool undecoded, params Element[] elements)
     {
         string path = Path.Combine(Path.GetTempPath(), $"rr-wall-solid-{Guid.NewGuid():N}.ifc");
         try
         {
-            new IfcExporter().Export(new RevitFileInfo { Elements = [.. elements], GeometryUndecoded = undecoded }, path);
+            new IfcExporter { Profile = profile }.Export(new RevitFileInfo { Elements = [.. elements], GeometryUndecoded = undecoded }, path);
             return File.ReadAllText(path);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
@@ -62,4 +64,12 @@ public class WallWithoutSolidAndTypeElementTests
         // The type record is referenced by the system type parameter of the instance, names no phase and carries geometry of its own.
         Assert.Equal(1, Walls(Export(Wall(100, solid: true, typeId: 500), Wall(500, solid: true, phased: false))));
     }
+
+    [Fact]
+    public void LegacyProfile_WallTypeElement_IsStillExportedAsAWall() =>
+        Assert.Equal(2, Walls(Export(IfcProfile.Legacy, false, Wall(100, solid: true, typeId: 500), Wall(500, solid: true, phased: false))));
+
+    [Fact]
+    public void LegacyProfile_WallWithoutASolid_InAFileWithUndecodedGeometry_IsStillExported() =>
+        Assert.Equal(1, Walls(Export(IfcProfile.Legacy, true, Wall(100, solid: false, box: false))));
 }

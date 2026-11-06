@@ -1629,9 +1629,10 @@ public partial class IfcExporter
             if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
             bool transformOnlyFamily = elem.Transform != null && elem.TypeId > 0
                 && elem.CategoryId is null or -2000080 or -2001000 or -2001100;
-            // A wall record that is itself the type of another element (it names no project phase) is a
-            // type definition; the type is written from the instances that use it.
-            if (typeElementIds.Contains(elem.Id)
+            // Current profile: a wall record that is itself the type of another element (it names no project phase)
+            // is a type definition; the type is written from the instances that use it. The legacy profile keeps
+            // wall records, as wall type propagation is not reliable enough there.
+            if ((CurrentProfile || elem.CategoryId != -2000011) && typeElementIds.Contains(elem.Id)
                 && !HasProjectPhaseReference(elem) && !transformOnlyFamily)
             { Skip(elem, "type-element"); continue; }
 
@@ -1801,7 +1802,7 @@ public partial class IfcExporter
                 if (info.GeometryUndecoded)
                 {
                     // A wall with neither a solid body nor a face body has nothing to show.
-                    if (ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 }
+                    if (CurrentProfile && ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 }
                         && elem.Geometry?.Faces is not { Count: > 0 })
                     { Skip(elem, "wall-without-solid"); continue; }
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
