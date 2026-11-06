@@ -60,4 +60,48 @@ internal static partial class ElementBuilder
             && state.ComputedSymbolTargetClasses.TryGetValue((uint)id, out var root)
             && root.BlockCount == 1 && root.ClassId == cls;
     }
+
+    /// <summary>Trimmed axis of a straight wall without a face-history trim: its location line bounded by the extreme parameters
+    /// (along the curve driver) of the vertices of the vertical, non-parallel faces of its first solid.</summary>
+    internal static void ApplySolidTrimmedAxis(IReadOnlyList<Element> elements)
+    {
+        foreach (var element in elements)
+        {
+            if (element.OwnWallTrimmedAxis != null || element.CategoryId != -2000011
+                || element.Location is not { CurveType: "Line", DriverOrigin: { Length: 3 } o, DriverDirection: { Length: 3 } d,
+                    DriverEndParams: { Length: 2 } endParams }
+                || element.Geometry?.Faces is not { Count: > 0 } faces) continue;
+            var solidFaces = element.Geometry.BrepSolids is { Count: > 0 } solids
+                ? solids[0].FaceIndices.Where(i => (uint)i < (uint)faces.Count).Select(i => faces[i]) : faces;
+            if (SolidTrimmedRange(solidFaces, o, d, endParams) is not var (lo, hi)) continue;
+            element.OwnWallTrimmedAxis = new[] { lo, hi }.Select(parameter => Enumerable.Range(0, 3)
+                .Select(index => o[index] + parameter * d[index]).ToArray()).ToArray();
+        }
+    }
+
+    /// <summary>The parameter range of the end-face vertices on the curve driver (origin, direction, end parameters); a maximum that is not
+    /// above 1e-10 (the whole wall at negative parameters) is replaced by the upper end parameter. Null without a usable end face or
+    /// for an empty range.</summary>
+    internal static (double Lo, double Hi)? SolidTrimmedRange(IEnumerable<GeoFace> faces, double[] origin, double[] direction, double[] endParams)
+    {
+        double lengthSquared = direction.Sum(v => v * v);
+        if (!(lengthSquared > 0)) return null;
+        double inverseLength = 1 / Math.Sqrt(lengthSquared), lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+        foreach (var face in faces)
+        {
+            if (face.OuterVertices is not { Count: > 0 } ring || Math.Abs(face.Normal[2]) > 1e-6
+                || Math.Abs((face.Normal[0] * direction[0] + face.Normal[1] * direction[1] + face.Normal[2] * direction[2]) * inverseLength) <= 1e-6)
+                continue;
+            foreach (var p in ring)
+            {
+                double t = ((p[0] - origin[0]) * direction[0] + (p[1] - origin[1]) * direction[1] + (p[2] - origin[2]) * direction[2]) / lengthSquared;
+                if (!double.IsFinite(t)) return null;
+                lo = Math.Min(lo, t);
+                hi = Math.Max(hi, t);
+            }
+        }
+        if (double.IsInfinity(lo)) return null;
+        if (hi <= 1e-10) hi = endParams[1];
+        return hi > lo ? (lo, hi) : null;
+    }
 }

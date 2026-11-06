@@ -6149,6 +6149,7 @@ internal static partial class ElementBuilder
             ApplySerializedSystemTypeIdentity(rvtInfo.Elements, state);
             ApplyValidatedOriginalFamilySymbols(rvtInfo.Elements, state);
             ApplyOwnFamilyCutoutInputs(rvtInfo.Elements, state);
+            ApplySolidTrimmedAxis(rvtInfo.Elements);
             ApplyValidatedCeilingCanonicalTypes(rvtInfo.Elements, state);
             ApplySerializedStairData(
                 rvtInfo.Elements,
@@ -8760,6 +8761,7 @@ internal static partial class ElementBuilder
             loc.StartPoint = [sx, sy, sz];
             loc.EndPoint = [ex, ey, ez];
             loc.Direction = [cd.DirectionVector[0], cd.DirectionVector[1], cd.DirectionVector[2]];
+            loc.DriverOrigin = cd.OriginPoint; loc.DriverDirection = cd.DirectionVector; loc.DriverEndParams = cd.EndParams;
 
             double dx = ex - sx, dy = ey - sy, dz = ez - sz;
             loc.Length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
