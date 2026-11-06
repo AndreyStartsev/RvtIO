@@ -8,6 +8,14 @@ namespace RvtIO.Model
     /// </summary>
     public class Parameter
     {
+        /// <summary>A copy of this parameter with another value.</summary>
+        internal Parameter ShallowCopy(object? value)
+        {
+            var copy = (Parameter)MemberwiseClone();
+            copy.Value = value;
+            return copy;
+        }
+
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
         [JsonIgnore]

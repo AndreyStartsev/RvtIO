@@ -14,6 +14,9 @@ namespace RvtIO.Model
     /// <summary>A Revit element: an instance or a type, with its identity, parameters and geometry.</summary>
     public class Element
     {
+        /// <summary>A copy that shares all members with this element; the caller replaces what it changes.</summary>
+        internal Element ShallowCopy() => (Element)MemberwiseClone();
+
         /// <summary>The element id.</summary>
         public int Id { get; set; }
 
