@@ -1629,9 +1629,9 @@ public partial class IfcExporter
             if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
             bool transformOnlyFamily = elem.Transform != null && elem.TypeId > 0
                 && elem.CategoryId is null or -2000080 or -2001000 or -2001100;
-            // Wall type propagation is not yet reliable enough to use for suppression:
-            // system-family walls may legitimately be referenced by neighbouring walls.
-            if (elem.CategoryId != -2000011 && typeElementIds.Contains(elem.Id)
+            // A wall record that is itself the type of another element (it names no project phase) is a
+            // type definition; the type is written from the instances that use it.
+            if (typeElementIds.Contains(elem.Id)
                 && !HasProjectPhaseReference(elem) && !transformOnlyFamily)
             { Skip(elem, "type-element"); continue; }
 
@@ -1800,6 +1800,9 @@ public partial class IfcExporter
                 // representation.
                 if (info.GeometryUndecoded)
                 {
+                    // A wall without any solid body has nothing to show.
+                    if (ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 })
+                    { Skip(elem, "wall-without-solid"); continue; }
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                     goto productWithoutGeometry;
                 }
