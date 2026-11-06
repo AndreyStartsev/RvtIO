@@ -1061,12 +1061,13 @@ public partial class IfcExporter
         return result;
     }
 
-    /// <summary>The height of a wall: the Z range of the bounding box of its stored solid, that of its first solid when it has several,
-    /// as long as none of its faces stands outside a solid (a mesh). It is the depth of the extrusion written for a simple
-    /// rectangular wall (the first solid decides) and the Height of the quantities, which take the same solid; the profile helper
-    /// and the cross-section attribute play no part in it. Null,
-    /// and the caller keeps the extrusion depth it wrote, when a stored solid is open or empty, when the solids do not cover
-    /// every face, when a face is in two solids, or when the first solid is not a simple rectangular wall. Metres.</summary>
+    /// <summary>The height of a wall: the Z range of the bounding box of its stored solid, as long as none of its faces stands outside
+    /// a solid (a mesh). It is the depth of the extrusion written for a simple rectangular wall (the first solid decides) and the
+    /// Height of the quantities; the profile helper and the cross-section attribute play no part in it. Null, and the caller keeps
+    /// the extrusion depth it wrote, when the stored solid is open or empty, when its faces do not cover every face, when a face
+    /// is in two solids, or when the first solid is not a simple rectangular wall. A wall of several solids is measured on its
+    /// first solid alone, by the same test for the depth and for the Height: it must be closed and have valid faces, and the
+    /// other solids, closed or not, play no part. Metres.</summary>
     internal static double? OwnSimpleWallHeightCurrent(Element wall) => OwnWallHeightCurrent(wall, bodyRoute: false);
 
     /// <summary>With <paramref name="bodyRoute"/> the height of a wall that is not simple rectangular as well (curved, leaning
@@ -1075,11 +1076,18 @@ public partial class IfcExporter
     /// parameter of the wall instead. A wall of several solids is measured on its first solid.</summary>
     private static double? OwnWallHeightCurrent(Element wall, bool bodyRoute)
     {
-        if (bodyRoute && (wall.OwnCurrentCutPairBodyCurrent ?? wall.Geometry) is { BrepSolids: { Count: > 1 } many } multi)
-            return many[0].IsClosed && FirstSolidFacesCurrent(multi) is { Count: > 0 } firstFaces ? ZRangeMetresCurrent(firstFaces) : null;
         // Inactive faces that make the wall not simple leave it to the body exporter (a tilted classifier face of the first solid).
         if (!bodyRoute && wall.Geometry?.InactiveFaces is { Count: > 0 } && PassesSimpleRectangularWallCurrent(wall) == false) return null;
-        if ((wall.OwnCurrentCutPairBodyCurrent ?? wall.Geometry) is not { BrepSolids: { Count: > 0 } solids } body
+        var geometry = wall.OwnCurrentCutPairBodyCurrent ?? wall.Geometry;
+        if (geometry is { BrepSolids: { Count: > 1 } many })
+        {
+            // Several solids: the first one alone decides, for the Height and for the depth of the extrusion alike.
+            if (!many[0].IsClosed || FirstSolidFacesOfBodyCurrent(geometry) is not { Count: > 0 } firstFaces
+                || !(bodyRoute || WallExtrusion.IsSimpleRectangularWall(firstFaces, wall.OwnWallHelper, wall.Geometry?.InactiveFaces)))
+                return null;
+            return ZRangeMetresCurrent(firstFaces);
+        }
+        if (geometry is not { BrepSolids: { Count: > 0 } solids } body
             || solids.Any(solid => !solid.IsClosed || solid.FaceIndices.Count == 0)
             || solids.Sum(solid => solid.FaceIndices.Count) != body.Faces.Count
             || solids.SelectMany(solid => solid.FaceIndices).Distinct().Count() != body.Faces.Count
@@ -1087,12 +1095,13 @@ public partial class IfcExporter
             || !(WallExtrusion.IsSimpleRectangularWall(solids[0].FaceIndices.Select(index => body.Faces[index]).ToList(),
                     wall.OwnWallHelper, wall.Geometry?.InactiveFaces)
                 || bodyRoute && solids.Count == 1)) return null;
-        // The solids that do not decide the wall do not count in its height, as in the quantities.
-        return ZRangeMetresCurrent(solids.Count > 1 ? FirstSolidFacesCurrent(body) : body.Faces);
+        return ZRangeMetresCurrent(body.Faces);
     }
 
-    private static List<GeoFace> FirstSolidFacesCurrent(GeometryData body) =>
-        body.BrepSolids![0].FaceIndices.Where(index => (uint)index < (uint)body.Faces.Count).Select(index => body.Faces[index]).ToList();
+    /// <summary>The faces of the first solid of a body; null when one of its face indices is outside the faces.</summary>
+    private static List<GeoFace>? FirstSolidFacesOfBodyCurrent(GeometryData body) =>
+        body.BrepSolids![0].FaceIndices.All(index => (uint)index < (uint)body.Faces.Count)
+            ? body.BrepSolids[0].FaceIndices.Select(index => body.Faces[index]).ToList() : null;
 
     private static double? ZRangeMetresCurrent(IEnumerable<GeoFace> faces)
     {

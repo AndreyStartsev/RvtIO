@@ -80,6 +80,24 @@ public class IfcMultiSolidWallExportTests
     }
 
     [Fact]
+    public void OtherSolidsOfTheWall_ClosedOrNot_DoNotChangeTheDepthOrTheHeight()
+    {
+        // the second solid, 6 ft high, has no top face: it is open, and it is not the solid the wall is extruded from
+        var tall = Box(12, 22, 6);
+        tall.RemoveAt(1);
+        var wall = Wall(Box(0, 10, 3), tall);
+        wall.Geometry!.BrepSolids![1].IsClosed = false;
+
+        string ifc = Export(wall);
+
+        Assert.Single(Entities(ifc, "IFCWALLSTANDARDCASE"));
+        var solid = Assert.Single(Entities(ifc, "IFCEXTRUDEDAREASOLID"));
+        Assert.Equal(3 * 304.8, Number(Args(solid)[3]), 6);
+        var height = Assert.Single(Entities(ifc, "IFCQUANTITYLENGTH"), quantity => Args(quantity)[0] == "'Height'");
+        Assert.Equal(3 * 304.8, Number(Args(height)[3]), 6);
+    }
+
+    [Fact]
     public void WallOfOneSolid_KeepsItsHeightAsDepthAndHeight()
     {
         string ifc = Export(Wall(Box(0, 10, 6)));
