@@ -706,6 +706,14 @@ public partial class IfcExporter
             object? value = e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
             return value is int n ? n : null;
         }
+        // "Export to IFC" (-1019012, instance) is read before "Export Type to IFC" (-1019013): 2 = No, 1 = Yes
+        // (beats a No on the type), anything else defers to the type.
+        bool ExportFlagIsNo(Element e)
+        {
+            int? own = IntParam(e, -1019012);
+            if (own is 1 or 2) return own == 2;
+            return e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var flagType) && IntParam(flagType, -1019013) == 2;
+        }
         static bool HasProjectPhaseReference(Element e)
         {
             int? phase = IntParam(e, -1012100); // PHASE_CREATED
@@ -1605,6 +1613,7 @@ public partial class IfcExporter
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
         {
+            if (ExportFlagIsNo(elem)) { Skip(elem, "export-to-ifc-flag-no"); continue; }
             if (spatialTerrainElementIds.Contains(elem.Id)
                 || groupDefinitionTopographyIds.Contains(elem.Id))
             { Skip(elem, "terrain-or-group-topography"); continue; }
@@ -1678,7 +1687,7 @@ public partial class IfcExporter
             if (elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
                 && (IntParam(elem, -1013201) != -4
                     || elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
-                        && wall.CategoryId == -2000011 && !visibleWallIds.Contains(r)) == true))
+                        && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall))) == true))
             { Skip(elem, "opening-of-hidden-wall"); continue; }
 
             string? ifcType = elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
