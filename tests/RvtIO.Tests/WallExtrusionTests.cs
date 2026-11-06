@@ -587,6 +587,18 @@ public class WallExtrusionTests
     }
 
     [Fact]
+    public void InactiveFaceStillCountsForASingleSolidWallButNotForTheFirstOfSeveral()
+    {
+        var single = Prism(Rectangle, 0, 3);
+        foreach (var face in single) face.GeometryNode = 7;
+        var inactive = new GeoFace { GeometryNode = 7, Normal = [0, 0.11, 0.99] };
+        Assert.False(WallExtrusion.IsSimpleRectangularWall(single, null, [inactive]));
+        var several = TwoSolids(Prism(Rectangle, 0, 3));
+        several.InactiveFaces = [inactive];
+        Assert.True(WallExtrusion.IsStandardCaseBody(several));
+    }
+
+    [Fact]
     public void SimpleBody_StaysStandardCaseWithSeveralSolids()
     {
         var simple = Prism(Rectangle, 0, 3);

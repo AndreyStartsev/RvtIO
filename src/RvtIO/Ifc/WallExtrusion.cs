@@ -54,6 +54,8 @@ internal static partial class WallExtrusion
         if (axisFits && !roundFace && IsSimpleRectangularWall(first, helper, geometry.InactiveFaces)) return true;
         if (HasTiltedFace(first)) return false;
         // Several solids: the first one decides, on its own faces only (inactive faces and other solids are not looked at).
+        // shortcut: unproven asymmetry. A single-solid wall counts its inactive faces (reference data need that), a multi-solid one
+        // must not (reference data need that too); the reason is not known, upgrade when the per-solid geometry of the reference exporter is explained.
         if (solids is { Count: > 1 })
             return IsSimpleRectangularWall(first, helper) && TryFindVerticalExtrusion(first, out _, exactCylinders: true);
         var edgeBounds = first.Any(IsVerticalCylinderPatch) && first.All(face => face.MeshEdgeBounds is { Length: 6 })
@@ -208,7 +210,8 @@ internal static partial class WallExtrusion
 
     /// <summary>The first test of the simple rectangular check: a complete ElementExtrusionHelper whose definition (outer)
     /// loop has a number of curves other than four makes the wall not simple, whatever its faces are. The outer loop is the
-    /// first one of the helper. A wall without a helper, or one that cannot be read, is not rejected here.</summary>
+    /// first one of the helper. A wall without a helper, or one that cannot be read, is not rejected here.
+    /// shortcut: the loop type is not decoded, so the loops after the first count as holes; upgrade when the type is read.</summary>
     internal static bool HelperProfileIsQuadrilateral(Parsing.TfBlockDeserializer.OwnWallHelperInput? helper) =>
         helper is not { Present: true, Complete: true, LoopCurveCounts: { Count: > 0 } counts } || counts[0] == 4;
 
