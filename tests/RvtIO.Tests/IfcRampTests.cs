@@ -222,6 +222,95 @@ public class IfcRampTests
         Assert.Empty(Entities(ifc, "IFCRAMPFLIGHT"));
     }
 
+    private static GeoFace Styled(GeoFace face, int material) { face.RenderStyleId = material; return face; }
+
+    private static Element Material(int id, string name) => new()
+    {
+        Id = id, TypeId = -1, CategoryId = -2000700, Category = "OST_Materials", Name = name, SerializedMaterialName = name,
+    };
+
+    [Fact]
+    public void Export_FlightAndLanding_TakeTheMaterialOfTheirOwnSolid()
+    {
+        var flight = Box(0, 4, 0, 2, 0.5, 2.5).Select(face => Styled(face, 600)).ToList();
+        var landing = Box(4, 6, 0, 2, 2.5, 2.5).Select(face => Styled(face, 601)).ToList();
+        var ramp = Ramp(Solids(flight, landing));
+        string ifc = ExportAll(ramp, Material(600, "Mat A"), Material(601, "Mat B"));
+        Assert.Empty(Entities(ifc, "IFCMATERIALLIST"));
+        string flightId = Id(Assert.Single(Entities(ifc, "IFCRAMPFLIGHT")));
+        string landingId = Id(Assert.Single(Entities(ifc, "IFCSLAB")));
+        string MaterialOf(string product)
+        {
+            var relation = Assert.Single(Entities(ifc, "IFCRELASSOCIATESMATERIAL"), rel => Args(rel)[4].Split(',').Contains(product)
+                || Args(rel)[4].Trim('(', ')') == product);
+            Assert.Equal($"({product})", Args(relation)[4]);
+            var material = Entities(ifc, "IFCMATERIAL").Single(m => Id(m) == Args(relation)[5]);
+            return Args(material)[0];
+        }
+        Assert.Equal("'Mat A'", MaterialOf(flightId));
+        Assert.Equal("'Mat B'", MaterialOf(landingId));
+    }
+
+    [Fact]
+    public void Export_DoesNotChangeTheInputElements()
+    {
+        var ramp = Ramp(Solids(BigSolid()));
+        ramp.Name = "";
+        ramp.Parameters.Single(p => p.Id == -1002050).Value = 999;
+        ramp.References = [3, 500];
+        var parameters = ramp.Parameters.ToList();
+        string ifc = ExportAll(ramp, RampType(500, "Ramp type"));
+        Assert.Equal(999, ramp.Parameters.Single(p => p.Id == -1002050).Value);
+        Assert.Equal("", ramp.Name);
+        Assert.Equal(parameters, ramp.Parameters);
+        // ... while the export has the type link and the name of the type.
+        Assert.Single(Entities(ifc, "IFCRELDEFINESBYTYPE"));
+        Assert.Contains("'Ramp type", ifc);
+    }
+
+    [Fact]
+    public void Export_RampWithoutTypeLink_IsDefinedByTheOneReferencedRampType()
+    {
+        var ramp = Ramp(Solids(BigSolid()));
+        ramp.Parameters.RemoveAll(p => p.Id == -1002050);
+        ramp.References = [3, 500];
+        string ifc = ExportAll(ramp, RampType(500, "Ramp type"));
+        var type = Assert.Single(Entities(ifc, "IFCTYPEPRODUCT"));
+        var byType = Assert.Single(Entities(ifc, "IFCRELDEFINESBYTYPE"));
+        Assert.Equal(Id(type), Args(byType)[5]);
+        Assert.Single(ramp.Parameters);
+    }
+
+    [Fact]
+    public void Export_ComponentGlobalIds_DependOnTheRampGlobalId()
+    {
+        string[][] ids = new string[2][];
+        for (int doc = 0; doc < 2; doc++)
+        {
+            var ramp = Ramp(Solids(Box(0, 4, 0, 2, 0.5, 2.5), Box(4, 6, 0, 2, 2.5, 2.5)));
+            ramp.SerializedExportId = Guid.Parse(doc == 0 ? "1551350c-45e5-41b8-bdf1-bcfa6794dc6a" : "d32651fd-8177-472a-a10a-14863a6ba772");
+            string ifc = ExportAll(ramp, RampType(500, "Ramp type"));
+            var rampEntity = Assert.Single(Entities(ifc, "IFCRAMP"));
+            ids[doc] = [Args(Assert.Single(Entities(ifc, "IFCRAMPFLIGHT")))[0], Args(Assert.Single(Entities(ifc, "IFCSLAB")))[0],
+                Args(Assert.Single(RampRelations(ifc, rampEntity)))[0]];
+            Assert.Equal(3, ids[doc].Distinct().Count());
+            // Deterministic.
+            Assert.Equal(ids[doc][0], Args(Assert.Single(Entities(ExportAll(ramp, RampType(500, "Ramp type")), "IFCRAMPFLIGHT")))[0]);
+        }
+        for (int i = 0; i < 3; i++) Assert.NotEqual(ids[0][i], ids[1][i]);
+    }
+
+    private static Element RampType(int id, string name) =>
+        new() { Id = id, TypeId = -1, CategoryId = -2000180, Name = name, NativeRootClassName = "RampAttributes" };
+
+    private static string ExportAll(params Element[] elements)
+    {
+        var info = new RevitFileInfo(); info.Elements.AddRange(elements);
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-ramp-{Guid.NewGuid():N}.ifc");
+        try { new IfcExporter { Profile = IfcProfile.Current }.Export(info, path); return File.ReadAllText(path); }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
     private static List<string> RampRelations(string ifc, string ramp) =>
         Entities(ifc, "IFCRELAGGREGATES").Where(relation => Args(relation)[4] == Id(ramp)).ToList();
 

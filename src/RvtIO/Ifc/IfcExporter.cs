@@ -360,6 +360,7 @@ public partial class IfcExporter
         var phaseFilter = BuildExportPhaseFilter(info);
         info.Elements = allElements.Where(element => designOptions.InNonPrimaryOption(element) != true
             && phaseFilter?.Excludes(element) != true).ToList();
+        if (CurrentProfile) info.Elements = RelinkRampTypes(info.Elements);
         if (phaseFilter != null)
             _diag?.WriteLine($"IFC export phase filter: {allElements.Count(phaseFilter.Excludes)} elements outside the export phase left out");
         try { ExportDocument(info, output); }
@@ -689,7 +690,6 @@ public partial class IfcExporter
             elementIdOccurrenceCounts[e.Id] = occurrenceCount + 1;
             elementOrderById.TryAdd(e.Id, elementIndex);
         }
-        if (CurrentProfile) RelinkRampTypes(info.Elements, elemById);
         _elementsByIdCurrent = elemById;
         _axisExtrusionBodyCurrent.Clear();
         if (CurrentProfile)
@@ -4543,10 +4543,10 @@ public partial class IfcExporter
             exportedIfcElements[elem.Id] = (elemEntityId, elemPlacementId, ifcType);
             exportedGlobalIds[elem.Id] = productGlobalId;
             if (rampPartBodies != null)
-                rampBodies[elem.Id] = WriteRampComponentsCurrent(w, ownerHistId, elem, elemEntityId, elemName, elemPlacementId, axisId, rampPartBodies);
+                rampBodies[elem.Id] = WriteRampComponentsCurrent(w, ownerHistId, elem, elemEntityId, productGlobalId, elemName, elemPlacementId, axisId, rampPartBodies);
             else if (rampWithBody)
             {
-                var (rampBody, rampRelation) = WriteRampBodyCurrent(w, ownerHistId, elem, elemEntityId, elemName, elemTypeName, elemPlacementId, axisId, shapeId);
+                var (rampBody, rampRelation) = WriteRampBodyCurrent(w, ownerHistId, elem, elemEntityId, productGlobalId, elemName, elemTypeName, elemPlacementId, axisId, shapeId);
                 rampBodies[elem.Id] = [rampBody];
                 rampAggregations[elem.Id] = rampRelation;
             }
@@ -5941,6 +5941,7 @@ public partial class IfcExporter
             // that body (usesInstanceGeometry), and its materials are those of the solids of that
             // one body, not the union of the materials of the instance.
             bool pieceBased = false;
+            List<int>? partMaterials = null;
             if (CurrentProfile && geometrySource != null)
             {
                 bool ownBody = !ReferenceEquals(geometrySource, element) && UsesInstanceGeometry(element, geometrySource);
@@ -5984,6 +5985,7 @@ public partial class IfcExporter
                 // own solid.
                 var solidMaterials = pieceSystemMaterial is int solidSystemMaterial
                     ? pieces.Select(_ => solidSystemMaterial).ToList() : pieces.Select(piece => piece.Material).ToList();
+                if (materialEntities.Count > 1 && solidMaterials.Count == materialEntities.Count) partMaterials = solidMaterials;
                 for (int part = 0; part < materialEntities.Count; part++)
                 {
                     // The parts of a ramp made of its solids follow the solids in their order.
@@ -6032,15 +6034,22 @@ public partial class IfcExporter
             }
             if (materialElementIds.Count == 0) continue;
 
-            string materialKey = string.Join(',', materialElementIds);
-            if (!directMaterialProducts.TryGetValue(materialKey, out var association))
-                association = (materialElementIds, new List<int>());
-            if (pieceBased && product.ifcType == "IFCSLAB" && element.CategoryId == -2001300)
-                (typeOnlyMaterialProducts.TryGetValue(materialKey, out var typeOnly)
-                    ? typeOnly : typeOnlyMaterialProducts[materialKey] = []).Add(product.entityId);
-            else
-                association.ProductIds.AddRange(materialEntities);
-            directMaterialProducts[materialKey] = association;
+            // Each part of a ramp takes the material of its own solid.
+            for (int part = 0; part < (partMaterials?.Count ?? 1); part++)
+            {
+                var partIds = partMaterials == null ? materialElementIds : [partMaterials[part]];
+                string materialKey = string.Join(',', partIds);
+                if (!directMaterialProducts.TryGetValue(materialKey, out var association))
+                    association = (partIds, new List<int>());
+                if (pieceBased && product.ifcType == "IFCSLAB" && element.CategoryId == -2001300)
+                    (typeOnlyMaterialProducts.TryGetValue(materialKey, out var typeOnly)
+                        ? typeOnly : typeOnlyMaterialProducts[materialKey] = []).Add(product.entityId);
+                else if (partMaterials == null)
+                    association.ProductIds.AddRange(materialEntities);
+                else
+                    association.ProductIds.Add(materialEntities[part]);
+                directMaterialProducts[materialKey] = association;
+            }
         }
 
         var relatingMaterialByProductEntity = new Dictionary<int, int>();

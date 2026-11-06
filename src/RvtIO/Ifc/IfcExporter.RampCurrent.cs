@@ -43,21 +43,40 @@ public partial class IfcExporter
         return found;
     }
 
-    /// <summary>Points the type link of a system ramp at its ramp type when the general link names another element, and gives a nameless ramp the name of its type.</summary>
-    private static void RelinkRampTypes(IEnumerable<Element> elements, IReadOnlyDictionary<int, Element> elemById)
+    /// <summary>Returns the elements with each system ramp replaced by a copy whose type link names its ramp type (the link is
+    /// added when the ramp has none) and, for a nameless ramp, the name of that type. The input elements are not changed.</summary>
+    private static List<Element> RelinkRampTypes(List<Element> elements)
     {
+        var elemById = new Dictionary<int, Element>();
+        foreach (var e in elements) elemById.TryAdd(e.Id, e);
+        var result = new List<Element>(elements.Count);
         foreach (var ramp in elements)
         {
-            if (!IsSystemRamp(ramp)) continue;
-            int typeId = RampTypeElementId(ramp, elemById);
-            if (typeId <= 0) continue;
-            if (typeId != ramp.FamilyTypeId)
-                foreach (var p in ramp.Parameters)
-                    if (p.Definition?.Name is "ELEM_TYPE_PARAM" && p.Value is int) p.Value = typeId;
+            int typeId = IsSystemRamp(ramp) ? RampTypeElementId(ramp, elemById) : 0;
+            bool relink = typeId > 0 && typeId != ramp.FamilyTypeId;
+            bool rename = typeId > 0 && string.IsNullOrEmpty(ramp.Name);
+            if (!relink && !rename) { result.Add(ramp); continue; }
+            var copy = ramp.ShallowCopy();
+            if (relink)
+            {
+                var parameters = ramp.Parameters.ToList();
+                int index = parameters.FindIndex(p => p.Definition?.Name is "ELEM_TYPE_PARAM" && p.Value is int);
+                if (index >= 0) parameters[index] = parameters[index].ShallowCopy(typeId);
+                else parameters.Add(new Parameter
+                {
+                    Id = ElemTypeParamId, Value = typeId, StorageType = StorageType.ElementId,
+                    Definition = new Definition { Id = ElemTypeParamId, Name = "ELEM_TYPE_PARAM" },
+                });
+                copy.Parameters = parameters;
+            }
             // A ramp carries the name of its type.
-            if (string.IsNullOrEmpty(ramp.Name)) ramp.Name = elemById[typeId].Name;
+            if (rename) copy.Name = elemById[typeId].Name;
+            result.Add(copy);
         }
+        return result;
     }
+
+    private const int ElemTypeParamId = -1002050;
 
     /// <summary>A system ramp is a Ramp element; a ramp placed from a loaded family is a family instance.</summary>
     internal static bool IsSystemRamp(Element element) =>
@@ -142,8 +161,8 @@ public partial class IfcExporter
     }
 
     /// <summary>Writes the flights (IfcRampFlight) and landings (IfcSlab, LANDING) of a ramp and the IfcRelAggregates that
-    /// links them to the IfcRamp, which carries no body of its own. Returns the entity ids of the parts.</summary>
-    private List<int> WriteRampComponentsCurrent(StepWriter w, int ownerHistId, Element ramp, int rampEntityId, string rampName,
+    /// links them to the IfcRamp, which carries no body of its own. Their GlobalIds derive from that of the IfcRamp. Returns the entity ids of the parts.</summary>
+    private List<int> WriteRampComponentsCurrent(StepWriter w, int ownerHistId, Element ramp, int rampEntityId, string rampGlobalId, string rampName,
         int rampPlacementId, int axisId, List<(int ShapeId, bool IsLanding)> bodies)
     {
         var parts = new List<int>();
@@ -152,30 +171,30 @@ public partial class IfcExporter
         {
             var (shapeId, isLanding) = bodies[index];
             int ordinal = isLanding ? ++landings : ++flights;
-            string globalId = IfcGuid.FromName($"ramp-part:{ramp.Id.ToString(CultureInfo.InvariantCulture)}:{index}");
+            string globalId = IfcGuid.FromName($"ramp-part:{rampGlobalId}:{index}");
             int placement = w.Add("IFCLOCALPLACEMENT", $"{R(rampPlacementId)},{R(axisId)}");
             string common = $"{S(globalId)},{R(ownerHistId)},{S($"{rampName} {(isLanding ? "Landing" : "Flight")} {ordinal.ToString(CultureInfo.InvariantCulture)}")},$,$,{R(placement)},{R(shapeId)},$";
             // IFC2X3 gives an IfcRampFlight no PredefinedType; a landing is an IfcSlab of the LANDING type.
             parts.Add(isLanding ? w.Add("IFCSLAB", common + ",.LANDING.") : w.Add("IFCRAMPFLIGHT", common));
         }
         w.Add("IFCRELAGGREGATES",
-            $"{S(IfcGuid.FromName($"ramp-aggregate:{ramp.Id.ToString(CultureInfo.InvariantCulture)}"))},{R(ownerHistId)},$,$,{R(rampEntityId)},{StepWriter.List(parts.Select(R))}");
+            $"{S(IfcGuid.FromName($"ramp-aggregate:{rampGlobalId}"))},{R(ownerHistId)},$,$,{R(rampEntityId)},{StepWriter.List(parts.Select(R))}");
         return parts;
     }
 
     /// <summary>Writes the IfcRamp that holds the body of a monolithic ramp, under a copy of the placement of the container,
     /// and the IfcRelAggregates that links it to the container. Returns the entity ids of the contained IfcRamp and of the relation.</summary>
-    private (int Body, int Relation) WriteRampBodyCurrent(StepWriter w, int ownerHistId, Element ramp, int rampEntityId, string rampName,
+    private (int Body, int Relation) WriteRampBodyCurrent(StepWriter w, int ownerHistId, Element ramp, int rampEntityId, string rampGlobalId, string rampName,
         string objectType, int rampPlacementId, int axisId, int shapeId)
     {
         int placement = w.Add("IFCLOCALPLACEMENT", $"{R(rampPlacementId)},{R(axisId)}");
         string globalId = ResolveExactElementGlobalId(ramp, _usedExportIds, RampBodySubElementIndex, handleBased: true)
-            ?? IfcGuid.FromName($"ramp-body:{ramp.Id.ToString(CultureInfo.InvariantCulture)}");
+            ?? IfcGuid.FromName($"ramp-body:{rampGlobalId}");
         string id = ramp.Id.ToString(CultureInfo.InvariantCulture);
         int body = w.Add("IFCRAMP",
             $"{S(globalId)},{R(ownerHistId)},{S(rampName)},$,{S(objectType)},{R(placement)},{R(shapeId)},{S(id)},.NOTDEFINED.");
         int relation = w.Add("IFCRELAGGREGATES",
-            $"{S(IfcGuid.FromName($"ramp-aggregate:{id}"))},{R(ownerHistId)},$,$,{R(rampEntityId)},{StepWriter.List(R(body))}");
+            $"{S(IfcGuid.FromName($"ramp-aggregate:{rampGlobalId}"))},{R(ownerHistId)},$,$,{R(rampEntityId)},{StepWriter.List(R(body))}");
         return (body, relation);
     }
 
