@@ -62,6 +62,27 @@ public class CompoundLayerFunctionTests
     [InlineData(7, "Function7")] [InlineData(99, "Function99")]
     public void FunctionNames(int function, string name) => Assert.Equal(name, CompoundLayer.FunctionName(function));
 
+    [Fact]
+    public void ReferencedLayeredTypeDoesNotLayerAnElementWithAnotherOwnType()
+    {
+        // A curtain wall refers to the basic wall type of one of its panels; its own type has no compound layers.
+        var state = new ParsingState();
+        state.CompoundLayers[200] = [new CompoundLayer { ThicknessFt = 0.5, Function = 100, MaterialId = 5, LayerIndex = 0 }];
+        state.SystemOccurrenceTypeIds[10] = (1, 3524, 300);
+        state.SystemOccurrenceTypeIds[11] = (1, 3524, 200);
+        var info = new Model.RevitFileInfo();
+        info.Elements.Add(new Model.Element { Id = 200, CategoryId = -2000011 });
+        info.Elements.Add(new Model.Element { Id = 300, CategoryId = -2000011 });
+        info.Elements.Add(new Model.Element { Id = 10, CategoryId = -2000011, Category = "OST_Walls", References = [300, 200] });
+        info.Elements.Add(new Model.Element { Id = 11, CategoryId = -2000011, Category = "OST_Walls", References = [300, 200] });
+        info.Elements.Add(new Model.Element { Id = 12, CategoryId = -2000011, Category = "OST_Walls", References = [300, 200] });
+        ElementBuilder.PostProcess(info, state);
+        Assert.Null(info.Elements.Single(e => e.Id == 10).Layers);
+        Assert.Equal("Membrane", Assert.Single(info.Elements.Single(e => e.Id == 11).Layers!).Function);
+        // no own type record: the first referenced layered type, as before
+        Assert.Equal("Membrane", Assert.Single(info.Elements.Single(e => e.Id == 12).Layers!).Function);
+    }
+
     [SkippableFact]
     public void SampleTypeWithMembraneLayersGetsItsLayers()
     {

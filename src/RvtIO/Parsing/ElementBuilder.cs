@@ -5645,6 +5645,13 @@ internal static partial class ElementBuilder
                 var tp = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
                 if (tp?.Value is int typeId && layersByElemId.TryGetValue(typeId, out var typeLayers))
                 { e.Layers = typeLayers; continue; }
+                // An element whose own record names its type takes the layers of that type only: its References also
+                // hold the types of other walls (a curtain wall refers to the basic wall types of its panels).
+                if (state.SystemOccurrenceTypeIds.TryGetValue((uint)e.Id, out var ownType) && ownType is { BlockCount: 1, TypeId: > 0 })
+                {
+                    if (layersByElemId.TryGetValue(ownType.TypeId.Value, out var ownLayers)) e.Layers = ownLayers;
+                    continue;
+                }
                 // Try References (for walls without ELEM_TYPE_PARAM)
                 if (e.References == null) continue;
                 foreach (var refId in e.References)
