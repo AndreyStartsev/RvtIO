@@ -1601,6 +1601,9 @@ public partial class IfcExporter
         }
 
         void Skip(Element skipped, string why) { skippedCount++; SkipLog?.Add(skipped.Id, RvtIO.SkipLog.ClassOf(skipped), why); }
+        // The bounds of a 64-bit-id file count as decoded when any element carries them.
+        bool boundsDecoded = info.GeometryUndecoded
+            && info.Elements.Any(e => (e.BoundingBox ?? e.Geometry?.BoundingBox) is { Length: >= 6 });
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
@@ -1752,7 +1755,9 @@ public partial class IfcExporter
                     bool hasHost = elem.SuperInstanceId is > 0
                         || ResolveHostedElementHostIds(
                             elem, elemById, visibleWallIds, inverseHostedHostIds).Count > 0;
-                    if (!hasHost) { Skip(elem, "hosted-element-without-host"); continue; }
+                    // A freestanding door or window that has a body is a real product; one without bounds has nothing to write.
+                    if (!hasHost && (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is not { Length: >= 6 })
+                    { Skip(elem, "hosted-element-without-host"); continue; }
                 }
                 else
                 {
@@ -1773,6 +1778,14 @@ public partial class IfcExporter
                 Skip(elem, "phantom-storey-wall");
                 continue;
             }
+
+            // A file of the 64-bit-id layout writes a product without bounds as it is, with no representation; where
+            // the bounds are decoded, a product without them has no body and is not exported.
+            if (boundsDecoded
+                && ShouldSkipRepresentationlessProduct(ifcType,
+                    hasBounds: (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 },
+                    isEmittedAggregateParent: _emittedAggregateParentElementIds.Contains(elem.Id)))
+            { Skip(elem, "product-without-body"); continue; }
 
             int elemStoreyId = ResolveStorey(elem, storeyIds, defaultStoreyId, elemById);
             if (Environment.GetEnvironmentVariable("RVTIO_STOREY_DIAG") is { Length: > 0 } storeyDiag)
@@ -63511,6 +63524,21 @@ public partial class IfcExporter
         string ifcType, bool hasEmittedRepresentation, bool isEmittedAggregateParent) =>
         !hasEmittedRepresentation
         && !isEmittedAggregateParent
+        && IsIfcElementSubclassProduct(ifcType);
+
+    /// <summary>The classes that are written without a representation because they only group other products.</summary>
+    internal static bool IsRepresentationlessContainerClass(string ifcType) =>
+        ifcType is "IFCCURTAINWALL" or "IFCROOF" or "IFCSTAIR" or "IFCRAMP" or "IFCELEMENTASSEMBLY";
+
+    /// <summary>
+    /// An IfcElement product with no bounds (so no representation can be written), other than a container and
+    /// other than a wall, whose walls are handled by their own rule.
+    /// </summary>
+    internal static bool ShouldSkipRepresentationlessProduct(string ifcType, bool hasBounds, bool isEmittedAggregateParent) =>
+        !hasBounds
+        && !isEmittedAggregateParent
+        && ifcType is not ("IFCWALL" or "IFCWALLSTANDARDCASE")
+        && !IsRepresentationlessContainerClass(ifcType)
         && IsIfcElementSubclassProduct(ifcType);
 
     /// <summary>
