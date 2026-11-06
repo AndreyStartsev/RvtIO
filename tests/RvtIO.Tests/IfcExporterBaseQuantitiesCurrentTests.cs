@@ -333,6 +333,19 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.Equal(expected, IfcExporter.SplitStepArguments(IfcLengthUnit.ToMillimetres(type, $"'Q','',$,{metres}", exactQuantities: true))[3]);
 
     [Fact]
+    public void FootConversion_QuantityTextIsTheTextOfTheScaledDouble()
+    {
+        foreach (var (type, metres) in new[]
+        {
+            ("IFCQUANTITYLENGTH", IfcLengthUnit.MetresPerFoot),
+            ("IFCQUANTITYAREA", IfcLengthUnit.SquareMetresPerSquareFoot),
+            ("IFCQUANTITYVOLUME", IfcLengthUnit.CubicMetresPerCubicFoot),
+        })
+            Assert.Equal("1.", IfcExporter.SplitStepArguments(
+                IfcLengthUnit.ToFamily(type, $"'Q','',$,{StepWriter.RealExact(metres)}", IfcUnitFamily.Foot, exact: true))[3]);
+    }
+
+    [Fact]
     public void MillimetreConversion_LegacyQuantityKeepsTheDecimalShift() =>
         Assert.Equal("50.0000000000006", IfcExporter.SplitStepArguments(IfcLengthUnit.ToMillimetres("IFCQUANTITYLENGTH", "'Q','',$,0.0500000000000006"))[3]);
 
