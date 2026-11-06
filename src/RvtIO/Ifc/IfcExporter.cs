@@ -67173,7 +67173,8 @@ public partial class IfcExporter
                 lines.Add($"H\t{id}\t{product.ifcType}\t{(element.IsDiscovered ? 1 : 0)}\t{element.CategoryId}\t" + string.Join(" ",
                     connectors.Select((connector, position) => $"{connector.Index};{connector.Direction};"
                         + $"{(element.SerializedConnectorSystems is { } systems && position < systems.Count ? systems[position] : 0)};"
-                        + string.Join(",", connector.Refs.Select(reference => $"{reference.Id}:{reference.Index}:{reference.Type}:{Kind(reference.Id)}")))));
+                        + string.Join(",", connector.Refs.Select(reference => $"{reference.Id}:{reference.Index}:{reference.Type}:{Kind(reference.Id)}"))
+                        + (element.SerializedConnectorModes is { } modes && position < modes.Count ? $";m{modes[position]}" : ""))));
             else if (PortHostClasses.Contains(product.ifcType))
                 lines.Add($"N\t{id}\t{product.ifcType}\t{element?.CategoryId}");
         }
@@ -67195,11 +67196,17 @@ public partial class IfcExporter
             if (PortHostClasses.Contains(product.ifcType)
                 && elemById.TryGetValue(id, out var host) && !host.IsDiscovered
                 && host.SerializedConnectorGraph is { Count: > 0 } connectors
-                && host.NativeRootClassName == null
                 && hostGlobalIds.ContainsKey(product.entityId))
-                graph[id] = connectors.Select((connector, position) => (connector.Index, connector.Direction,
-                    host.SerializedConnectorSystems is { } systems && position < systems.Count ? systems[position] : 0,
-                    new List<(int Id, int Index, int Type)>(connector.Refs))).ToList();
+            {
+                // Only the connectors of mode 1 and 2 get ports (connectors of mode 4, 16 and 32 get no port in the reference output);
+                // a walk that does not know the mode keeps every connector.
+                var exported = connectors.Select((connector, position) => (connector, position))
+                    .Where(item => host.SerializedConnectorModes is not { } modes || item.position >= modes.Count || modes[item.position] is 1 or 2)
+                    .Select(item => (item.connector.Index, item.connector.Direction,
+                        host.SerializedConnectorSystems is { } systems && item.position < systems.Count ? systems[item.position] : 0,
+                        new List<(int Id, int Index, int Type)>(item.connector.Refs))).ToList();
+                if (exported.Count > 0) graph[id] = exported;
+            }
         foreach (var (hostId, connectors) in graph)
             foreach (var connector in connectors)
                 foreach (var reference in connector.Refs.ToList())
@@ -67234,7 +67241,8 @@ public partial class IfcExporter
             Join(system, entityId, portId);
         }
 
-        void Pair(int inHost, int outHost, int index, bool bidirectional)
+        // inSystem and outSystem are the systems of the two connectors that are paired.
+        void Pair(int inHost, int outHost, int index, bool bidirectional, int inSystem, int outSystem)
         {
             if (connected.Contains((inHost, outHost)) || (bidirectional && connected.Contains((outHost, inHost)))) return;
             string inFlow = bidirectional ? "SOURCEANDSINK" : "SINK", outFlow = bidirectional ? "SOURCEANDSINK" : "SOURCE";
@@ -67256,7 +67264,8 @@ public partial class IfcExporter
                 $"{S(IfcGuid.FromMd5($"IfcRelConnectsPorts:{portInGuid}{portOutGuid}"))},{R(ownerHistId)},"
                 + $"{S($"{portInGuid}|{portOutGuid}")},{S("Flow")},{R(portIn)},{R(portOut)},$");
             connected.Add((inHost, outHost));
-            Join(graph[inHost].First(candidate => candidate.Index == index).System, inEntity, outEntity, portIn, portOut);
+            // A fitting stores no system of its own: the pair then belongs to the system of the connector it is paired with.
+            Join(inSystem > 0 ? inSystem : outSystem, inEntity, outEntity, portIn, portOut);
         }
 
         foreach (var (hostId, connectors) in graph)
@@ -67270,13 +67279,21 @@ public partial class IfcExporter
                     && elemById.TryGetValue(reference.Id, out var referenced) && !referenced.IsDiscovered);
                 var neighbours = connector.Refs.Where(reference => reference.Id != hostId && graph.ContainsKey(reference.Id)).ToList();
                 if (!IsConnected()) { Standalone(hostId, connector.Index, connector.Direction, connector.System); continue; }
-                bool bidirectional = connector.Direction is not (DirectionIn or DirectionOut);
                 foreach (var reference in neighbours)
-                    if (graph[reference.Id].Any(candidate => candidate.Index == connector.Index))
-                    {
-                        if (connector.Direction == DirectionOut) Pair(reference.Id, hostId, connector.Index, false);
-                        else Pair(hostId, reference.Id, connector.Index, bidirectional);
-                    }
+                {
+                    // The connector the reference names. It is missing when it was left out above (a connector of another mode): a connector
+                    // of the host with the number of this one is another connector and is not connected to this one.
+                    int referencedAt = graph[reference.Id].FindIndex(candidate => candidate.Index == reference.Index);
+                    if (referencedAt < 0 || !graph[reference.Id].Any(candidate => candidate.Index == connector.Index)) continue;
+                    var referenced = graph[reference.Id][referencedAt];
+                    // A connector without a direction of its own (a fitting) takes the opposite of the connector it references, when that one belongs to a
+                    // system (the stored direction of an electrical connector, whose calculation has no system, is not exported).
+                    int direction = connector.Direction;
+                    if (direction is not (DirectionIn or DirectionOut) && referenced.System > 0 && referenced.Direction is DirectionIn or DirectionOut)
+                        direction = DirectionIn + DirectionOut - referenced.Direction;
+                    if (direction == DirectionOut) Pair(reference.Id, hostId, connector.Index, false, referenced.System, connector.System);
+                    else Pair(hostId, reference.Id, connector.Index, direction is not DirectionIn, connector.System, referenced.System);
+                }
             }
         return systemMembers;
     }
