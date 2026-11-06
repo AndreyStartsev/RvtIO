@@ -65882,7 +65882,7 @@ public partial class IfcExporter
                     out MemberSpanSource spanSource))
             {
                 valueIds.Add(GetOrAddPropertySingleValue(
-                    w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D(spanMm)})"));
+                    w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(spanMm)})"));
                 if (spanSource == MemberSpanSource.RuntimeInstanceLength)
                     _spanRuntimeInstanceLengthCount++;
                 else if (spanSource == MemberSpanSource.BrepScaledLength)
@@ -66455,14 +66455,16 @@ public partial class IfcExporter
         if (p.StorageType == StorageType.ElementId && p.Value is int referenced
             && elemById.TryGetValue(referenced, out var target) && target.Name is { } targetName)
             return $"IFCLABEL({S(targetName)})";
+        // the legacy profile keeps its 15-digit reals
+        string Real(double value) => angleInDegrees ? D17(value) : D(value);
         switch (p.StorageType)
         {
             case StorageType.Double when p.Value is double d && double.IsFinite(d):
                 return dataType switch
                 {
                     "autodesk.spec.aec:length" => $"IFCLENGTHMEASURE({D17(d * 304.8)})",
-                    "autodesk.spec.aec:area" => $"IFCAREAMEASURE({D(d * FeetToMetres * FeetToMetres)})",
-                    "autodesk.spec.aec:volume" => $"IFCVOLUMEMEASURE({D(d * FeetToMetres * FeetToMetres * FeetToMetres)})",
+                    "autodesk.spec.aec:area" => $"IFCAREAMEASURE({Real(d * FeetToMetres * FeetToMetres)})",
+                    "autodesk.spec.aec:volume" => $"IFCVOLUMEMEASURE({Real(d * FeetToMetres * FeetToMetres * FeetToMetres)})",
                     "autodesk.spec.aec:angle" => $"IFCPLANEANGLEMEASURE({(angleInDegrees ? D17(d * (180.0 / Math.PI)) : D(d))})",
                     _ => null,
                 };
@@ -66493,7 +66495,7 @@ public partial class IfcExporter
                 case StorageType.Double:
                     if (p.Value is double dv && double.IsFinite(dv))
                     {
-                        propValue = $"IFCREAL({D(dv)})";
+                        propValue = $"IFCREAL({(CurrentProfile ? D17(dv) : D(dv))})";
                     }
                     else continue;
                     break;
@@ -69490,20 +69492,6 @@ public partial class IfcExporter
     private static string S(string? s) => StepWriter.Str(s);
     private static string D(double v) => StepWriter.Real(v);
 
-    /// <summary>
-    /// Kept separate from the exporter's legacy G15 geometry formatter so this narrow property
-    /// slice cannot perturb existing IFC data.
-    /// </summary>
-    private static string D17(double value)
-    {
-        string result = value.ToString("G17", CultureInfo.InvariantCulture);
-        int exponentIndex = result.IndexOfAny(['E', 'e']);
-        if (exponentIndex >= 0)
-        {
-            string mantissa = result[..exponentIndex];
-            if (!mantissa.Contains('.')) mantissa += ".0";
-            return mantissa + result[exponentIndex..];
-        }
-        return result.Contains('.') ? result : result + ".";
-    }
+    /// <summary>A real that keeps every digit of the double (quantities and property values); see <see cref="StepWriter.RealExact"/>.</summary>
+    private static string D17(double value) => StepWriter.RealExact(value);
 }

@@ -779,7 +779,7 @@ public partial class IfcExporter
                     QuantityKind.Area => "IFCQUANTITYAREA",
                     _ => "IFCQUANTITYVOLUME",
                 };
-                quantityIds.Add(w.Add(entity, $"{S(quantity.Name)},'',$,{D(quantity.Value)}"));
+                quantityIds.Add(w.Add(entity, $"{S(quantity.Name)},'',$,{D17(quantity.Value)}"));
             }
             string setGuid = IfcGuid.FromMd5(BaseQuantitiesUsePlainGuidCurrent(type)
                 ? $"IfcElementQuantity:BaseQuantities:{globalId}"

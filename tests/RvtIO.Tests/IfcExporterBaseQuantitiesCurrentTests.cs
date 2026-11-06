@@ -294,6 +294,21 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void Pass_Opening_WritesQuantityRealsWithAllSeventeenDigits()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 2.1, 0.8, 0.202);
+        AddProduct(w, "IFCOPENINGELEMENT", "3ZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        Apply(w, owner);
+
+        var texts = Args(w, "IFCQUANTITYLENGTH").Select(args => IfcExporter.SplitStepArguments(args)[3]).ToList();
+
+        Assert.Equal(3, texts.Count);
+        Assert.Contains("0.20200000000000001", texts);
+        Assert.All(texts, t => Assert.Equal(StepWriter.RealExact(double.Parse(t, CultureInfo.InvariantCulture)), t));
+    }
+
+    [Fact]
     public void Pass_Opening_WritesLengthQuantitiesAndTheSetWithThePlainGuidRule()
     {
         var (w, owner, placement) = NewWriter();
