@@ -100,6 +100,53 @@ public class SolidTrimmedAxisTests
     }
 
     [Fact]
+    public void LoneSkewEndFace_DoesNotSetBothEndsOfTheAxis()
+    {
+        // The near end face was not decoded; the far one is cut at an angle (vertices at x = 20 and x = 21) and the side faces run along
+        // the whole wall (x = 9 to 21): its vertices are not the range of the wall.
+        var wall = Wall([Face([0.7, 0.7, 0], [20, 0, 0], [21, 0.3, 0], [21, 0.3, 9], [20, 0, 9]), Side(9, 21, 0.1), Side(9, 21, -0.1)], 0, 5);
+
+        Apply(wall);
+
+        Assert.Null(wall.OwnWallTrimmedAxis);
+    }
+
+    [Fact]
+    public void LoneEndFaceWithoutAnyOtherFace_LeavesTheAxisUntrimmed()
+    {
+        var wall = Wall([EndFace(20, 21)], 0, 5);
+
+        Apply(wall);
+
+        Assert.Null(wall.OwnWallTrimmedAxis);
+    }
+
+    [Fact]
+    public void EndFacesAtOneEndOnly_LeaveTheAxisUntrimmed()
+    {
+        // two end faces, both at the far end; the side faces reach x = 9
+        var wall = Wall([EndFace(20, 20.5), EndFace(20.5, 21), Side(9, 21, 0.1)], 0, 5);
+
+        Apply(wall);
+
+        Assert.Null(wall.OwnWallTrimmedAxis);
+    }
+
+    [Fact]
+    public void EndFacesWithinTheVertexToleranceOfTheSolidExtent_StillTrimTheAxis()
+    {
+        // the side faces end 0.0001 ft beyond the end faces: the same vertex up to rounding; 0.01 ft is not
+        var wall = Wall([EndFace(9, 9.5), EndFace(20.5, 21), Side(8.9999, 21.0001, 0.1)], 0, 5);
+        var apart = Wall([EndFace(9, 9.5), EndFace(20.5, 21), Side(8.99, 21.01, 0.1)], 0, 5);
+
+        Apply(wall);
+        Apply(apart);
+
+        Assert.Equal([[9.0, 0, 0], [21.0, 0, 0]], wall.OwnWallTrimmedAxis);
+        Assert.Null(apart.OwnWallTrimmedAxis);
+    }
+
+    [Fact]
     public void HistoryTrim_Wins()
     {
         var wall = Wall([EndFace(9, 9.5), EndFace(20.5, 21)], 0, 5);

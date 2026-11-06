@@ -79,28 +79,39 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>The tolerance (feet) within which two vertices of a solid count as one, the vertex tolerance of the meshers.</summary>
+    private const double SolidVertexToleranceFt = 0.0005233832795;
+
     /// <summary>The parameter range of the end-face vertices on the curve driver (origin, direction, end parameters); a maximum that is not
-    /// above 1e-10 (the whole wall at negative parameters) is replaced by the upper end parameter. Null without a usable end face or
-    /// for an empty range.</summary>
+    /// above 1e-10 (the whole wall at negative parameters) is replaced by the upper end parameter. The range is only taken when both
+    /// ends of the solid are among the end faces: there are at least two of them and their vertices reach the lowest and the highest
+    /// parameter of any vertex of the solid, else an end face is missing and the vertices of the one that is left are not the range of
+    /// the wall. Null then, without a usable end face and for an empty range.</summary>
     internal static (double Lo, double Hi)? SolidTrimmedRange(IEnumerable<GeoFace> faces, double[] origin, double[] direction, double[] endParams)
     {
         double lengthSquared = direction.Sum(v => v * v);
         if (!(lengthSquared > 0)) return null;
-        double inverseLength = 1 / Math.Sqrt(lengthSquared), lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+        double inverseLength = 1 / Math.Sqrt(lengthSquared), tolerance = SolidVertexToleranceFt * inverseLength;
+        double lo = double.PositiveInfinity, hi = double.NegativeInfinity, solidLo = double.PositiveInfinity, solidHi = double.NegativeInfinity;
+        int endFaces = 0;
         foreach (var face in faces)
         {
-            if (face.OuterVertices is not { Count: > 0 } ring || Math.Abs(face.Normal[2]) > 1e-6
-                || Math.Abs((face.Normal[0] * direction[0] + face.Normal[1] * direction[1] + face.Normal[2] * direction[2]) * inverseLength) <= 1e-6)
-                continue;
+            if (face.OuterVertices is not { Count: > 0 } ring) continue;
+            bool endFace = Math.Abs(face.Normal[2]) <= 1e-6
+                && Math.Abs((face.Normal[0] * direction[0] + face.Normal[1] * direction[1] + face.Normal[2] * direction[2]) * inverseLength) > 1e-6;
+            if (endFace) endFaces++;
             foreach (var p in ring)
             {
                 double t = ((p[0] - origin[0]) * direction[0] + (p[1] - origin[1]) * direction[1] + (p[2] - origin[2]) * direction[2]) / lengthSquared;
                 if (!double.IsFinite(t)) return null;
+                solidLo = Math.Min(solidLo, t);
+                solidHi = Math.Max(solidHi, t);
+                if (!endFace) continue;
                 lo = Math.Min(lo, t);
                 hi = Math.Max(hi, t);
             }
         }
-        if (double.IsInfinity(lo)) return null;
+        if (endFaces < 2 || lo > solidLo + tolerance || hi < solidHi - tolerance) return null;
         if (hi <= 1e-10) hi = endParams[1];
         return hi > lo ? (lo, hi) : null;
     }
