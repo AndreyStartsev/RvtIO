@@ -5638,7 +5638,6 @@ internal static partial class ElementBuilder
         // Attach CompoundStructure layers to wall type elements
         if (state?.CompoundLayers.Count > 0)
         {
-            string[] layerFuncNames = ["Unknown", "Structure", "Substrate", "ThermalAir", "Finish", "Membrane"];
             foreach (var (eid, layers) in state.CompoundLayers)
             {
                 var elem = rvtInfo.Elements.FirstOrDefault(e => e.Id == (int)eid);
@@ -5646,8 +5645,7 @@ internal static partial class ElementBuilder
                 elem.Layers = layers.Select(l => new Model.MaterialLayer
                 {
                     ThicknessMm = Math.Round(l.ThicknessFt * 304.8, 2),
-                    Function = l.Function >= 0 && l.Function < layerFuncNames.Length
-                        ? layerFuncNames[l.Function] : $"Function{l.Function}",
+                    Function = CompoundLayer.FunctionName(l.Function),
                     MaterialId = l.MaterialId,
                     MaterialName = l.MaterialId > 0 && idToName.TryGetValue(l.MaterialId, out var mn) ? mn : null,
                     LayerIndex = l.LayerIndex
@@ -5667,6 +5665,13 @@ internal static partial class ElementBuilder
                 var tp = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
                 if (tp?.Value is int typeId && layersByElemId.TryGetValue(typeId, out var typeLayers))
                 { e.Layers = typeLayers; continue; }
+                // An element whose own record names its type takes the layers of that type only: its References also
+                // hold the types of other walls (a curtain wall refers to the basic wall types of its panels).
+                if (state.SystemOccurrenceTypeIds.TryGetValue((uint)e.Id, out var ownType) && ownType is { BlockCount: 1, TypeId: > 0 })
+                {
+                    if (layersByElemId.TryGetValue(ownType.TypeId.Value, out var ownLayers)) e.Layers = ownLayers;
+                    continue;
+                }
                 // Try References (for walls without ELEM_TYPE_PARAM)
                 if (e.References == null) continue;
                 foreach (var refId in e.References)

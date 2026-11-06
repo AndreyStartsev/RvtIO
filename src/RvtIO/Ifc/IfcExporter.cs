@@ -5747,9 +5747,10 @@ public partial class IfcExporter
         foreach (var group in layeredProducts)
         {
             var first = group.First();
+            var compoundLayers = first.Native == null ? first.Element.Layers!.OrderBy(layer => layer.LayerIndex).ToList() : null;
             var layers = first.Native is { } nativeLayers
                 ? nativeLayers.Layers
-                : first.Element.Layers!.OrderBy(layer => layer.LayerIndex)
+                : compoundLayers!.Where(layer => layer.ThicknessMm > 0)
                     .Select(layer => (MaterialId: layer.MaterialId, ThicknessMm: layer.ThicknessMm)).ToList();
             string layerSetKey = first.Native is { } ownType
                 ? $"native|{ownType.TypeId}" : $"legacy|{group.Key}";
@@ -5759,8 +5760,10 @@ public partial class IfcExporter
                 ? elemById.TryGetValue(firstNative.TypeId, out var firstLayerType)
                     && firstLayerType.SerializedHostTypeLayers is { Length: > 0 } firstLayerRaw
                     && elemById.ContainsKey(firstLayerRaw[0].RawMaterialId) ? firstLayerRaw[0].RawMaterialId : 0
-                : layers.Count > 0 && elemById.ContainsKey(layers[0].MaterialId) ? layers[0].MaterialId : 0;
+                : compoundLayers!.Count > 0 && elemById.ContainsKey(compoundLayers[0].MaterialId) ? compoundLayers[0].MaterialId : 0;
             foreach (var item in group) bodyStyles.Uniform[item.Product.entityId] = firstLayerMaterial;
+            // No layer of positive thickness is left (the layers of zero thickness are left out): no IfcMaterialLayerSet without a layer.
+            if (layers.Count == 0) continue;
             if (!layerSetByKey.TryGetValue(layerSetKey, out var layerSet))
             {
                 var materialLayerIds = new List<int>(layers.Count);
