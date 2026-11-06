@@ -306,6 +306,38 @@ public class IfcExporterMepSystemTests
         Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
     }
 
+    [Theory]
+    [InlineData(2)]
+    [InlineData(1)]
+    public void Ports_AFittingJoinsTheSystemOfTheConnectorItReferencesNotOfTheOneWithItsOwnNumber(int referencedDirection)
+    {
+        // The fitting's connector 1 references connector 0 of the equipment (system 50); connector 1 of the equipment belongs to system 60.
+        // The pair is formed on index 1, but the fitting is connected to connector 0, whichever side is the in side.
+        var equipment = ConnectorHost(10, (0, referencedDirection, 50, [(12, 1, 1)]), (1, 0, 60, []));
+        var fitting = ConnectorHost(12, (1, 0, 0, [(10, 0, 1)]));
+        var (entities, systems) = WritePorts(new() { [10] = equipment, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Contains(5, systems[50]);
+        Assert.DoesNotContain(5, systems[60]);
+    }
+
+    [Fact]
+    public void Ports_AReferenceToAConnectorThatGetsNoPortIsNotPairedWithAnotherConnectorOfTheHost()
+    {
+        // The fitting's connector 2 references connector 1 of the pipe, a connector of mode 16 that is left out; the pipe's connector 2 is
+        // another connector and has nothing to do with the reference.
+        var pipe = ConnectorHost(10, (1, 0, 50, []), (2, 0, 50, []));
+        pipe.SerializedConnectorModes = [16, 1];
+        var fitting = ConnectorHost(12, (2, 0, 0, [(10, 1, 1)]));
+        fitting.SerializedConnectorModes = [1];
+        var (entities, systems) = WritePorts(new() { [10] = pipe, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        Assert.DoesNotContain(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Equal("'Port_10_2'", Assert.Single(entities, entity => entity.Type == "IFCDISTRIBUTIONPORT").Args.Split(',')[2]);
+        Assert.DoesNotContain(5, systems.SelectMany(system => system.Value));
+    }
+
     [Fact]
     public void Ports_ADirectionOfAConnectorWithoutASystemIsNotTakenOverByTheConnectorPairedWithIt()
     {
