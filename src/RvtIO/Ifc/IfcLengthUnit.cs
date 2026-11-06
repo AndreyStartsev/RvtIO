@@ -53,7 +53,7 @@ internal static class IfcLengthUnit
         {
             // (the -0. offset of a building pad's layer set usage is a written negative zero, which a shift would lose)
             if (scalar && Array.IndexOf(scalarIndices!, i) >= 0)
-                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : ShiftNumber(parts[i]);
+                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : (type == "IFCQUANTITYLENGTH" ? ShiftQuantity(parts[i]) : ShiftNumber(parts[i]));
             else if (list && Array.IndexOf(listIndices!, i) >= 0) parts[i] = ShiftList(parts[i]);
         }
         return string.Join(',', parts);
@@ -207,6 +207,25 @@ internal static class IfcLengthUnit
         var items = SplitTopLevel(trimmed[1..^1]);
         for (int i = 0; i < items.Count; i++) items[i] = ShiftNumber(items[i]);
         return "(" + string.Join(',', items) + ")";
+    }
+
+    /// <summary>A quantity real times 1000. A literal of 16 or more significant digits is the exact text of a double (see
+    /// <see cref="StepWriter.RealExact"/>); moving its decimal point would give digits of no double, so the double is scaled and
+    /// printed again. Shorter literals (the 15-digit profile) keep the exact decimal shift.</summary>
+    private static string ShiftQuantity(string token)
+    {
+        string text = token.Trim();
+        if (SignificantDigits(text) < 16 || !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)) return ShiftNumber(token);
+        return StepWriter.RealExact(value * 1000);
+    }
+
+    private static int SignificantDigits(string text)
+    {
+        int end = text.IndexOfAny(['E', 'e']);
+        int count = 0;
+        foreach (char c in end < 0 ? text : text[..end])
+            if (char.IsDigit(c) && (count > 0 || c != '0')) count++;
+        return count;
     }
 
     /// <summary>A real literal times 1000; anything that is not a plain number ($, *, a reference) is returned unchanged.</summary>

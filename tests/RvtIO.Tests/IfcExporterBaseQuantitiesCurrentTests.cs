@@ -309,6 +309,30 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void Pass_Opening_DefaultMillimetreOutputKeepsTheDigitsOfADouble()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 2.1, 0.8, 0.202);
+        AddProduct(w, "IFCOPENINGELEMENT", "3ZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        Apply(w, owner);
+        w.RewriteArguments(IfcLengthUnit.Converter(IfcUnitFamily.Millimetre));
+
+        var texts = Args(w, "IFCQUANTITYLENGTH").Select(args => IfcExporter.SplitStepArguments(args)[3]).ToList();
+
+        Assert.Contains("202.", texts);
+        Assert.All(texts, t => Assert.Equal(StepWriter.RealExact(double.Parse(t, CultureInfo.InvariantCulture)), t));
+    }
+
+    [Theory]
+    [InlineData("IFCQUANTITYLENGTH", "4.7000000000000002", "4700.")]
+    [InlineData("IFCQUANTITYLENGTH", "0.20200000000000001", "202.")]
+    [InlineData("IFCQUANTITYLENGTH", "4.7", "4700.")]
+    [InlineData("IFCQUANTITYAREA", "3.1000000000000001", "3.1000000000000001")]
+    [InlineData("IFCQUANTITYVOLUME", "0.20200000000000001", "0.20200000000000001")]
+    public void MillimetreConversion_QuantityTextIsTheTextOfTheScaledDouble(string type, string metres, string expected) =>
+        Assert.Equal(expected, IfcExporter.SplitStepArguments(IfcLengthUnit.ToMillimetres(type, $"'Q','',$,{metres}"))[3]);
+
+    [Fact]
     public void Pass_Opening_WritesLengthQuantitiesAndTheSetWithThePlainGuidRule()
     {
         var (w, owner, placement) = NewWriter();
