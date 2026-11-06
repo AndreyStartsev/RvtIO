@@ -1802,6 +1802,7 @@ internal static partial class ElementBuilder
         {
             e.SerializedConnectorGraph = null;
             e.SerializedConnectorSystems = null;
+            e.SerializedConnectorModes = null;
             e.SerializedCurveSystemTypeId = state.NativeParams.TryGetValue((uint)e.Id, out var curveParams)
                 && curveParams.Fields.TryGetValue("1219:m_idSystemType", out int storedSystemType) ? storedSystemType : null;
             if (!state.NativeParams.TryGetValue((uint)e.Id, out var np) || !np.Fields.ContainsKey("771#0:m_nIndex")) continue;
@@ -1814,6 +1815,7 @@ internal static partial class ElementBuilder
                 : np.Fields.ContainsKey("2381#0:m_idSystem") ? "2381"
                 : np.Fields.ContainsKey("2382#0:m_idSystem") ? "2382" : null;
             var systems = new List<int>();
+            var modes = new List<int>();
             // Instances that mix the electrical domain with piping or hvac keep one calculation per
             // connector in connector order across the classes ("calc#n").
             int connectorCount = 0;
@@ -1822,6 +1824,23 @@ internal static partial class ElementBuilder
                 && np.Fields.ContainsKey($"calc#{connectorCount - 1}:class") && !np.Fields.ContainsKey($"calc#{connectorCount}:class");
             for (int k = 0; np.Fields.TryGetValue($"771#{k}:m_nIndex", out int index); k++)
             {
+                // A walk that knows the objects each connector queued names the calculation of that connector itself.
+                if (np.Fields.TryGetValue($"771#{k}:m_mode", out int mode))
+                {
+                    modes.Add(mode);
+                    string? ownKey = np.Fields.TryGetValue($"771#{k}:calcClass", out int calcClass)
+                        ? $"{calcClass.ToString(System.Globalization.CultureInfo.InvariantCulture)}#{np.Fields.GetValueOrDefault($"771#{k}:calcOccurrence").ToString(System.Globalization.CultureInfo.InvariantCulture)}:"
+                        : null;
+                    systems.Add(ownKey == null ? 0 : np.Fields.GetValueOrDefault(ownKey + "m_idSystem"));
+                    int ownCount = np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs#");
+                    var ownRefs = new List<(int Id, int Index, int Type)>(ownCount);
+                    for (int i = 0; i < ownCount; i++)
+                        ownRefs.Add((np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:id"),
+                            np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:index"),
+                            np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:type")));
+                    connectors.Add((index, ownKey == null ? 0 : calcClass == 2380 ? -1 : np.Fields.GetValueOrDefault(ownKey + "m_eDirection"), ownRefs));
+                    continue;
+                }
                 (string Class, string Occurrence)? ownCalculation = mixedCalculations
                     ? (np.Fields[$"calc#{k}:class"].ToString(System.Globalization.CultureInfo.InvariantCulture),
                         np.Fields[$"calc#{k}:occurrence"].ToString(System.Globalization.CultureInfo.InvariantCulture)) : null;
@@ -1844,6 +1863,7 @@ internal static partial class ElementBuilder
             }
             e.SerializedConnectorGraph = connectors;
             e.SerializedConnectorSystems = systems;
+            if (modes.Count == connectors.Count) e.SerializedConnectorModes = modes;
         }
     }
 
@@ -5618,7 +5638,6 @@ internal static partial class ElementBuilder
         // Attach CompoundStructure layers to wall type elements
         if (state?.CompoundLayers.Count > 0)
         {
-            string[] layerFuncNames = ["Unknown", "Structure", "Substrate", "ThermalAir", "Finish", "Membrane"];
             foreach (var (eid, layers) in state.CompoundLayers)
             {
                 var elem = rvtInfo.Elements.FirstOrDefault(e => e.Id == (int)eid);
@@ -5626,8 +5645,7 @@ internal static partial class ElementBuilder
                 elem.Layers = layers.Select(l => new Model.MaterialLayer
                 {
                     ThicknessMm = Math.Round(l.ThicknessFt * 304.8, 2),
-                    Function = l.Function >= 0 && l.Function < layerFuncNames.Length
-                        ? layerFuncNames[l.Function] : $"Function{l.Function}",
+                    Function = CompoundLayer.FunctionName(l.Function),
                     MaterialId = l.MaterialId,
                     MaterialName = l.MaterialId > 0 && idToName.TryGetValue(l.MaterialId, out var mn) ? mn : null,
                     LayerIndex = l.LayerIndex
@@ -5647,6 +5665,13 @@ internal static partial class ElementBuilder
                 var tp = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
                 if (tp?.Value is int typeId && layersByElemId.TryGetValue(typeId, out var typeLayers))
                 { e.Layers = typeLayers; continue; }
+                // An element whose own record names its type takes the layers of that type only: its References also
+                // hold the types of other walls (a curtain wall refers to the basic wall types of its panels).
+                if (state.SystemOccurrenceTypeIds.TryGetValue((uint)e.Id, out var ownType) && ownType is { BlockCount: 1, TypeId: > 0 })
+                {
+                    if (layersByElemId.TryGetValue(ownType.TypeId.Value, out var ownLayers)) e.Layers = ownLayers;
+                    continue;
+                }
                 // Try References (for walls without ELEM_TYPE_PARAM)
                 if (e.References == null) continue;
                 foreach (var refId in e.References)

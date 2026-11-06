@@ -255,4 +255,140 @@ public class IfcExporterMepSystemTests
         Assert.Equal(("Supply 1", 60), system.SerializedMepSystem);
         Assert.Null(plain.SerializedMepSystem);
     }
+
+    [Fact]
+    public void Ports_AreWrittenForAFileWithItsOwnSchemaToo()
+    {
+        var segment = ConnectorHost(10, (0, 0, 0, []));
+        segment.NativeRootClassName = "RbsPipeCurve";
+        var (entities, _) = WritePorts(new() { [10] = segment }, new() { [10] = (3, 4, "IFCFLOWSEGMENT") });
+        Assert.Contains("'Port_10_0'", Assert.Single(entities, entity => entity.Type == "IFCDISTRIBUTIONPORT").Args);
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTTOELEMENT");
+    }
+
+    [Fact]
+    public void Ports_AConnectorOfModeFourSixteenOrThirtyTwoGetsNoPort()
+    {
+        var equipment = ConnectorHost(10, (1, 0, 0, []), (2, 0, 0, []), (6001, 0, 0, []), (50000, 0, 0, []), (3, 0, 0, []));
+        equipment.SerializedConnectorModes = [1, 32, 16, 4, 2];
+        var (entities, _) = WritePorts(new() { [10] = equipment }, new() { [10] = (3, 4, "IFCBUILDINGELEMENTPROXY") });
+        var names = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Equal(2, names.Count);
+        Assert.Contains(names, args => args.Contains("'Port_10_1'"));
+        Assert.Contains(names, args => args.Contains("'Port_10_3'"));
+    }
+
+    [Fact]
+    public void Ports_APairOfConnectorsOfAnotherModeIsNotConnected()
+    {
+        // A mode 16 connector of the pipe that references a fitting does not pair with it.
+        var pipe = ConnectorHost(10, (1, 0, 0, [(12, 1, 1)]));
+        pipe.SerializedConnectorModes = [16];
+        var fitting = ConnectorHost(12, (1, 0, 0, [(10, 1, 1)]));
+        fitting.SerializedConnectorModes = [1];
+        var (entities, _) = WritePorts(new() { [10] = pipe, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        Assert.Empty(entities.Where(entity => entity.Type == "IFCRELCONNECTSPORTS"));
+    }
+
+    [Fact]
+    public void Ports_AFittingWithoutADirectionTakesTheOppositeOfTheConnectorItReferences()
+    {
+        // The pipe's connector 0 (direction 2) is the one the fitting's connector 1 references; the pair is formed on index 1 (both hosts
+        // have it) and the pipe's side is the out port, the fitting's the in port.
+        var pipe = ConnectorHost(10, (0, 2, 50, [(12, 1, 1)]), (1, 0, 50, []));
+        var fitting = ConnectorHost(12, (1, 0, 0, [(10, 0, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = pipe, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Contains(ports, args => args.Contains("'InPort_12_1'") && args.EndsWith(".SINK."));
+        Assert.Contains(ports, args => args.Contains("'OutPort_10_1'") && args.EndsWith(".SOURCE."));
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(1)]
+    public void Ports_AFittingJoinsTheSystemOfTheConnectorItReferencesNotOfTheOneWithItsOwnNumber(int referencedDirection)
+    {
+        // The fitting's connector 1 references connector 0 of the equipment (system 50); connector 1 of the equipment belongs to system 60.
+        // The pair is formed on index 1, but the fitting is connected to connector 0, whichever side is the in side.
+        var equipment = ConnectorHost(10, (0, referencedDirection, 50, [(12, 1, 1)]), (1, 0, 60, []));
+        var fitting = ConnectorHost(12, (1, 0, 0, [(10, 0, 1)]));
+        var (entities, systems) = WritePorts(new() { [10] = equipment, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Contains(5, systems[50]);
+        Assert.DoesNotContain(5, systems[60]);
+    }
+
+    [Fact]
+    public void Ports_AReferenceToAConnectorThatGetsNoPortIsNotPairedWithAnotherConnectorOfTheHost()
+    {
+        // The fitting's connector 2 references connector 1 of the pipe, a connector of mode 16 that is left out; the pipe's connector 2 is
+        // another connector and has nothing to do with the reference.
+        var pipe = ConnectorHost(10, (1, 0, 50, []), (2, 0, 50, []));
+        pipe.SerializedConnectorModes = [16, 1];
+        var fitting = ConnectorHost(12, (2, 0, 0, [(10, 1, 1)]));
+        fitting.SerializedConnectorModes = [1];
+        var (entities, systems) = WritePorts(new() { [10] = pipe, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        Assert.DoesNotContain(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Equal("'Port_10_2'", Assert.Single(entities, entity => entity.Type == "IFCDISTRIBUTIONPORT").Args.Split(',')[2]);
+        Assert.DoesNotContain(5, systems.SelectMany(system => system.Value));
+    }
+
+    [Fact]
+    public void Ports_ADirectionOfAConnectorWithoutASystemIsNotTakenOverByTheConnectorPairedWithIt()
+    {
+        // The fitting's connector stores a direction but no system (an electrical calculation); the segment's connector has none
+        // and the reference output keeps both ports bidirectional.
+        var segment = ConnectorHost(10, (1, 0, 0, [(12, 1, 1)]));
+        var fitting = ConnectorHost(12, (1, 2, 0, [(10, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = segment, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Equal(2, ports.Count);
+        Assert.All(ports, args => Assert.EndsWith(".SOURCEANDSINK.", args));
+    }
+
+    [Fact]
+    public void Ports_TwoConnectorsWithoutADirectionStayBidirectionalWhenPaired()
+    {
+        var pipe = ConnectorHost(10, (1, 0, 0, [(12, 1, 1)]));
+        var fitting = ConnectorHost(12, (1, 0, 0, [(10, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = pipe, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Equal(2, ports.Count);
+        Assert.All(ports, args => Assert.EndsWith(".SOURCEANDSINK.", args));
+    }
+
+    [Fact]
+    public void Ports_TwoHostsJoinedAtBothEndsHaveOneConnectionBetweenTheirPorts()
+    {
+        // The segment is connected to the fitting at both of its ends (connectors 1 and 2 of both, without a direction): the connection between two bidirectional hosts is written once, not once per
+        // connector pair and side.
+        var segment = ConnectorHost(10, (1, 0, 0, [(12, 1, 1)]), (2, 0, 0, [(12, 2, 1)]));
+        var fitting = ConnectorHost(12, (1, 0, 0, [(10, 1, 1)]), (2, 0, 0, [(10, 2, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = segment, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Equal(2, entities.Count(entity => entity.Type == "IFCDISTRIBUTIONPORT"));
+    }
+
+    [Fact]
+    public void Ports_APairWhoseInHostStoresNoSystemBelongsToTheSystemOfTheOtherConnector()
+    {
+        // The fitting (id 12, the in host: the segment's connector 0 has direction 2) stores no system; the segment's connector has system 50.
+        var segment = ConnectorHost(10, (1, 2, 50, [(12, 1, 1)]));
+        var fitting = ConnectorHost(12, (1, 0, 0, [(10, 1, 1)]));
+        var (entities, systems) = WritePorts(new() { [10] = segment, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        var portIds = entities.Select((entity, index) => (entity, id: index + 1))
+            .Where(item => item.entity.Type == "IFCDISTRIBUTIONPORT").Select(item => item.id).ToList();
+        var system = Assert.Single(systems);
+        Assert.Equal(50, system.Key);
+        Assert.Equal(new SortedSet<int> { 3, 5, portIds[0], portIds[1] }, system.Value);
+    }
 }

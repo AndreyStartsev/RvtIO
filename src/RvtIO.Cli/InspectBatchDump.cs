@@ -66,7 +66,7 @@ static class InspectBatchDump
             "GenericFinishParam", "GenericFinishParamType",
             "NamedIsExternalOccurrence", "NamedIsExternalType", "NamedIsExternalTypeBracket",
             "HostFunctionParam", "NamedSlopeOccurrence",
-            // FinishLayerNames: elem.Layers entries with Function=="Finish", ordered by LayerIndex, each rendered "MaterialName;" and concatenated
+            // FinishLayerNames: elem.Layers entries with Function=="Finish1", ordered by LayerIndex, each rendered "MaterialName;" and concatenated
             "FinishLayerNames",
             // symbol-name columns (the `state` overload only; blank when state is null): OwnMasterSymbolId is the element's own decoded
             // NativeParams.Fields["m_masterSymbolId"] (not the TypeId/FamilyTypeId fields, which can be canonicalized or inherited),
@@ -154,7 +154,7 @@ static class InspectBatchDump
             double? namedSlopeOccurrence = NamedDoubleParam(e, "Slope");
             string? finishLayerNames = e.Layers is { Count: > 0 } layers
                 ? string.Concat(layers
-                    .Where(l => l.Function == "Finish" && !string.IsNullOrWhiteSpace(l.MaterialName))
+                    .Where(l => l.Function == "Finish1" && !string.IsNullOrWhiteSpace(l.MaterialName))
                     .OrderBy(l => l.LayerIndex)
                     .Select(l => l.MaterialName + ";"))
                 : null;

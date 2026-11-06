@@ -91,9 +91,9 @@ public partial class IfcExporter
             if (AssemblyCodeCurrent(element, elementsById) is { } code) Associate(entity, code);
             int owner = entity;
             for (int depth = 0; depth < 8 && parentOf.TryGetValue(owner, out int parent); depth++) owner = parent;
-            // A railing is exported from its own element and only aggregated into its stair afterwards: it is not a part inside the stair's
-            // product wrapper, so it does not take the stair's code. The runs and landings of the stair keep it.
-            bool stairRailing = productClass == "IFCRAILING" && classByEntity.TryGetValue(owner, out string? ownerClass) && ownerClass == "IFCSTAIR";
+            // A railing is exported from its own element and only aggregated into its stair or ramp afterwards: it is not a part inside the
+            // product wrapper, so it does not take the code of the stair or ramp. The runs and landings of the stair keep it.
+            bool stairRailing = productClass == "IFCRAILING" && classByEntity.TryGetValue(owner, out string? ownerClass) && ownerClass is "IFCSTAIR" or "IFCRAMP";
             if (owner != entity && !stairRailing && productElementIdByEntity.TryGetValue(owner, out int ownerElementId)
                 && elementsById.TryGetValue(ownerElementId, out Element? ownerElement)
                 && AssemblyCodeCurrent(ownerElement, elementsById) is { } ownerCode)
