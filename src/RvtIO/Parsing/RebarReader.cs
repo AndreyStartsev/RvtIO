@@ -269,7 +269,7 @@ internal static partial class RebarReader
     internal static RebarBars? ReadRebar(WideBlockWalker walker, WideBlockWalker.Walk walk) => ReadRebar(walker, walk, ByQueue(walk));
 
     /// <summary>One layer of a system: the bars of each of its RebarInstance objects (the RebarInSystem of key m_index is one of them).</summary>
-    private sealed record Layer(int BarTypeId, IReadOnlyList<IReadOnlyList<IReadOnlyList<RebarSegment>>> Instances,
+    internal sealed record Layer(int BarTypeId, IReadOnlyList<IReadOnlyList<IReadOnlyList<RebarSegment>>> Instances,
         IReadOnlyList<IReadOnlyList<RebarSegment>> Lines, IReadOnlyList<CutInstance>? Cuts = null);
 
     /// <summary>One instance of a layer after the host cut it: the first bar (RebarInstCache -> OneBarCenterlineCurves -> GLine) and the
@@ -322,8 +322,11 @@ internal static partial class RebarReader
         byQueue.Any(pair => pair.Key >= 0 && pair.Key < walk.Queue.Count && walker.Class(walk.Queue[pair.Key])?.Name == "AssemblyGroupMembership"
             && Integer(pair.Value, "GroupMembership.m_groupId") > 0);
 
-    private static List<Layer>? ReadLayers(WideBlockWalker walker, WideBlockWalker.Walk walk, Dictionary<int, List<WideBlockWalker.Capture>> byQueue)
+    internal static List<Layer>? ReadLayers(WideBlockWalker walker, WideBlockWalker.Walk walk, Dictionary<int, List<WideBlockWalker.Capture>> byQueue)
     {
+        // The bars of a system behind an empty extensible storage entity are not written yet: their GlobalId and bar count are not
+        // understood (the walk used to stop at the entity, so these systems were never read).
+        if (walk.EmptyEntityAt >= 0) return null;
         if (!byQueue.TryGetValue(-1, out var root) || walk.QueueCountAtStart.Count == 0) return null;
         // the layers are consecutive fields of the root; per layer the capture groups open with m_barType
         var groups = new List<List<WideBlockWalker.Capture>>();

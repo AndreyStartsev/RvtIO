@@ -230,6 +230,10 @@ internal sealed class WideNativeParams
         bool laterStore = false;
         int rootQueued = rootClassId >= 0 && _walker.IsA(rootClassId, "MaterialElem") && walk.QueueCountAtStart.Count > 0
             ? walk.QueueCountAtStart[0] : walk.Queue.Count;
+        // Objects queued behind an extensible storage entity without values are not counted: the walk used to stop at that entity, and passing it must not
+        // change which elements list their unset parameters (the reference output lists them).
+        if (walk.EmptyEntityAt >= 0 && walk.EmptyEntityAt + 1 < walk.QueueCountAtStart.Count)
+            rootQueued = Math.Min(rootQueued, walk.QueueCountAtStart[walk.EmptyEntityAt + 1]);
         for (int i = leading; i < rootQueued; i++) laterStore |= _storeIds.Contains(walk.Queue[i]);
         int finished = walk.QueueEnd.Count;
         np.RootParameterStoresComplete = !laterStore && finished >= leading;
@@ -275,15 +279,17 @@ internal sealed class WideNativeParams
 
     /// <summary>The connectors of the element and their calculations under the keys of the Revit 2022 walk
     /// (<c>CopyOccurrence</c>): "771#k:m_nIndex" and the ConnectorId entries of connector k, "3556#j:..." (2381, 2382, 2380) for
-    /// the j-th calculation of its class and "calc#n:class/occurrence" for the n-th calculation of any class. The connectors are
-    /// queued in connector order and each owns one calculation among its modifiers, so the n-th calculation belongs to the
-    /// n-th connector, as in the 2022 walk. A ConnectorId item is stored before the Connector that holds it.</summary>
+    /// the j-th calculation of its class and "calc#n:class/occurrence" for the n-th calculation of any class. Unlike the 2022 walk
+    /// this one knows which objects a connector queued: "771#k:m_mode" is its mode and "771#k:calcClass/calcOccurrence" name the
+    /// calculation among its own modifiers (absent for a connector with none, such as a communication or surface connector).
+    /// A ConnectorId item is stored before the Connector that holds it.</summary>
     private void AddConnectorRecords(TfBlockDeserializer.NativeParams np, WideBlockWalker.Walk walk)
     {
         var pending = new List<Dictionary<string, object?>>();
         var occurrences = new Dictionary<string, int>();
+        var ownerOfQueued = new Dictionary<int, int>();
         int connectors = 0, calculations = 0;
-        foreach (var (classId, _, values) in walk.Records)
+        foreach (var (classId, queueIndex, values) in walk.Records)
         {
             string name = _walker.Class(classId)!.Name;
             if (name == "ConnectorId") { pending.Add(values); continue; }
@@ -291,6 +297,10 @@ internal sealed class WideNativeParams
             {
                 string prefix = "771#" + connectors.ToString(CultureInfo.InvariantCulture) + ":";
                 np.Fields[prefix + "m_nIndex"] = Int(values, "m_nIndex", 0);
+                np.Fields[prefix + "m_mode"] = Int(values, "m_mode", 0);
+                if (queueIndex >= 0 && queueIndex < walk.QueueEnd.Count)
+                    for (int child = walk.QueueCountAtStart[queueIndex]; child < walk.QueueEnd[queueIndex]; child++)
+                        ownerOfQueued[child] = connectors;
                 np.Fields[prefix + "m_arrRefs#"] = pending.Count;
                 for (int i = 0; i < pending.Count; i++)
                 {
@@ -312,6 +322,11 @@ internal sealed class WideNativeParams
             string calc = r22.ToString(CultureInfo.InvariantCulture) + "#" + occurrence.ToString(CultureInfo.InvariantCulture) + ":";
             foreach (string field in new[] { "m_idSystem", "m_nSection", "m_eSystemType", "m_eDirection", "m_idDownstreamCircuit" })
                 if (values.ContainsKey(field)) np.Fields[calc + field] = Int(values, field, 0);
+            if (ownerOfQueued.TryGetValue(queueIndex, out int owner) && !np.Fields.ContainsKey($"771#{owner}:calcClass"))
+            {
+                np.Fields[$"771#{owner}:calcClass"] = r22;
+                np.Fields[$"771#{owner}:calcOccurrence"] = occurrence;
+            }
             calculations++;
         }
     }

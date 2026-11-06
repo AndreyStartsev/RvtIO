@@ -57,6 +57,7 @@ public partial class IfcExporter
             {
                 TfBlockDeserializer.StairRunStyle.Straight => "STRAIGHT",
                 TfBlockDeserializer.StairRunStyle.Sketched => "FREEFORM",
+                TfBlockDeserializer.StairRunStyle.Spiral => "SPIRAL",
                 _ => "NOTDEFINED",
             }
             : "NOTDEFINED";
