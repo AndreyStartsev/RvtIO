@@ -58,6 +58,30 @@ public class IfcExporterMemberPlateCommonPropertySetTests
         finally { Cleanup(path); }
     }
 
+    // The legacy profile writes the Span of a mullion with its 15-digit real: a foot is 304.8, not 304.80000000000001.
+    [Theory]
+    [InlineData(1.0, "304.8")]
+    [InlineData(10.0, "3048.")]
+    [InlineData(2.5, "762.")]
+    public void LegacyMullion_SpanKeepsTheFifteenDigitReal(double curveElemLengthFt, string expected)
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(LinearElement(
+            id: 300, typeId: 301, name: "Mullion_50x100", categoryId: MullionCategoryId,
+            category: "OST_CurtainWallMullions", centreX: 0, curveElemLengthFt: curveElemLengthFt));
+        string path = TempIfcPath("member-legacy-span");
+
+        try
+        {
+            new IfcExporter { Profile = IfcProfile.Legacy }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+
+            var (_, valueIds) = SolePsetOfName(ifc, "Pset_MemberCommon");
+            Assert.Equal($"IFCPOSITIVELENGTHMEASURE({expected})", ResolveProperties(ifc, valueIds)["Span"]);
+        }
+        finally { Cleanup(path); }
+    }
+
     [Fact]
     public void NamelessMullion_KeepsPsetMemberCommonButOmitsOnlyReference_NotTheWholePset()
     {

@@ -66002,7 +66002,7 @@ public partial class IfcExporter
                     out MemberSpanSource spanSource))
             {
                 valueIds.Add(GetOrAddPropertySingleValue(
-                    w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(spanMm)})"));
+                    w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D(spanMm)})"));
                 if (spanSource == MemberSpanSource.RuntimeInstanceLength)
                     _spanRuntimeInstanceLengthCount++;
                 else if (spanSource == MemberSpanSource.BrepScaledLength)
