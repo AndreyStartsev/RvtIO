@@ -1982,22 +1982,80 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Theory]
-    [InlineData(true, "3,3", true)]
-    [InlineData(false, "3,3", false)]
-    [InlineData(true, "$,$", false)]
-    public void Pass_StairFlight_LengthIsTreadsTimesTreadLengthOfARunThatTakesTheSurrogate(bool takesTheSurrogate, string counts, bool hasLength)
+    [InlineData(true, "0.3", true)]
+    [InlineData(false, "0.3", false)]
+    [InlineData(true, "$", false)]
+    public void Pass_StairFlight_LengthIsTreadsTimesTreadLengthOfARunThatTakesTheSurrogate(bool takesTheSurrogate, string treadLength, bool hasLength)
     {
         var (w, owner, placement) = NewWriter();
-        int flight = w.Add("IFCSTAIRFLIGHT", $"'KZGD7y6S5209$mGLi_sPlj',#{owner},'Run',$,'Monolithic Run:190mm Depth',#{placement},$,'1',{counts},0.1805,0.3");
+        int flight = w.Add("IFCSTAIRFLIGHT", $"'KZGD7y6S5209$mGLi_sPlj',#{owner},'Run',$,'Monolithic Run:190mm Depth',#{placement},$,'1',3,3,0.1805,{treadLength}");
         var element = new Element { Id = 19, CategoryId = -2000120, Geometry = Box(1, 1, 2) };
         var exporter = new IfcExporter();
-        if (takesTheSurrogate) exporter.LengthRuleRunsCurrent.Add(19);
+        if (takesTheSurrogate) exporter.LengthRuleRunsCurrent[19] = 3;
 
         Apply(w, owner, new() { [19] = element }, new() { [flight] = 19 }, exporter: exporter);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 2 * CubicFeet));
         if (hasLength) AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Length", 0.9));
         else Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
+    }
+
+    private static Element StairRunOf(int id, int stairsId, int topRiserIndex, int beginWithRiser, int endWithRiser, bool sketched) => new()
+    {
+        Id = id, CategoryId = -2000120, Geometry = Box(1, 1, 2),
+        SerializedStairRunInput = new RvtIO.Parsing.TfBlockDeserializer.StairRunInput(id, stairsId,
+            sketched ? RvtIO.Parsing.TfBlockDeserializer.StairRunStyle.Sketched : RvtIO.Parsing.TfBlockDeserializer.StairRunStyle.Straight, [new(1, 0, 0)],
+            new RvtIO.Parsing.TfBlockDeserializer.StairRunNumbers(0.0, 1.5, 3.0, 0, topRiserIndex, beginWithRiser, endWithRiser)),
+    };
+
+    [Fact]
+    public void Pass_StairFlight_AnAssembledRunWhoseAttributesAreSet_StillHasNoLength()
+    {
+        // A sketched run without an end riser, indices 0 to 17, and a stair that stores 16 risers: the attributes of the flight count 16 risers
+        // and 16 treads and agree with the stair, the count the surrogate was calibrated on (17 risers) does not, so the run takes no Length.
+        var stairs = new Element { Id = 100, SerializedActualNumberOfRisers = 16, SerializedActualTreadDepthFeet = 0.8202099737532809 };
+        var run = StairRunOf(19, 100, topRiserIndex: 17, beginWithRiser: 1, endWithRiser: 0, sketched: true);
+        var byId = new Dictionary<int, Element> { [100] = stairs, [19] = run };
+        string attributes = IfcExporter.StairFlightAttributes(run, byId);
+        Assert.StartsWith("16,16,", attributes);
+        var (w, owner, placement) = NewWriter();
+        int flight = w.Add("IFCSTAIRFLIGHT", $"'KZGD7y6S5209$mGLi_sPlj',#{owner},'Run',$,'Non-Monolithic Run:50mm Tread 13mm Riser',#{placement},$,'19',{attributes}");
+        var exporter = new IfcExporter();
+        // as the export does for a run that takes the surrogate
+        if (IfcExporter.RunLengthTreadsCurrent(run, byId) is int treads) exporter.LengthRuleRunsCurrent[run.Id] = treads;
+        Assert.Empty(exporter.LengthRuleRunsCurrent);
+
+        Apply(w, owner, new() { [19] = run }, new() { [flight] = 19 }, exporter: exporter);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 2 * CubicFeet));
+        Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
+    }
+
+    [Theory]
+    [InlineData(false, 1, 1, 4, 3)]   // a straight run with a riser at both ends: 4 risers, 3 treads
+    [InlineData(true, 1, 1, 4, 3)]    // a sketched run that ends with a riser counts like it
+    [InlineData(true, 1, 0, 4, 4)]    // a sketched run without an end riser, the stair storing the index span: all of it
+    [InlineData(true, 1, 0, 3, -1)]   // ... but not when the stair stores the count that is one less
+    [InlineData(false, 1, 0, 3, -1)]  // a straight run with the same flag counts its index span too
+    [InlineData(true, 1, 0, -2, 4)]   // a stair that stores no riser count agrees with any run
+    public void RunLengthTreads_AreCountedFromTheIndexSpan_AndOnlyWhereTheStairAgrees(bool sketched, int begin, int end, int storedRisers, int expected)
+    {
+        var stairs = new Element { Id = 100, SerializedActualNumberOfRisers = storedRisers == -2 ? null : storedRisers };
+        var run = StairRunOf(19, 100, topRiserIndex: 4, begin, end, sketched);
+        var byId = new Dictionary<int, Element> { [100] = stairs, [19] = run };
+
+        int? treads = IfcExporter.RunLengthTreadsCurrent(run, byId);
+
+        Assert.Equal(expected == -1 ? null : expected, treads);
+    }
+
+    [Fact]
+    public void RunLengthTreads_NeedTheRunInputOfTheRunItself()
+    {
+        var byId = new Dictionary<int, Element> { [100] = new Element { Id = 100 } };
+        Assert.Null(IfcExporter.RunLengthTreadsCurrent(new Element { Id = 19 }, byId));
+        var other = StairRunOf(20, 100, topRiserIndex: 4, beginWithRiser: 1, endWithRiser: 1, sketched: false);
+        Assert.Null(IfcExporter.RunLengthTreadsCurrent(new Element { Id = 19, SerializedStairRunInput = other.SerializedStairRunInput }, byId));
     }
 
 
