@@ -28,12 +28,19 @@ internal static class PagedGzipStream
 
     /// <summary>Decoded bytes of <paramref name="storageName"/>/<paramref name="streamName"/>,
     /// or null when the stream is missing or does not decode exactly.</summary>
-    internal static byte[]? Read(RootStorage root, string storageName, string streamName)
+    internal static byte[]? Read(RootStorage root, string storageName, string streamName) =>
+        Read(root, storageName, streamName, out _);
+
+    /// <summary>Decoded bytes of <paramref name="storageName"/>/<paramref name="streamName"/> with raw stream length,
+    /// or null when the stream is missing or does not decode exactly.</summary>
+    internal static byte[]? Read(RootStorage root, string storageName, string streamName, out long rawLength)
     {
+        rawLength = 0;
         try
         {
             var storage = root.OpenStorage(storageName);
             using var stream = storage.OpenStream(streamName);
+            rawLength = stream.Length;
             var raw = new byte[stream.Length];
             stream.ReadExactly(raw);
             return Decompress(raw);

@@ -829,7 +829,8 @@ public partial class RvtFileReader
 
         using var root = RootStorage.OpenRead(rvtPath);
 
-        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact);
+        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact,
+            ElemTableRecover.Limits(_options.RaiseLimits), _options.Diagnostics);
         var fileMetadata = BasicFileInfoReader.Read(root);
         var projectInfo = ProjectInfoReader.Read(root);
         var transmissionData = TransmissionDataReader.Read(root);
@@ -1130,8 +1131,8 @@ public partial class RvtFileReader
 
             var chunks = decompressor.DecompressAll(raw);
             var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
-            _options.Diagnostics?.Streams.Add(new StreamRecord("Partitions/" + partEntry.Name, raw.Length, members, decodedMembers,
-                failedMembers, recoveredMembers, unverifiedMembers));
+            RecordStream("Partitions/" + partEntry.Name, raw.Length, members, decodedMembers,
+                failedMembers, recoveredMembers, unverifiedMembers);
             diag?.WriteLine($"  Chunks: {chunks.Count} decompressed");
             if (routing != null && int.TryParse(partEntry.Name, out int partitionNumber)
                 && RecordRouting.Stale(routing.Census, routing.Current, partitionNumber) is { Count: > 0 } stale)
@@ -1182,6 +1183,13 @@ public partial class RvtFileReader
         return new RoutingPlan(census, current);
     }
 
+    private void RecordStream(string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified)
+    {
+        if (_options.Diagnostics == null) return;
+        if (_options.Diagnostics.Streams.Any(s => s.Name == name)) return;
+        _options.Diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified));
+    }
+
     private List<byte[]> DecompressStorage(RootStorage root, string storageName, TextWriter? diag)
     {
         try
@@ -1202,10 +1210,13 @@ public partial class RvtFileReader
                     if (PagedGzipStream.Decompress(raw) is { } exact)
                     {
                         diag?.WriteLine($"{storageName}/{entry.Name}: exact paged decode ({exact.Length:N0} bytes)");
+                        RecordStream($"{storageName}/{entry.Name}", raw.Length, 1, 1, 0, 0, 0);
                         allChunks.Add(exact);
                         continue;
                     }
                     var chunks = decompressor.DecompressAll(raw);
+                    var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
+                    RecordStream($"{storageName}/{entry.Name}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers);
                     if (chunks.Count > 0)
                     {
                         diag?.WriteLine($"{storageName}/{entry.Name}: {chunks.Count} chunks ({raw.Length:N0} bytes)");
@@ -1215,6 +1226,7 @@ public partial class RvtFileReader
                 catch (Exception ex) when (MalformedInput.Is(ex))
                 {
                     diag?.WriteLine($"{storageName}/{entry.Name}: skipped, not decodable ({ex.GetType().Name}: {ex.Message})");
+                    RecordStream($"{storageName}/{entry.Name}", raw.Length, 1, 0, 1, 0, 0);
                 }
             }
             return allChunks;
@@ -1232,9 +1244,10 @@ public partial class RvtFileReader
     /// fallback for streams the exact decode rejects.</summary>
     private EpisodeTableParseResult ReadEpisodeTable(RootStorage root, TextWriter? diag, FileSchema? wideSchema = null)
     {
-        if (PagedGzipStream.Read(root, "Global", "History") is { } exact)
+        if (PagedGzipStream.Read(root, "Global", "History", out long rawLength) is { } exact)
         {
             diag?.WriteLine($"Global/History: exact paged decode ({exact.Length:N0} bytes)");
+            RecordStream("Global/History", rawLength, 1, 1, 0, 0, 0);
             return ParseEpisodeGuids(new List<byte[]> { exact }, diag, wideSchema);
         }
         return ParseEpisodeGuids(DecompressNamedStream(root, "Global", "History", diag), diag, wideSchema);
@@ -1255,12 +1268,15 @@ public partial class RvtFileReader
             stream.ReadExactly(raw);
             var decompressor = new ChunkDecompressor();
             var chunks = decompressor.DecompressAll(raw);
+            var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
+            RecordStream($"{storageName}/{streamName}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers);
             diag?.WriteLine($"{storageName}/{streamName}: {chunks.Count} chunks ({raw.Length:N0} bytes)");
             return chunks;
         }
         catch (Exception ex) when (MalformedInput.Is(ex))
         {
             diag?.WriteLine($"{storageName}/{streamName}: unreadable ({ex.GetType().Name}: {ex.Message})");
+            RecordStream($"{storageName}/{streamName}", 0, 1, 0, 1, 0, 0);
             return [];
         }
     }
