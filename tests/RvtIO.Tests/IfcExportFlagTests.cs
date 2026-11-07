@@ -186,6 +186,102 @@ public class IfcExportFlagTests
         Assert.Equal(expected, Regex.Matches(ifc, @"=IFCFACEBASEDSURFACEMODEL\(").Count);
     }
 
+    // The group of model elements, the system of an MEP network and the group of a reinforcement system are entities made from an element
+    // of their own, whose members are products of their own: the flags of that element decide, the members are not touched.
+
+    private static List<(string Type, string Args)> WrittenBy(string method, IfcProfile profile, params object[] arguments)
+    {
+        var writer = new StepWriter();
+        typeof(IfcExporter).GetMethod(method, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(new IfcExporter { Profile = profile }, [writer, .. arguments]);
+        return Enumerable.Range(0, writer.EntityCount).Select(writer.EntityAt).Select(entity => (entity.Type, entity.Args)).ToList();
+    }
+
+    private static Element Flagged(Element element, int? instanceFlag, int? typeFlag, List<Element> others)
+    {
+        if (instanceFlag is int own) element.Parameters.Add(Flag(InstanceFlag, own));
+        if (typeFlag is int type)
+        {
+            element.TypeId = 8800;
+            others.Add(new Element { Id = 8800, Name = "Flag type", Parameters = [Flag(TypeFlag, type)] });
+        }
+        return element;
+    }
+
+    // instance flag, type flag, groups written
+    [Theory]
+    [InlineData(null, null, 1)]
+    [InlineData(2, null, 0)]
+    [InlineData(null, 2, 0)]
+    [InlineData(1, 2, 1)]
+    public void AModelGroupWhoseExportFlagIsNo_IsNotWritten_AndItsMembersStay(int? instanceFlag, int? typeFlag, int expected)
+    {
+        var elements = new List<Element>();
+        var group = Flagged(new Element { Id = 50, CategoryId = -2000095, Name = "Lift", SerializedGroupFamilyLabel = "Model group" }, instanceFlag, typeFlag, elements);
+        elements.AddRange([group, new Element { Id = 100, SerializedGroupId = 50 }]);
+
+        var written = WrittenBy("WriteModelGroups", IfcProfile.Current, 20, elements.ToDictionary(element => element.Id),
+            new Dictionary<int, (int entityId, int placementId, string ifcType)> { [100] = (7, 8, "IFCWALLSTANDARDCASE") });
+
+        Assert.Equal(expected, written.Count(entity => entity.Type == "IFCGROUP"));
+        Assert.Equal(expected, written.Count(entity => entity.Type == "IFCRELASSIGNSTOGROUP"));
+    }
+
+    [Fact]
+    public void ANestedModelGroupWhoseExportFlagIsNo_IsNotWritten_AndItsOuterGroupStays()
+    {
+        var elements = new List<Element>();
+        var outer = new Element { Id = 50, CategoryId = -2000095, Name = "Outer", SerializedGroupFamilyLabel = "Model group" };
+        var inner = Flagged(new Element { Id = 51, CategoryId = -2000095, Name = "Inner", SerializedGroupFamilyLabel = "Model group", SerializedGroupId = 50 }, 2, null, elements);
+        elements.AddRange([outer, inner, new Element { Id = 100, SerializedGroupId = 50 }, new Element { Id = 101, SerializedGroupId = 51 }]);
+
+        var written = WrittenBy("WriteModelGroups", IfcProfile.Current, 20, elements.ToDictionary(element => element.Id),
+            new Dictionary<int, (int entityId, int placementId, string ifcType)>
+            {
+                [100] = (7, 8, "IFCWALLSTANDARDCASE"), [101] = (11, 12, "IFCDOOR"),
+            });
+
+        string group = Assert.Single(written, entity => entity.Type == "IFCGROUP").Args;
+        Assert.Contains("'Model Group:Outer:50'", group);
+        Assert.Contains(",(#7),", Assert.Single(written, entity => entity.Type == "IFCRELASSIGNSTOGROUP").Args);
+    }
+
+    [Theory]
+    [InlineData(null, null, 1)]
+    [InlineData(2, null, 0)]
+    [InlineData(null, 2, 0)]
+    [InlineData(1, 2, 1)]
+    public void AnMepSystemWhoseExportFlagIsNo_IsNotWritten(int? instanceFlag, int? typeFlag, int expected)
+    {
+        var elements = new List<Element>();
+        var system = Flagged(new Element { Id = 50, SerializedMepSystem = ("Supply 1", 60) }, instanceFlag, typeFlag, elements);
+        elements.AddRange([system, new Element { Id = 60, Name = "Supply type" }]);
+
+        var written = WrittenBy("WriteMepSystems", IfcProfile.Current, 20, 9, elements.ToDictionary(element => element.Id),
+            new SortedDictionary<int, SortedSet<int>> { [50] = [4, 7] });
+
+        Assert.Equal(expected, written.Count(entity => entity.Type == "IFCSYSTEM"));
+        Assert.Equal(expected, written.Count(entity => entity.Type == "IFCRELASSIGNSTOGROUP"));
+    }
+
+    [Theory]
+    [InlineData(null, null, 1)]
+    [InlineData(2, null, 0)]
+    [InlineData(null, 2, 0)]
+    [InlineData(1, 2, 1)]
+    public void ARebarSystemWhoseExportFlagIsNo_GetsNoGroup_AndItsBarsStay(int? instanceFlag, int? typeFlag, int expected)
+    {
+        var elements = new List<Element>();
+        var system = Flagged(new Element { Id = 600, CategoryId = -2009003, Name = "Area Reinforcement 1" }, instanceFlag, typeFlag, elements);
+        elements.AddRange([RebarReaderTests.Bar(500, 600), RebarReaderTests.Bar(501, 600), system]);
+
+        string ifc = ExportText(IfcProfile.Current, elements.ToArray());
+
+        Assert.Equal(2, Regex.Matches(ifc, @"=IFCREINFORCINGBAR\(").Count);
+        Assert.Equal(expected, Regex.Matches(ifc, @"=IFCGROUP\(").Count);
+        Assert.Equal(expected, Regex.Matches(ifc, @"=IFCRELASSIGNSTOGROUP\(").Count);
+    }
+
     [Fact]
     public void OnlyTheFlaggedInstancesAreDropped()
     {

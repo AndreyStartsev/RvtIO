@@ -67089,7 +67089,8 @@ public partial class IfcExporter
             if (depth > MaxGroupNesting) return null;
             if (groupEntityIds.TryGetValue(groupId, out int? done)) return done;
             groupEntityIds[groupId] = null; // a cycle yields no group
-            if (!elemById.TryGetValue(groupId, out var group) || group.CategoryId != -2000095
+            // A group whose export flags say No is not written; its members are products of their own and stay.
+            if (!elemById.TryGetValue(groupId, out var group) || group.CategoryId != -2000095 || ExportFlagIsNo(group, elemById)
                 || !membersByGroup.TryGetValue(groupId, out var memberIds))
                 return null;
             // The current profile names every group "Model Group"; only the legacy profile needs the localized label,
@@ -67133,7 +67134,7 @@ public partial class IfcExporter
     {
         foreach (var (systemId, members) in membersBySystem)
         {
-            if (members.Count == 0 || !elemById.TryGetValue(systemId, out var system)
+            if (members.Count == 0 || !elemById.TryGetValue(systemId, out var system) || ExportFlagIsNo(system, elemById)
                 || system.SerializedMepSystem is not var (name, typeId))
                 continue;
             string objectType = elemById.TryGetValue(typeId, out var type) ? type.Name ?? "" : "";
