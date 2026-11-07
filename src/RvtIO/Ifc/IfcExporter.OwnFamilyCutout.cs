@@ -189,7 +189,7 @@ public partial class IfcExporter
         bool hasProjectPhaseReference)
     {
         if (cutter.IsBlockOnly || !hasProjectPhaseReference || IsNonPhysicalCategory(cutter.Category)
-            || cutter.BoundingBox is not { Length: >= 6 } box
+            || cutter.DecodedBox is not { Length: >= 6 } box
             || cutter.Geometry is not { Faces.Count: > 0 } geometry
             || !geometry.Faces.Any(face => face.OuterVertices is { Count: >= 3 })
             || FacetedGeometryCannotCreateProductShapeAtIfcPrecision(geometry)) return false;

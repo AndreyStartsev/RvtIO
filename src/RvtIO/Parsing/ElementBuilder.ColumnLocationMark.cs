@@ -63,7 +63,7 @@ internal static partial class ElementBuilder
         {
             if (column.CategoryId != StructuralColumnsCategoryId || column.NativeMasterSymbolId == null
                 || column.StructuralConnectionTypes == null || column.InstanceOriginXY is not { } origin
-                || column.BoundingBox is not { Length: >= 6 } box
+                || ElementBuilder.GeometryBox(column) is not { Length: >= 6 } box
                 || origin.X < box[0] - OriginInsideBoxMargin || origin.X > box[3] + OriginInsideBoxMargin
                 || origin.Y < box[1] - OriginInsideBoxMargin || origin.Y > box[4] + OriginInsideBoxMargin
                 || NearestGridIntersection(grids, origin.X, origin.Y) is not var (first, second))

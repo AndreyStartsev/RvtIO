@@ -1328,6 +1328,43 @@ public class IfcExporterTypeObjectsTests
         Assert.DoesNotContain(associated, list => Regex.IsMatch(list, $@"#{roofId}(?!\d)"));
     }
 
+    [Fact]
+    public void Current_RoofContainerOfACurtainGrid_IsTheSameRoofWithTheHeaderOutlineOfAFile()
+    {
+        // A file read gives the container roof the outline its header stores (the box the application reports) though the roof has no
+        // geometry of its own: the outline is no sign of a body, and the roof is still the container of its panels.
+        string Export(bool withOutline)
+        {
+            var parent = Product(100, -2000035, "OST_Roofs", null, null);
+            parent.TypeId = 500; parent.Geometry = null; parent.BoundingBox = null;
+            if (withOutline)
+            {
+                parent.BoundingBox = [0, 0, 10, 5, 5, 12];
+                parent.BoundingBoxIsHeaderOutline = true;
+            }
+            parent.Parameters.Add(new Parameter { Id = -1005500, StorageType = StorageType.ElementId, Value = -1,
+                Definition = new Definition { Id = -1005500, Name = "STRUCTURAL_MATERIAL_PARAM" } });
+            var child = Product(101, -2000170, "OST_CurtainWallPanels", null, null);
+            child.SerializedCurtainHostId = 100;
+            var info = new RevitFileInfo();
+            info.Elements.AddRange([TypeElement(500, "Sloped Glazing", "Basic Roof"), parent, child]);
+            string path = Path.Combine(Path.GetTempPath(), $"revitreader-roof-outline-{Guid.NewGuid():N}.ifc");
+            try
+            {
+                new IfcExporter().Export(info, path);
+                string ifc = File.ReadAllText(path);
+                return ifc[ifc.IndexOf("DATA;", StringComparison.Ordinal)..];
+            }
+            finally { if (File.Exists(path)) File.Delete(path); }
+        }
+
+        string without = Export(withOutline: false);
+        string with = Export(withOutline: true);
+
+        Assert.Single(Regex.Matches(with, @"=IFCROOF\("));
+        Assert.Equal(without, with);
+    }
+
     [Theory]
     [InlineData(IfcProfile.Legacy, 1)]
     [InlineData(IfcProfile.Current, 0)]

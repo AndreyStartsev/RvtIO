@@ -33,7 +33,7 @@ internal static partial class ElementBuilder
             state.IncludeNonVisibleQuantities = true;
             try
             {
-                var coarse = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.BoundingBox };
+                var coarse = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.Geometry?.BoundingBox };
                 var own = grep?.CoarseQuantities ?? grep?.Coarse ?? grep;
                 if (own != null)
                 {
@@ -67,7 +67,7 @@ internal static partial class ElementBuilder
         state.DetailView = 2;
         try
         {
-            var alternative = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.BoundingBox };
+            var alternative = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.Geometry?.BoundingBox };
             var block = grep?.Medium ?? grep;
             if (block != null)
             {

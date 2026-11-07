@@ -106,6 +106,7 @@ internal static class RecordParser
                     Array.Copy(chunk, pos + 16, body, 0, (int)bodySize);
                     var rec = new ElementRecord { ElemId = elemId, Body = body, Subclass = 0 };
                     ExtractR25Body(rec);
+
                     BlockParser.ExtractBlockStrings(body, 0, body.Length, elemId, state.ElemStrings);
                     BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
                     state.Records[elemId] = rec;
