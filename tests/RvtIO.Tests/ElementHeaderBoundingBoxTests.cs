@@ -107,15 +107,28 @@ public class ElementHeaderBoundingBoxTests
         byte[] record = Record(OutlineBody(box));
         record[8] ^= 0xFF;
         Assert.Null(ElementHeaderCategory.ReadBoundingBox(record, 0));
-        // The structure counts as read where its tags stand: another class behind m_pBBox or m_parents, a handle that is neither
-        // 0 nor a new object, and m_viewRules naming a new object (which queues an object in front of the outline) are unknown.
+        // The structure counts as read where its tags stand: another class behind m_pBBox or m_parents, and a handle that is neither
+        // 0 nor a new object, are unknown.
         Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(Pointers(OutlineTag + 1, ParentsTag, box)), 0));
         Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(Pointers(OutlineTag, ParentsTag + 1, box)), 0));
         Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(Pointers(OutlineTag, ParentsTag, box, boxHandle: 7)), 0));
-        Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(OutlineBody(box), viewRules: NewObject), 0));
         // A record cut inside the six doubles.
         byte[] cut = Record(OutlineBody(box));
         Assert.Null(ElementHeaderCategory.ReadBoundingBox(cut[..^8], 0));
+    }
+
+    [Fact]
+    public void Reader_ReadsTheOutlineWhateverBitsTheViewRulesHold()
+    {
+        // m_viewRules is four bytes of flags, and all ones (no rule set) is a value like the others: the outline behind it is read.
+        double[] box = [-1.5, -2.25, 0.0, 3.75, 4.5, 12.0];
+        foreach (uint viewRules in new[] { NewObject, 0u, 0xFFFF8000u, 0xFFFFEF7Fu })
+        {
+            var verdict = ElementHeaderCategory.ReadBoundingBox(Record(OutlineBody(box), viewRules: viewRules), 0);
+            Assert.NotNull(verdict);
+            Assert.Equal(box, verdict.Box);
+            Assert.False(ElementHeaderCategory.ReadBoundingBox(Record(AbsentBody(), viewRules: viewRules), 0)!.Present);
+        }
     }
 
     [Fact]
@@ -249,6 +262,8 @@ public class ElementHeaderBoundingBoxTests
         // The files of these releases carry their own class schema and are read from it, without the R22 layout: the outline is
         // read there too, and is the box the R22 layout reads for the same element.
         var plain = new RvtFileReader().Read(path);
+        // no geometry is decoded there: the exporter is told that the boxes are outlines and nothing else
+        Assert.True(plain.HeaderOutlinesOnly);
         var boxed = plain.Elements.Where(e => e.BoundingBox is { Length: 6 }).ToList();
         Assert.NotEmpty(boxed);
 

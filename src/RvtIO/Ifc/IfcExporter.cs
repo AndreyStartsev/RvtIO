@@ -353,23 +353,50 @@ public partial class IfcExporter
         // geometry of its computed symbol (Element.SerializedComputedSymbolGeometry); the elements
         // get their own geometry back after the export.
         var computedSymbolGeometry = CurrentProfile ? UseComputedSymbolGeometryCurrent(info.Elements) : [];
-        // Revit's IFC export holds the main model and the primary option of each design option set: the elements of another option are left out
         var allElements = info.Elements;
-        var designOptions = DesignOptions.Of(allElements);
-        // ... and the elements that do not exist in the export phase (demolished before it, created after it)
-        var phaseFilter = BuildExportPhaseFilter(info);
-        info.Elements = allElements.Where(element => designOptions.InNonPrimaryOption(element) != true
-            && phaseFilter?.Excludes(element) != true).ToList();
-        if (CurrentProfile) info.Elements = RelinkRampTypes(info.Elements);
-        if (phaseFilter != null)
-            _diag?.WriteLine($"IFC export phase filter: {allElements.Count(phaseFilter.Excludes)} elements outside the export phase left out");
-        try { ExportDocument(info, output); }
+        // A file read without the R22 layout carries the outline of every element header and decodes no geometry: the outline is the box
+        // of a body the file does not give, so the exporter sees the elements as it did before the outline was read, without a box, and
+        // writes their products without a representation. The boxes come back after the export.
+        var hiddenOutlines = HideOutlinesOfUndecodedFile(info, allElements);
+        try
+        {
+            // Revit's IFC export holds the main model and the primary option of each design option set: the elements of another option are left out
+            var designOptions = DesignOptions.Of(allElements);
+            // ... and the elements that do not exist in the export phase (demolished before it, created after it)
+            var phaseFilter = BuildExportPhaseFilter(info);
+            info.Elements = allElements.Where(element => designOptions.InNonPrimaryOption(element) != true
+                && phaseFilter?.Excludes(element) != true).ToList();
+            if (CurrentProfile) info.Elements = RelinkRampTypes(info.Elements);
+            if (phaseFilter != null)
+                _diag?.WriteLine($"IFC export phase filter: {allElements.Count(phaseFilter.Excludes)} elements outside the export phase left out");
+            ExportDocument(info, output);
+        }
         finally
         {
             info.Elements = allElements;
             foreach (var (element, original) in computedSymbolGeometry) element.Geometry = original;
+            foreach (var (element, box) in hiddenOutlines) element.BoundingBox = box;
             _facetedPlans.Clear(); // plans nobody asked for must not outlive the export
         }
+    }
+
+    /// <summary>Whether any of the elements holds a decoded body: a solid or a face.</summary>
+    private static bool AnyElementHoldsABody(IEnumerable<Element> elements) =>
+        elements.Any(e => e.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
+
+    /// <summary>Takes the box off every element of a file whose elements carry the outline of their header and nothing else (see
+    /// <see cref="RevitFileInfo.HeaderOutlinesOnly"/>) and returns the boxes taken, to put back.</summary>
+    private static List<(Element Element, double[] Box)> HideOutlinesOfUndecodedFile(RevitFileInfo info, IReadOnlyList<Element> elements)
+    {
+        var hidden = new List<(Element, double[])>();
+        if (!info.HeaderOutlinesOnly) return hidden;
+        foreach (var element in elements)
+            if (element.BoundingBox is { } box)
+            {
+                hidden.Add((element, box));
+                element.BoundingBox = null;
+            }
+        return hidden;
     }
 
     private void ExportDocument(RevitFileInfo info, TextWriter output)
@@ -1610,8 +1637,7 @@ public partial class IfcExporter
             && info.Elements.Any(e => BoundsAreValid(e.BoundingBox ?? e.Geometry?.BoundingBox));
         // A 64-bit-id file read without the R22 layout decodes no geometry at all, and then a wall without a body is the rule, not a
         // finding: the bodies of the file count as decoded when any element holds one.
-        bool bodiesDecoded = info.GeometryUndecoded
-            && info.Elements.Any(e => e.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
+        bool bodiesDecoded = info.GeometryUndecoded && AnyElementHoldsABody(info.Elements);
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
