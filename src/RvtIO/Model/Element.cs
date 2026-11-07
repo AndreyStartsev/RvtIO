@@ -14,6 +14,9 @@ namespace RvtIO.Model
     /// <summary>A Revit element: an instance or a type, with its identity, parameters and geometry.</summary>
     public class Element
     {
+        /// <summary>A copy that shares all members with this element; the caller replaces what it changes.</summary>
+        internal Element ShallowCopy() => (Element)MemberwiseClone();
+
         /// <summary>The element id.</summary>
         public int Id { get; set; }
 
@@ -495,6 +498,11 @@ namespace RvtIO.Model
         /// calculation of a family instance; 0 or negative for none).</summary>
         [JsonIgnore]
         internal IReadOnlyList<int>? SerializedConnectorSystems { get; set; }
+
+        /// <summary>The mode of each connector of <see cref="SerializedConnectorGraph"/>, in the same order; null when the walk of
+        /// the file does not know the mode (Revit 2022 layout).</summary>
+        [JsonIgnore]
+        internal IReadOnlyList<int>? SerializedConnectorModes { get; set; }
 
         /// <summary>The vertical extent (feet) of a Grid's finite surface: the interval of levels the grid belongs to.
         /// Null for a grid whose surface was not decoded.</summary>
