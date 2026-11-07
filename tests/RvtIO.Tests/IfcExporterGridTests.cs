@@ -9,7 +9,7 @@ namespace RvtIO.Tests;
 /// <summary>The current profile's IfcGrid export: grouping into orthogonal pairs and triples and the GlobalId.</summary>
 public class IfcExporterGridTests
 {
-    private static Element Grid(int id, string label, double x0, double y0, double x1, double y1, double z = 4.0,
+    internal static Element Grid(int id, string label, double x0, double y0, double x1, double y1, double z = 4.0,
         (double Min, double Max)? interval = null) => new()
     {
         Id = id,
@@ -230,7 +230,7 @@ public class IfcExporterGridTests
 
     private const int PhaseId = 3;
 
-    private static Element Level(int id, string name, double elevationFeet) => new()
+    internal static Element Level(int id, string name, double elevationFeet) => new()
     {
         Id = id,
         TypeId = 1001,
