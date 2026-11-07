@@ -1124,12 +1124,21 @@ public partial class IfcExporter
         Element? type = TypeOfCurrent(element, context.Elements);
         bool inCurtainWall = element.SerializedHostId is { } hostId
             && context.Products.TryGetValue(hostId, out var host) && host.ifcType == "IFCCURTAINWALL";
-        double? height = ExactNamedParameterFeetCurrent(element, type, "Height", true, -1001300, -1010300) * FeetToMetres
-            ?? (inCurtainWall ? InstanceFrameExtentMetresCurrent(element, 2) : null);
-        // Without a parameter of its own (a panel of a curtain wall holds only a bounding-box estimate) the width is the extent of
-        // the solid along the width of the instance frame.
-        double? width = ExactNamedParameterFeetCurrent(element, type, "Width", true, -1001301, -1010301) * FeetToMetres
-            ?? InstanceFrameExtentMetresCurrent(element, 0);
+        double? roughHeight = ExactNamedParameterFeetCurrent(element, type, "Rough Height", true, -1001304) * FeetToMetres;
+        double? paramHeight = ExactNamedParameterFeetCurrent(element, type, "Height", true, -1001300) * FeetToMetres;
+        double? height = (roughHeight != null && roughHeight > 0 && (paramHeight == null || roughHeight > paramHeight))
+            ? roughHeight : paramHeight;
+        if (height == null && inCurtainWall)
+            height = InstanceFrameExtentMetresCurrent(element, 2)
+                ?? ExactNamedParameterFeetCurrent(element, type, null, true, -1010300) * FeetToMetres;
+
+        double? roughWidth = ExactNamedParameterFeetCurrent(element, type, "Rough Width", true, -1001305) * FeetToMetres;
+        double? paramWidth = ExactNamedParameterFeetCurrent(element, type, "Width", true, -1001301) * FeetToMetres;
+        double? width = (roughWidth != null && roughWidth > 0 && (paramWidth == null || roughWidth > paramWidth))
+            ? roughWidth : paramWidth;
+        if (width == null)
+            width = InstanceFrameExtentMetresCurrent(element, 0)
+                ?? ExactNamedParameterFeetCurrent(element, type, null, true, -1010301) * FeetToMetres;
         // Without any dimension from a parameter, a frame or a curtain wall (a door of a storefront holds none) they are the stored
         // boxes: the height the extent of the box of the instance, the width the extent of the box of its family symbol along the
         // family width axis.

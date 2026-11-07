@@ -69642,14 +69642,20 @@ public partial class IfcExporter
 
 
     /// <summary>Get door/window height in mm from params, frame extent, or bbox.</summary>
-    private static double GetDoorWindowHeight(Element elem, Element? type)
+    internal static double GetDoorWindowHeight(Element elem, Element? type)
     {
-        double? paramFeet = ExactNamedParameterFeetCurrent(elem, type, "Height", true, -1001300, -1010300);
-        if (paramFeet != null && paramFeet > 0)
-            return paramFeet.Value * FeetToMetres * 1000;
+        double? roughFeet = ExactNamedParameterFeetCurrent(elem, type, "Rough Height", true, -1001304);
+        double? paramFeet = ExactNamedParameterFeetCurrent(elem, type, "Height", true, -1001300);
+        double? chosenFeet = (roughFeet != null && roughFeet > 0 && (paramFeet == null || roughFeet > paramFeet))
+            ? roughFeet : paramFeet;
+        if (chosenFeet != null && chosenFeet > 0)
+            return chosenFeet.Value * FeetToMetres * 1000;
         double? frameExtent = InstanceFrameExtentMetresCurrent(elem, 2);
         if (frameExtent != null && frameExtent > 0)
             return frameExtent.Value * 1000;
+        double? panelFeet = ExactNamedParameterFeetCurrent(elem, type, null, true, -1010300);
+        if (panelFeet != null && panelFeet > 0)
+            return panelFeet.Value * FeetToMetres * 1000;
         double[]? bbox = elem.Geometry?.BoundingBox ?? elem.DecodedBox;
         if (bbox != null && bbox.Length >= 6)
             return Math.Abs(bbox[5] - bbox[2]) * FeetToMetres * 1000;
@@ -69657,14 +69663,20 @@ public partial class IfcExporter
     }
 
     /// <summary>Get door/window width in mm from params, frame extent, or bbox.</summary>
-    private static double GetDoorWindowWidth(Element elem, Element? type)
+    internal static double GetDoorWindowWidth(Element elem, Element? type)
     {
-        double? paramFeet = ExactNamedParameterFeetCurrent(elem, type, "Width", true, -1001301, -1010301);
-        if (paramFeet != null && paramFeet > 0)
-            return paramFeet.Value * FeetToMetres * 1000;
+        double? roughFeet = ExactNamedParameterFeetCurrent(elem, type, "Rough Width", true, -1001305);
+        double? paramFeet = ExactNamedParameterFeetCurrent(elem, type, "Width", true, -1001301);
+        double? chosenFeet = (roughFeet != null && roughFeet > 0 && (paramFeet == null || roughFeet > paramFeet))
+            ? roughFeet : paramFeet;
+        if (chosenFeet != null && chosenFeet > 0)
+            return chosenFeet.Value * FeetToMetres * 1000;
         double? frameExtent = InstanceFrameExtentMetresCurrent(elem, 0);
         if (frameExtent != null && frameExtent > 0)
             return frameExtent.Value * 1000;
+        double? panelFeet = ExactNamedParameterFeetCurrent(elem, type, null, true, -1010301);
+        if (panelFeet != null && panelFeet > 0)
+            return panelFeet.Value * FeetToMetres * 1000;
         double[]? bbox = elem.Geometry?.BoundingBox ?? elem.DecodedBox;
         if (bbox != null && bbox.Length >= 6)
         {
