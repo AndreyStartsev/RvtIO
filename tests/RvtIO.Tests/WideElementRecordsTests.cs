@@ -45,6 +45,7 @@ public class WideElementRecordsTests
     private static (string, byte, byte, int) Ref(string name, int cls) => (name, 0x0E, 0, cls);
     private static (string, byte, byte, int) Scalar(string name, byte type) => (name, type, 0, 0);
     private static (string, byte, byte, int) Array(string name, int cls) => (name, 0x0E, 0x50, cls);
+    private static (string, byte, byte, int) Pointer(string name) => (name, 0x0E, 0x01, 0);
 
     private sealed record Ids(int Identifier, int ElementId, int ElemRec, int ElemTable, int Header, int Element, int Wall, int Other, int Level);
 
@@ -302,6 +303,121 @@ public class WideElementRecordsTests
         var index = WideElementRecords.BuildIndex([[project], [foreign]], schema, new HashSet<uint> { 10, 11 })!;
         Assert.Equal(ids.Level, index.RootClasses[10]);   // the Wall block of the second stream is not the root of 10
         Assert.Equal(ids.Wall, index.RootClasses[11]);
+    }
+
+    private sealed record OutlineIds(int Header, int Outline, int Parents, int Level);
+
+    /// <summary>A schema whose ElementHeader has the layout of the files: ids, m_viewRules, m_abFlags4Bytes, m_classDef and the pointers
+    /// m_pBBox and m_parents. The class numbers are those of this file, not those of the Revit 2022 table.</summary>
+    private static (byte[] Stream, OutlineIds Ids) BuildOutlineSchema(bool withParents = true)
+    {
+        var w = new SchemaWriter();
+        int identifier = w.Add("Identifier", 0, Scalar("m_id64", 11));
+        int elementId = w.Add("ElementId", 0, Ref("m_id", identifier));
+        int episode = w.Add("EpisodeId", 0, Scalar("m_id", 4));
+        int info = w.Add("ElementRegenerationInfo", 0, Ref("m_otherElementId", elementId), Scalar("m_otherInt64", 11), Scalar("m_nAtomType", 3));
+        int pair = w.Add("std::pair< ElementRegenerationInfo, EpisodeId >", 0, Ref("first", info), Ref("second", episode));
+        int regen = w.Add("ElementRegenHistory", 0, Array("m_historyMap", pair));
+        w.Add("ElemRec", 0, Ref("m_id", elementId));
+        int viewRules = w.Add("ViewRules", 0, Scalar("m_bits", 4));
+        int classDef = w.Add("ClassDefinitionRef", 0, Scalar("m_ref", 3));
+        int outline = w.Add("Outline", 0, Scalar("m_min", 11));
+        int parents = w.Add("ElementParents", 0, Scalar("m_count", 4));
+        int header = w.Add("ElementHeader", 0, Ref("m_regenHistory", regen), Ref("m_categroryId", elementId), Ref("m_familyId", elementId),
+            Ref("m_ownerViewId", elementId), Ref("m_designOptionId", elementId), Ref("m_unplacedOwnerId", elementId), Ref("m_miscId", elementId),
+            Ref("m_viewRules", viewRules), Scalar("m_abFlags4Bytes", 4), Ref("m_classDef", classDef),
+            Pointer("m_pBBox"), Pointer(withParents ? "m_parents" : "m_other"));
+        int element = w.Add("Element", 0);
+        int level = w.Add("Level", element);
+        return (w.ToArray(), new OutlineIds(header, outline, parents, level));
+    }
+
+    /// <summary>A header record of the 64-bit layout whose outline is <paramref name="box"/> (none when null), tagged with the classes
+    /// of the schema it is written for.</summary>
+    private static byte[] OutlineRecord(OutlineIds ids, ulong id, double[]? box, int regenEntries = 0, int? outlineTag = null)
+    {
+        var p = new MemoryStream();
+        p.Write(BitConverter.GetBytes((ushort)ids.Header));
+        p.Write(BitConverter.GetBytes((uint)regenEntries));
+        for (int i = 0; i < regenEntries; i++)
+        {
+            // an entry whose bytes look like an absent outline in front of m_parents
+            p.Write(new byte[] { 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, (byte)ids.Parents, (byte)(ids.Parents >> 8) });
+            p.Write(new byte[22 - 8]);
+        }
+        p.Write(BitConverter.GetBytes(-2000011L));            // m_categroryId
+        for (int i = 0; i < 5; i++) p.Write(BitConverter.GetBytes(-1L));
+        p.Write(BitConverter.GetBytes(0xFFFF8000u));          // m_viewRules
+        p.Write(BitConverter.GetBytes(0x000109B8u));          // m_abFlags4Bytes
+        p.Write(BitConverter.GetBytes((ushort)0x0725));       // m_classDef
+        if (box == null) p.Write(BitConverter.GetBytes(0u));
+        else
+        {
+            p.Write(BitConverter.GetBytes(0xFFFFFFFFu));
+            p.Write(BitConverter.GetBytes((ushort)(outlineTag ?? ids.Outline)));
+        }
+        p.Write(BitConverter.GetBytes(0xFFFFFFFFu));
+        p.Write(BitConverter.GetBytes((ushort)ids.Parents));
+        foreach (double value in box ?? []) p.Write(BitConverter.GetBytes(value));
+        return Frame(id, null, p.ToArray());
+    }
+
+    [Fact]
+    public void BuildIndex_ReadsTheOutlineOfTheHeaderWithTheClassNumbersOfTheFile()
+    {
+        var (stream, ids) = BuildOutlineSchema();
+        var schema = FileSchema.Parse(stream)!;
+        Assert.NotEqual(297, ids.Outline);
+        double[] box = [-1.5, -2.25, 0.0, 3.75, 4.5, 12.0];
+        var data = Join(
+            OutlineRecord(ids, 10, box),
+            OutlineRecord(ids, 11, null),
+            OutlineRecord(ids, 12, box, regenEntries: 2),            // the entries hold the bytes of an absent outline
+            OutlineRecord(ids, 13, box, outlineTag: ids.Outline + 1), // another class behind m_pBBox: not the structure
+            OutlineRecord(ids, 14, [3, 3, 3, 0, 0, 0]),              // not a box: a counter must not be taken for one
+            OutlineRecord(ids, 99, box));                             // not wanted
+        var index = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 10, 11, 12, 13, 14, 15 })!;
+
+        var present = Assert.IsType<ElementHeaderBox>(index.HeaderBoundingBoxes[10]);
+        Assert.True(present.Present);
+        Assert.Equal(box, present.Box);
+        Assert.False(Assert.IsType<ElementHeaderBox>(index.HeaderBoundingBoxes[11]).Present);
+        Assert.Equal(box, index.HeaderBoundingBoxes[12]!.Box);
+        Assert.Null(index.HeaderBoundingBoxes[13]);
+        Assert.Null(index.HeaderBoundingBoxes[14]);
+        Assert.False(index.HeaderBoundingBoxes.ContainsKey(15));
+        Assert.False(index.HeaderBoundingBoxes.ContainsKey(99));
+        Assert.Equal(-2000011, index.HeaderCategories[10]);   // the category and the outline are read from the same record
+    }
+
+    [Fact]
+    public void BuildIndex_DropsAnOutlineTheCopiesOfAnIdDisagreeOn()
+    {
+        var (stream, ids) = BuildOutlineSchema();
+        var schema = FileSchema.Parse(stream)!;
+        double[] box = [0, 0, 0, 1, 1, 1];
+        var copyA = Join(OutlineRecord(ids, 10, box), OutlineRecord(ids, 11, box), OutlineRecord(ids, 12, null));
+        var copyB = Join(OutlineRecord(ids, 10, box), OutlineRecord(ids, 11, null), OutlineRecord(ids, 12, null));
+        var index = WideElementRecords.BuildIndex([[copyA], [copyB]], schema, new HashSet<uint> { 10, 11, 12 })!;
+        Assert.Equal(box, index.HeaderBoundingBoxes[10]!.Box);   // two copies that agree stay known
+        Assert.Null(index.HeaderBoundingBoxes[11]);              // a box and none: unknown
+        Assert.False(index.HeaderBoundingBoxes[12]!.Present);
+    }
+
+    [Fact]
+    public void BuildIndex_ReadsNoOutlineWhereTheSchemaDoesNotHaveTheHeaderLayout()
+    {
+        // a header of only the history and the category (the schema of the other tests), and one whose last field is not m_parents
+        var (stream, ids) = BuildSchema();
+        var data = Join(Record(ids, 10, [], -2000011));
+        var shortHeader = WideElementRecords.BuildIndex([[data]], FileSchema.Parse(stream)!, new HashSet<uint> { 10 })!;
+        Assert.Equal(-2000011, shortHeader.HeaderCategories[10]);
+        Assert.Empty(shortHeader.HeaderBoundingBoxes);
+
+        var (other, outlineIds) = BuildOutlineSchema(withParents: false);
+        var index = WideElementRecords.BuildIndex([[OutlineRecord(outlineIds, 10, [0, 0, 0, 1, 1, 1])]], FileSchema.Parse(other)!, new HashSet<uint> { 10 })!;
+        Assert.Equal(-2000011, index.HeaderCategories[10]);
+        Assert.Empty(index.HeaderBoundingBoxes);
     }
 
     [Fact]

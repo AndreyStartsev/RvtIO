@@ -12,38 +12,57 @@ namespace RvtIO.Tests;
 public class ElementHeaderBoundingBoxTests
 {
     private const ushort OutlineTag = 297, ParentsTag = 1352;
+    private const uint NewObject = 0xFFFFFFFF;
 
-    /// <summary>An ElementHeader record (class 1340, no regeneration entries) whose tail carries the
-    /// category, family, owner view and design option ids and then the given body.</summary>
-    private static byte[] Record(byte[] body)
+    /// <summary>One entry of the regeneration history: 14 bytes of the Revit 2022 layout.</summary>
+    private static byte[] HistoryEntry(params byte[] leading)
+    {
+        var entry = new byte[14];
+        leading.CopyTo(entry, 0);
+        return entry;
+    }
+
+    /// <summary>An ElementHeader record (class 1340) as the files store it: the regeneration history, the six ids (category, family, owner view,
+    /// design option, unplaced owner, misc), m_viewRules, m_abFlags4Bytes, m_classDef (two bytes), and then <paramref name="pointers"/>: the
+    /// pointers m_pBBox and m_parents and the objects they name.</summary>
+    private static byte[] Record(byte[] pointers, byte[][]? history = null, uint viewRules = 0xFFFF8000)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         writer.Write(0u);
         writer.Write(0u);
         writer.Write((ushort)0x053C);
-        writer.Write(0u);
+        writer.Write((uint)(history?.Length ?? 0));
+        foreach (byte[] entry in history ?? []) writer.Write(entry);
         writer.Write(-2000112);             // m_categroryId (OST_Phases)
-        writer.Write(-1);                   // m_familyId
-        writer.Write(-1);                   // m_ownerViewId
-        writer.Write(-1);                   // m_designOptionId
-        writer.Write(body);
+        for (int i = 0; i < 5; i++) writer.Write(-1);   // m_familyId, m_ownerViewId, m_designOptionId, m_unplacedOwnerId, m_miscId
+        writer.Write(viewRules);            // m_viewRules
+        writer.Write(0x000109B8u);          // m_abFlags4Bytes
+        writer.Write((ushort)0x0725);       // m_classDef
+        writer.Write(pointers);
         byte[] record = stream.ToArray();
         BitConverter.GetBytes((uint)(record.Length - 12)).CopyTo(record, 4);
         return record;
     }
 
-    private static byte[] OutlineBody(double[] box) => WritePattern(OutlineTag, [.. box]);
+    private static byte[] OutlineBody(double[] box) => Pointers(OutlineTag, ParentsTag, [.. box]);
 
-    private static byte[] AbsentBody() => WritePattern(0, []);
+    private static byte[] AbsentBody() => Pointers(0, ParentsTag, []);
 
-    private static byte[] WritePattern(ushort tag, double[] box)
+    /// <summary>m_pBBox (a new object of class <paramref name="outlineTag"/>, or 0: none), m_parents (a new object of class
+    /// <paramref name="parentsTag"/>) and the six doubles of the Outline.</summary>
+    private static byte[] Pointers(ushort outlineTag, ushort parentsTag, double[] box, uint boxHandle = NewObject)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
-        writer.Write(tag);
-        writer.Write(0xFFFFFFFFu);
-        writer.Write(ParentsTag);
+        if (outlineTag == 0) writer.Write(0u);
+        else
+        {
+            writer.Write(boxHandle);
+            writer.Write(outlineTag);
+        }
+        writer.Write(NewObject);
+        writer.Write(parentsTag);
         foreach (double value in box) writer.Write(value);
         return stream.ToArray();
     }
@@ -80,13 +99,68 @@ public class ElementHeaderBoundingBoxTests
     }
 
     [Fact]
-    public void Reader_LeavesARecordWithoutAPatternUnknown()
+    public void Reader_LeavesARecordWithoutTheHeaderStructureUnknown()
     {
+        double[] box = [0, 0, 0, 1, 1, 1];
         Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record([1, 2, 3, 4]), 0));
         // A header the reader cannot place (a wrong class tag) is unknown as well.
-        byte[] record = Record(OutlineBody([0, 0, 0, 1, 1, 1]));
+        byte[] record = Record(OutlineBody(box));
         record[8] ^= 0xFF;
         Assert.Null(ElementHeaderCategory.ReadBoundingBox(record, 0));
+        // The structure counts as read where its tags stand: another class behind m_pBBox or m_parents, a handle that is neither
+        // 0 nor a new object, and m_viewRules naming a new object (which queues an object in front of the outline) are unknown.
+        Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(Pointers(OutlineTag + 1, ParentsTag, box)), 0));
+        Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(Pointers(OutlineTag, ParentsTag + 1, box)), 0));
+        Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(Pointers(OutlineTag, ParentsTag, box, boxHandle: 7)), 0));
+        Assert.Null(ElementHeaderCategory.ReadBoundingBox(Record(OutlineBody(box), viewRules: NewObject), 0));
+        // A record cut inside the six doubles.
+        byte[] cut = Record(OutlineBody(box));
+        Assert.Null(ElementHeaderCategory.ReadBoundingBox(cut[..^8], 0));
+    }
+
+    [Fact]
+    public void Reader_TakesThePositionOfTheOutlineFromTheStructure_NotFromTheBytesOfTheRegenerationHistory()
+    {
+        double[] box = [-1.5, -2.25, 0.0, 3.75, 4.5, 12.0];
+        // A regeneration entry that holds the bytes 00 00 FF FF FF FF 48 05 (what an absent outline looks like in front of m_parents):
+        // the real outline that stands behind the fields is still the one read.
+        byte[] looksAbsent = HistoryEntry(0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x48, 0x05);
+        var verdict = ElementHeaderCategory.ReadBoundingBox(Record(OutlineBody(box), [looksAbsent]), 0);
+        Assert.NotNull(verdict);
+        Assert.True(verdict.Present);
+        Assert.Equal(box, verdict.Box);
+
+        // The bytes of a present outline in a regeneration entry do not make a box for a header that stores none, and a count of
+        // entries that moves the fields moves the read with them.
+        byte[] looksPresent = [.. HistoryEntry(0x29, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x48, 0x05)];
+        byte[] garbage = [.. Enumerable.Range(0, 6).SelectMany(i => BitConverter.GetBytes((double)i))];
+        byte[] entryWithBox = [.. looksPresent[..8], .. garbage[..6]];
+        var absent = ElementHeaderCategory.ReadBoundingBox(Record(AbsentBody(), [entryWithBox, entryWithBox]), 0);
+        Assert.NotNull(absent);
+        Assert.False(absent.Present);
+        var withHistory = ElementHeaderCategory.ReadBoundingBox(Record(OutlineBody(box), [entryWithBox, looksAbsent, entryWithBox]), 0);
+        Assert.NotNull(withHistory);
+        Assert.Equal(box, withHistory.Box);
+    }
+
+    [Fact]
+    public void Reader_ReadsTheOutlineOfAHeaderWhoseIdsAreEightBytesWide()
+    {
+        double[] box = [-1.5, -2.25, 0.0, 3.75, 4.5, 12.0];
+        // categoryAt, six ids of eight bytes, then the same fields as the 32-bit layout: the layout the files of Revit 2024 and later store
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        for (int i = 0; i < 6; i++) writer.Write(-1L);
+        writer.Write(0xFFFF8000u);
+        writer.Write(0x000109B8u);
+        writer.Write((ushort)0x0725);
+        writer.Write(OutlineBody(box));
+        byte[] fields = stream.ToArray();
+        var verdict = ElementHeaderCategory.ReadOutline(fields, 0, fields.Length, 8, OutlineTag, ParentsTag);
+        Assert.NotNull(verdict);
+        Assert.Equal(box, verdict.Box);
+        // read as the 32-bit layout it is not an outline
+        Assert.Null(ElementHeaderCategory.ReadOutline(fields, 0, fields.Length, 4, OutlineTag, ParentsTag));
     }
 
     [Fact]
@@ -108,7 +182,6 @@ public class ElementHeaderBoundingBoxTests
         ElementHeaderCategory.Record(state, Record(AbsentBody()), 0, 101);
         Assert.False(Assert.IsType<ElementHeaderBox>(state.HeaderBoundingBoxes[101]).Present);
     }
-
     [Fact]
     public void Applier_PutsTheStoredOutlineOnTheElementAndClearsTheUnstoredOne()
     {
@@ -161,6 +234,35 @@ public class ElementHeaderBoundingBoxTests
             }
         // A grid or a level has no stored outline in any release.
         Assert.All(info.Elements.Where(e => e.CategoryId is (int)BuiltInCategory.OST_Grids or (int)BuiltInCategory.OST_Levels),
+            e => Assert.Null(e.BoundingBox));
+    }
+
+    [SkippableTheory]
+    [InlineData(2023)]
+    [InlineData(2024)]
+    [InlineData(2025)]
+    [InlineData(2026)]
+    [InlineData(2027)]
+    public void StoredOutline_IsReadByTheDefaultReaderOfEveryRelease(int release)
+    {
+        string path = FirstOfRelease(release) ?? throw TestFiles.Missing($"a project of release {release}");
+        // The files of these releases carry their own class schema and are read from it, without the R22 layout: the outline is
+        // read there too, and is the box the R22 layout reads for the same element.
+        var plain = new RvtFileReader().Read(path);
+        var boxed = plain.Elements.Where(e => e.BoundingBox is { Length: 6 }).ToList();
+        Assert.NotEmpty(boxed);
+
+        var viaR22 = new RvtFileReader(new RvtReaderOptions { R22Layout = true }).Read(path).Elements
+            .Where(e => e.BoundingBox is { Length: 6 }).GroupBy(e => e.Id).ToDictionary(group => group.Key, group => group.First().BoundingBox!);
+        int compared = 0;
+        foreach (var element in boxed)
+            if (viaR22.TryGetValue(element.Id, out double[]? other))
+            {
+                Assert.Equal(other, element.BoundingBox);
+                compared++;
+            }
+        Assert.True(compared > 0, $"release {release}: no element has a box in both reads");
+        Assert.All(plain.Elements.Where(e => e.CategoryId is (int)BuiltInCategory.OST_Grids or (int)BuiltInCategory.OST_Levels),
             e => Assert.Null(e.BoundingBox));
     }
 

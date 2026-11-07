@@ -100,6 +100,11 @@ internal static class WideElementRecords
         /// <summary>ElementHeader.m_designOptionId per element id, with the same agreement rule as <see cref="HeaderCategories"/>.</summary>
         internal Dictionary<uint, int?> HeaderDesignOptions { get; } = new();
 
+        /// <summary>The outline the ElementHeader stores per element id (see <see cref="ElementHeaderCategory.ReadOutline"/>): a verdict when the
+        /// records of the id agree it is there or agree there is none, null when they disagree or the structure was not read. Ids of a file whose
+        /// schema does not have the header layout the reader relies on are absent.</summary>
+        internal Dictionary<uint, ElementHeaderBox?> HeaderBoundingBoxes { get; } = new();
+
         /// <summary>Class id (of the file's own schema) of the Element-derived block of the id; absent when the id has no
         /// such block or its blocks disagree.</summary>
         internal Dictionary<uint, int> RootClasses { get; } = new();
@@ -127,6 +132,7 @@ internal static class WideElementRecords
             return null;
 
         int categoryWidth = schema.FieldSize(header.Fields[1])!.Value;
+        var outlineTags = OutlineTags(schema, header, categoryWidth);
         int max = schema.Classes.Keys.Max();
         var isElement = new bool[max + 1];
         foreach (int id in schema.Classes.Keys) isElement[id] = schema.IsSubclassOf(id, element.Id);
@@ -148,7 +154,7 @@ internal static class WideElementRecords
             var recordIds = new HashSet<uint>();
             var blockClasses = new Dictionary<uint, int>();   // -1: the stream holds blocks of two classes for the id
             var rootBlocks = onRootBlock == null ? null : new List<(uint Id, int Offset, int Size, int Class)>();
-            Walk(buf, header.Id, width, categoryWidth, known, isElement, entry, wanted, index, conflictCategory, conflictDesignOption, recordIds, blockClasses, rootBlocks);
+            Walk(buf, header.Id, width, categoryWidth, known, isElement, entry, wanted, index, conflictCategory, conflictDesignOption, recordIds, blockClasses, rootBlocks, outlineTags);
             // payload (class id first) of every Element-derived block whose stream holds the header record of its id
             if (rootBlocks != null)
                 foreach (var (blockId, offset, size, cls) in rootBlocks)
@@ -170,7 +176,7 @@ internal static class WideElementRecords
     private static void Walk(byte[] b, int headerId, int w, int categoryWidth, bool[] known, bool[] isElement, int entry,
         IReadOnlySet<uint> wanted, Index index, HashSet<uint> conflictCategory, HashSet<uint> conflictDesignOption,
         HashSet<uint> recordIds, Dictionary<uint, int> blockClasses,
-        List<(uint Id, int Offset, int Size, int Class)>? rootBlocks)
+        List<(uint Id, int Offset, int Size, int Class)>? rootBlocks, (int Outline, int Parents)? outlineTags)
     {
         int n = b.Length;
         int p = 0;
@@ -187,7 +193,7 @@ internal static class WideElementRecords
                 if (wanted.Contains(id))
                 {
                     recordIds.Add(id);
-                    RecordCategory(b, p + w - 8, (int)size, categoryWidth, entry, id, index, conflictCategory, conflictDesignOption);
+                    RecordCategory(b, p + w - 8, (int)size, categoryWidth, entry, id, index, conflictCategory, conflictDesignOption, outlineTags);
                 }
                 p += w + 8 + (int)size;
                 continue;
@@ -211,8 +217,29 @@ internal static class WideElementRecords
         }
     }
 
+    /// <summary>
+    /// The class tags that m_pBBox and m_parents carry in the records of this file (its own class numbers), or null when the header of the schema
+    /// is not the one the outline reader relies on: the ids, m_viewRules, m_abFlags4Bytes and m_classDef in front of the two pointers, in this order,
+    /// and the two classes by name.
+    /// </summary>
+    private static (int Outline, int Parents)? OutlineTags(FileSchema schema, FileSchema.Class header, int idWidth)
+    {
+        string[] expected =
+        [
+            "m_regenHistory", "m_categroryId", "m_familyId", "m_ownerViewId", "m_designOptionId", "m_unplacedOwnerId", "m_miscId",
+            "m_viewRules", "m_abFlags4Bytes", "m_classDef", "m_pBBox", "m_parents",
+        ];
+        if (header.Fields.Count != expected.Length || !header.Fields.Select(f => f.Name).SequenceEqual(expected)) return null;
+        for (int i = 1; i <= 6; i++)
+            if (schema.FieldSize(header.Fields[i]) != idWidth) return null;
+        if (header.Fields[8].Type != 4 || header.Fields[10].Type != 0x0E || (header.Fields[10].Mods & 0x0F) == 0
+            || header.Fields[11].Type != 0x0E || (header.Fields[11].Mods & 0x0F) == 0)
+            return null;
+        return schema.ByName("Outline") is { } outline && schema.ByName("ElementParents") is { } parents ? (outline.Id, parents.Id) : null;
+    }
+
     private static void RecordCategory(byte[] b, int p, int size, int categoryWidth, int entry, uint id, Index index, HashSet<uint> conflict,
-        HashSet<uint> conflictDesignOption)
+        HashSet<uint> conflictDesignOption, (int Outline, int Parents)? outlineTags)
     {
         // payload starts at p + 12 with the class id; m_regenHistory: u32 count + count * entry; then m_categroryId (8 bytes)
         uint count = BitConverter.ToUInt32(b, p + 14);
@@ -235,5 +262,9 @@ internal static class WideElementRecords
         }
         if (index.HeaderDesignOptions.TryGetValue(id, out var priorOption)) { if (priorOption != option) conflictDesignOption.Add(id); }
         else index.HeaderDesignOptions[id] = option;
+        if (outlineTags is var (outlineTag, parentsTag))
+            ElementHeaderCategory.Merge(index.HeaderBoundingBoxes, id,
+                categoryAt + categoryWidth <= p + 12L + size
+                    ? ElementHeaderCategory.ReadOutline(b, categoryAt, p + 12L + size, categoryWidth, outlineTag, parentsTag) : null);
     }
 }

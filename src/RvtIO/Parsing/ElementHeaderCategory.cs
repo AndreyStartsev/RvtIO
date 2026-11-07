@@ -11,10 +11,19 @@ internal static class ElementHeaderCategory
     private const int RegenCountOffset = 10;
     private const int RegenEntryLength = 14;
 
-    // The header marks its stored outline with the tags of two classes of the embedded 2022 format
-    // schema, and the pair is written the same in every release's records whatever ids the file's
-    // own schema table gives these classes (a 2023 file declares Outline as 316 and still writes
-    // 297), so the tags resolve by name from the embedded table alone.
+    // The fields of the header behind m_regenHistory, in the order of the schema: the six ids
+    // m_categroryId, m_familyId, m_ownerViewId, m_designOptionId, m_unplacedOwnerId and m_miscId, then
+    // m_viewRules (a u32 handle), m_abFlags4Bytes (u32), m_classDef (a class reference of two bytes) and
+    // the two owned pointers m_pBBox and m_parents. A pointer is a u32 handle and, when the handle is not
+    // 0, a u16 class tag; the objects the pointers name follow the fields in the order the pointers were
+    // met, so the Outline is the first of them: six doubles.
+    private const int IdFieldsBeforeViewRules = 6;
+    private const int ViewRulesLength = 4, FlagsLength = 4, ClassDefinitionLength = 2;
+    private const uint NewObjectHandle = 0xFFFFFFFF;
+    private const int OutlineLength = 6 * sizeof(double);
+
+    // The records the anchored walk reads are in the Revit 2022 layout (the R22 layout turns the later
+    // releases into it), whose class tags are those of the embedded format schema.
     private static readonly Lazy<ushort> OutlineTag = new(() => (ushort)TagOfShippedSchema("Outline"));
     private static readonly Lazy<ushort> ParentsTag = new(() => (ushort)TagOfShippedSchema("ElementParents"));
 
@@ -56,48 +65,56 @@ internal static class ElementHeaderCategory
     }
 
     /// <summary>
-    /// The axis-aligned outline the record that starts at <paramref name="recordStart"/> stores:
-    /// six little-endian doubles (min xyz, max xyz, feet, project coordinates) when the outline tag
-    /// stands behind it, no box when 0 does. Null when the record holds no such pattern, or when
-    /// the six doubles do not form one (a reference count must not be taken for a box, so only
-    /// finite ordered values count).
+    /// The axis-aligned outline the record that starts at <paramref name="recordStart"/> stores (see
+    /// <see cref="ReadOutline"/>); null when the bytes do not form a complete ElementHeader record.
     /// </summary>
     public static ElementHeaderBox? ReadBoundingBox(byte[] buffer, int recordStart)
     {
         if (Read(buffer, recordStart) is null) return null;
         long recordEnd = (long)recordStart + 12 + BitConverter.ToUInt32(buffer, recordStart + 4);
-        return ReadOutline(buffer, recordStart + RegenCountOffset + 4, recordEnd);
+        long categoryOffset = (long)recordStart + RegenCountOffset + 4
+            + RegenEntryLength * (long)BitConverter.ToUInt32(buffer, recordStart + RegenCountOffset);
+        return ReadOutline(buffer, categoryOffset, recordEnd, 4, OutlineTag.Value, ParentsTag.Value);
     }
 
     /// <summary>
-    /// The axis-aligned outline the header stores behind [outline tag or 0][ff ff ff ff]
-    /// [parents tag]: six little-endian doubles (min xyz, max xyz, feet, project coordinates) when
-    /// the outline tag stands there, no box when it is 0. Null when the range holds no such
-    /// pattern, or when the six doubles do not form one (a reference count must not be taken for a
-    /// box, so only finite ordered values count).
+    /// The outline of a header whose m_categroryId lies at <paramref name="categoryAt"/> and whose record ends at
+    /// <paramref name="recordEnd"/>: the position of m_pBBox follows from the widths of the fields in front of it
+    /// (the ids are <paramref name="idWidth"/> bytes wide), so nothing is searched for. The pointer is 0 when the
+    /// header stores no outline, or a new object of class <paramref name="outlineTag"/> whose six little-endian
+    /// doubles (min xyz, max xyz, feet, project coordinates) follow the pointers; m_parents behind it is a new
+    /// object of class <paramref name="parentsTag"/> in every header, and the structure counts as read only
+    /// where it is. Null when the bytes do not have the structure, or when the six doubles do not form a box
+    /// (a counter must not be taken for one, so only finite ordered values count).
     /// </summary>
-    private static ElementHeaderBox? ReadOutline(byte[] buffer, int start, long end)
+    internal static ElementHeaderBox? ReadOutline(byte[] buffer, long categoryAt, long recordEnd, int idWidth, int outlineTag, int parentsTag)
     {
-        ushort outlineTag = OutlineTag.Value, parentsTag = ParentsTag.Value;
-        for (long i = start; i + 8 <= end; i++)
+        if (recordEnd > buffer.Length) return null;
+        long at = categoryAt + (long)IdFieldsBeforeViewRules * idWidth;
+        if (at + ViewRulesLength + FlagsLength + ClassDefinitionLength + 4 > recordEnd) return null;
+        // a view rules handle that names a new object carries a class tag and queues an object in front of the outline
+        if (BitConverter.ToUInt32(buffer, (int)at) == NewObjectHandle) return null;
+        at += ViewRulesLength + FlagsLength + ClassDefinitionLength;
+
+        uint boxHandle = BitConverter.ToUInt32(buffer, (int)at);
+        at += 4;
+        bool present = boxHandle != 0;
+        if (present)
         {
-            ushort tag = BitConverter.ToUInt16(buffer, (int)i);
-            if (tag != outlineTag && tag != 0) continue;
-            if (BitConverter.ToUInt32(buffer, (int)i + 2) != 0xFFFFFFFF) continue;
-            if (BitConverter.ToUInt16(buffer, (int)i + 6) != parentsTag) continue;
-            if (tag != 0)
-            {
-                if (i + 8 + 48 > end) return null;
-                var box = new double[6];
-                for (int d = 0; d < 6; d++) box[d] = BitConverter.ToDouble(buffer, (int)i + 8 + 8 * d);
-                if (box.Any(value => !double.IsFinite(value))
-                    || box[0] > box[3] || box[1] > box[4] || box[2] > box[5])
-                    return null;
-                return new ElementHeaderBox(true, box);
-            }
-            return new ElementHeaderBox(false, null);
+            if (boxHandle != NewObjectHandle || at + 2 > recordEnd || BitConverter.ToUInt16(buffer, (int)at) != outlineTag) return null;
+            at += 2;
         }
-        return null;
+        if (at + 6 > recordEnd || BitConverter.ToUInt32(buffer, (int)at) != NewObjectHandle
+            || BitConverter.ToUInt16(buffer, (int)at + 4) != parentsTag)
+            return null;
+        at += 6;
+
+        if (!present) return new ElementHeaderBox(false, null);
+        if (at + OutlineLength > recordEnd) return null;
+        var box = new double[6];
+        for (int d = 0; d < 6; d++) box[d] = BitConverter.ToDouble(buffer, (int)at + sizeof(double) * d);
+        if (box.Any(value => !double.IsFinite(value)) || box[0] > box[3] || box[1] > box[4] || box[2] > box[5]) return null;
+        return new ElementHeaderBox(true, box);
     }
 
     /// <summary>
@@ -113,30 +130,17 @@ internal static class ElementHeaderCategory
         int? option = ReadDesignOption(buffer, recordStart);
         if (!state.HeaderDesignOptions.TryGetValue(elementId, out int? previousOption)) state.HeaderDesignOptions[elementId] = option;
         else if (previousOption != option) state.HeaderDesignOptions[elementId] = null;
-        long recordEnd = (long)recordStart + 12 + BitConverter.ToUInt32(buffer, recordStart + 4);
-        Store(state, elementId, Read(buffer, recordStart) == null
-            ? null : ReadOutline(buffer, recordStart + RegenCountOffset + 4, recordEnd));
+        Merge(state.HeaderBoundingBoxes, elementId, ReadBoundingBox(buffer, recordStart));
     }
 
     /// <summary>
-    /// Stores the outline of a record whose body starts with the serialized ElementHeader (the
-    /// record layout of the files whose element ids are 64-bit, where the anchored walk does not
-    /// apply). The verdict rules are the ones of <see cref="Record"/>.
+    /// Adds the outline verdict of one more record of an element: the first verdict stands, a verdict that
+    /// differs from it (or an unknown one) turns the element unknown, and unknown stays unknown.
     /// </summary>
-    public static void RecordBody(ParsingState state, byte[] body, uint elementId)
+    internal static void Merge(Dictionary<uint, ElementHeaderBox?> boxes, uint elementId, ElementHeaderBox? box)
     {
-        if (body.Length < 8) return;
-        ushort recordClass = BitConverter.ToUInt16(body, 0);
-        if (recordClass is not (0x053C or 0x04F8)) return;
-        Store(state, elementId, ReadOutline(body, 2, body.Length));
-    }
-
-    private static void Store(ParsingState state, uint elementId, ElementHeaderBox? box)
-    {
-        if (Environment.GetEnvironmentVariable("RVTIO_HDR_DIAG") == "1")
-            DiagnosticSink.WriteLine($"HDRVERDICT {elementId} {(box == null ? "unknown" : box.Present ? "box" : "none")}");
-        if (!state.HeaderBoundingBoxes.TryGetValue(elementId, out ElementHeaderBox? previousBox)) state.HeaderBoundingBoxes[elementId] = box;
-        else if (!SameBox(previousBox, box)) state.HeaderBoundingBoxes[elementId] = null;
+        if (!boxes.TryGetValue(elementId, out ElementHeaderBox? previousBox)) boxes[elementId] = box;
+        else if (!SameBox(previousBox, box)) boxes[elementId] = null;
     }
 
     private static bool SameBox(ElementHeaderBox? first, ElementHeaderBox? second)
