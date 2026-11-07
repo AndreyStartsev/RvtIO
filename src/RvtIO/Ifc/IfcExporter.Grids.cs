@@ -221,13 +221,14 @@ public partial class IfcExporter
             || range[0] <= levelElevationFeet + tolerance && levelElevationFeet - tolerance <= range[1];
     }
 
-    private void CreateCurrentGrids(StepWriter w, int ownerHistId, int subCtxId, int axisId,
+    private HashSet<int> CreateCurrentGrids(StepWriter w, int ownerHistId, int subCtxId, int axisId,
         IReadOnlyList<Element> elements, bool elemTableIsExact, IReadOnlyList<int> storeyIfcIds,
         IReadOnlyDictionary<int, int> storeyPlacements, IDictionary<int, List<int>> storeyContents)
     {
+        var written = new HashSet<int>();
         // A grid recovered outside a verified ElemTable is a stale block of a deleted element and is skipped.
         var lines = CollectGridLines(elements.Where(element => !(elemTableIsExact && element.IsDiscovered)));
-        if (lines.Count == 0) return;
+        if (lines.Count == 0) return written;
         // A grid line stands on the levels its datum plane reaches; lines without a decoded
         // plane use their main plane on all levels.
         var intervals = lines.Select(line => LevelIntervalOf(line.Element)).ToList();
@@ -279,6 +280,7 @@ public partial class IfcExporter
                         int curveSetId = w.Add("IFCGEOMETRICCURVESET", StepWriter.List(R(curveId)));
                         curveSetIds.Add(curveSetId);
                         AddGridCurveStyle(w, curveSetId);
+                        written.Add(line.Element.Id);
                     }
                     return StepWriter.List(ids.Select(R));
                 }
@@ -293,5 +295,6 @@ public partial class IfcExporter
                 storeyContents[levels[level].Storey].Add(gridId);
             }
         }
+        return written;
     }
 }
