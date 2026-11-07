@@ -8,7 +8,7 @@ public class MaterialLayer
     /// <summary>Layer thickness in millimeters.</summary>
     public double ThicknessMm { get; set; }
 
-    /// <summary>Material function: Structure, Substrate, ThermalAir, Finish, Membrane.</summary>
+    /// <summary>Layer function: None, Structure, Substrate, Insulation, Finish1, Finish2, Membrane, StructuralDeck; a stored value outside this set is named Function{n}.</summary>
     public string? Function { get; set; }
 
     /// <summary>Material element ID (0 if none).</summary>

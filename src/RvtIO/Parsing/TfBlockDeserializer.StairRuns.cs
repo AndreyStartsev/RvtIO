@@ -2,7 +2,7 @@ namespace RvtIO.Parsing;
 
 internal static partial class TfBlockDeserializer
 {
-    internal enum StairRunStyle { Sketched = 2, Straight = 3 }
+    internal enum StairRunStyle { Sketched = 2, Straight = 3, Spiral = 4 }
     internal readonly record struct StairPathDirection(double X, double Y, double Z);
     /// <summary>StairsRun.m_bottomElevation / m_topElevation / m_actualRunWidth in feet and the base and top
     /// riser indices (StairsRunAndLanding.m_baseRiserIndex, StairsRun.m_topRiserIndex).</summary>
@@ -85,6 +85,8 @@ internal static partial class TfBlockDeserializer
             if (cellList < 0 || cachedLoop < 0 || stairId <= 0 || stairId == owner) throw Fail;
             for (int index = 0; index < queue.Count; index++)
             {
+                // A spiral run needs no more than its cell class and base line; the curved geometry behind them is not decoded.
+                if (cell >= 0 && cachedCurves != null && queue[cell].Cls == 3723) break;
                 if (queue.Count > 100_000) throw Fail;
                 ushort cls = queue[index].Cls;
                 bool step = IsSubclassOf(cls, 96);
@@ -124,7 +126,7 @@ internal static partial class TfBlockDeserializer
                     {
                         var cells = Enumerable.Range(before, queue.Count - before)
                             .Where(i => IsSubclassOf(queue[i].Cls, 3676)).ToArray();
-                        if (cells.Length != 1 || queue[cells[0]].Cls is not (3725 or 3721)) throw Fail;
+                        if (cells.Length != 1 || queue[cells[0]].Cls is not (3725 or 3721 or 3723)) throw Fail;
                         cell = cells[0];
                     }
                     if (index == cachedLoop && sourceField is { Declaring: 938, Name: "m_open", Type: 1, Mods: 0 })
@@ -136,7 +138,7 @@ internal static partial class TfBlockDeserializer
                         uint count = BitConverter.ToUInt32(data, position);
                         if (count == 0 || count == uint.MaxValue || count != queue.Count - before) throw Fail;
                         cachedCurves = Enumerable.Range(before, queue.Count - before).ToArray();
-                        if (cachedCurves.Any(i => queue[i].Cls != 1736)) throw Fail;
+                        if (cachedCurves.Any(i => queue[i].Cls is not (1736 or 1974))) throw Fail;
                     }
                     if (cls == 1736 && sourceField is { Declaring: 1736, Name: "m_dirVec", Type: 7, Mods: 16, Cnt: 3 })
                     {
@@ -154,15 +156,17 @@ internal static partial class TfBlockDeserializer
                     }
                 }
             }
-            if (cursor.Pos != cursor.End || cell < 0 || cachedCurves == null
-                || cachedCurves.Any(i => !directions.ContainsKey(i) || !finiteOrigins.Contains(i) || !boundedLines.Contains(i))) throw Fail;
-            var path = cachedCurves.Select(i => directions[i]).ToArray();
+            // A spiral run has arcs for a base line and no direction and stops the walk early; every other style needs bounded horizontal lines and the exact footer.
+            bool spiral = cell >= 0 && queue[cell].Cls == 3723;
+            if (cell < 0 || cachedCurves == null || !spiral && cursor.Pos != cursor.End
+                || !spiral && cachedCurves.Any(i => !directions.ContainsKey(i) || !finiteOrigins.Contains(i) || !boundedLines.Contains(i))) throw Fail;
+            StairPathDirection[] path = spiral ? [] : cachedCurves.Select(i => directions[i]).ToArray();
             if (path.Any(direction => !double.IsFinite(direction.X) || !double.IsFinite(direction.Y)
                 || direction.Z != 0 || direction.X == 0 && direction.Y == 0)) throw Fail;
             var numbers = double.IsFinite(bottom) && double.IsFinite(top) && double.IsFinite(width)
                 && baseIndex != int.MinValue && topIndex != int.MinValue
                 ? new StairRunNumbers(bottom, top, width, baseIndex, topIndex, beginRiser, endRiser) : null;
-            return new(owner, stairId, queue[cell].Cls == 3725 ? StairRunStyle.Straight : StairRunStyle.Sketched,
+            return new(owner, stairId, queue[cell].Cls switch { 3725 => StairRunStyle.Straight, 3723 => StairRunStyle.Spiral, _ => StairRunStyle.Sketched },
                 path, numbers);
         }
         catch (DecodeFail) { return null; }

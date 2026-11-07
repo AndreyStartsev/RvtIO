@@ -65,4 +65,56 @@ public class ProductNameTests
         Assert.Equal("Floor:Floor type", IfcExporter.ResolveProductFamilyAndTypeName(
             slab, "IFCSLAB", elements, new Dictionary<int, int> { [10] = 1 }));
     }
+
+    [Theory]
+    [InlineData(-2000181, "Wall Sweep")]
+    [InlineData(-2001392, "Slab Edge")]
+    [InlineData(-2001390, "Fascia")]
+    [InlineData(-2001391, "Gutter")]
+    [InlineData(-2001393, "Compound Ceiling")]
+    public void SweepLikeElementWithoutAFamily_TakesTheFixedSystemFamilyName(int categoryId, string family)
+    {
+        var element = new Element { Id = 10, CategoryId = categoryId, Category = "OST_Placeholder", Name = "Profile A", TypeId = 20 };
+        var elements = new Dictionary<int, Element> { [10] = element };
+        var counts = new Dictionary<int, int> { [10] = 1 };
+        Assert.Equal(family + ":Profile A", IfcExporter.ResolveProductFamilyAndTypeName(
+            element, "IFCBUILDINGELEMENTPROXY", elements, counts));
+    }
+
+    [Fact]
+    public void SweepLikeElementWithARealFamilyName_KeepsIt()
+    {
+        var element = new Element { Id = 10, CategoryId = -2001392, Name = "Profile A", FamilyName = "Authored", TypeId = 20 };
+        Assert.Equal("Authored:Profile A", IfcExporter.ResolveProductFamilyAndTypeName(
+            element, "IFCBUILDINGELEMENTPROXY",
+            new Dictionary<int, Element> { [10] = element }, new Dictionary<int, int> { [10] = 1 }));
+    }
+
+    [Fact]
+    public void OtherCategoryWithoutAFamily_KeepsTheCategoryPrefix()
+    {
+        var element = new Element { Id = 10, CategoryId = -2000151, Category = "OST_GenericModel", Name = "Thing" };
+        Assert.Null(IfcExporter.FixedSystemFamilyName(element));
+        Assert.Equal("OST_GenericModel:Thing", IfcExporter.ResolveProductFamilyAndTypeName(
+            element, "IFCBUILDINGELEMENTPROXY",
+            new Dictionary<int, Element> { [10] = element }, new Dictionary<int, int> { [10] = 1 }));
+    }
+
+    [Theory]
+    [InlineData(-2000181)]
+    [InlineData(-2001392)]
+    [InlineData(-2001391)]
+    public void UntypedNamelessSweepLikeProxy_HasNoFamilyAndTypePart(int categoryId)
+    {
+        var untyped = new Element { Id = 10, CategoryId = categoryId, Category = "OST_Placeholder" };
+        var elements = new Dictionary<int, Element> { [10] = untyped };
+        var counts = new Dictionary<int, int> { [10] = 1 };
+        Assert.Equal("", IfcExporter.ResolveProductFamilyAndTypeName(untyped, "IFCBUILDINGELEMENTPROXY", elements, counts));
+        // Any name, or another category, keeps the family:type form.
+        untyped.Name = "N";
+        Assert.EndsWith(":N", IfcExporter.ResolveProductFamilyAndTypeName(untyped, "IFCBUILDINGELEMENTPROXY", elements, counts));
+        var other = new Element { Id = 11, CategoryId = -2000151, Category = "OST_GenericModel" };
+        Assert.Equal("OST_GenericModel:Element 11", IfcExporter.ResolveProductFamilyAndTypeName(
+            other, "IFCBUILDINGELEMENTPROXY", new Dictionary<int, Element> { [11] = other }, new Dictionary<int, int> { [11] = 1 }));
+    }
 }

@@ -360,6 +360,7 @@ public partial class IfcExporter
         var phaseFilter = BuildExportPhaseFilter(info);
         info.Elements = allElements.Where(element => designOptions.InNonPrimaryOption(element) != true
             && phaseFilter?.Excludes(element) != true).ToList();
+        if (CurrentProfile) info.Elements = RelinkRampTypes(info.Elements);
         if (phaseFilter != null)
             _diag?.WriteLine($"IFC export phase filter: {allElements.Count(phaseFilter.Excludes)} elements outside the export phase left out");
         try { ExportDocument(info, output); }
@@ -746,6 +747,10 @@ public partial class IfcExporter
         // Roof element id -> entity id of the IfcSlab (ROOF) that holds its body (the current
         // profile, RoofIsExportedWithSlabCurrent).
         var roofSlabParts = new Dictionary<int, int>();
+        // The entities that carry the body of a ramp: the IfcRamp of a monolithic ramp, the parts of a ramp made of its solids.
+        var rampBodies = new Dictionary<int, List<int>>();
+        var rampAggregations = new Dictionary<int, int>();
+        var rampsWithRailings = CurrentProfile ? RampsWithRailings(info.Elements) : [];
         var pendingCurtainParents = new Dictionary<int, (Element Element, int StoreyId, bool CountedSuppressed)>();
 
         // Real project walls have a decoded location curve (or, for the one curved wall, a
@@ -1597,15 +1602,13 @@ public partial class IfcExporter
             !e.IsBlockOnly && visibleWallIds.Contains(e.Id) && e.Location is { ArcRadius: null }).ToList();
 
         // Robust model centre: median of element bbox centres.
-        bool InvalidBbox(double[] b)
-        {
-            if (b.Length < 6) return true;
-            for (int bi = 0; bi < 6; bi++)
-                if (!double.IsFinite(b[bi])) return true;
-            return b[0] > b[3] || b[1] > b[4] || b[2] > b[5];
-        }
+        bool InvalidBbox(double[] b) => !BoundsAreValid(b);
 
         void Skip(Element skipped, string why) { skippedCount++; SkipLog?.Add(skipped.Id, RvtIO.SkipLog.ClassOf(skipped), why); }
+        // The bounds of a 64-bit-id file count as decoded when any element carries valid ones: damaged bounds are a failure of the
+        // decoder of that element, not a sign that the bounds of the file are read.
+        bool boundsDecoded = info.GeometryUndecoded
+            && info.Elements.Any(e => BoundsAreValid(e.BoundingBox ?? e.Geometry?.BoundingBox));
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
@@ -1696,6 +1699,8 @@ public partial class IfcExporter
                     ? "IFCCURTAINWALL"
                 : elem.CategoryId == -2000011 && ShouldExportAsIfcWall(elem, CurrentProfile)
                     ? "IFCWALL"
+                : CurrentProfile && elem.CategoryId == RampCategoryId
+                    ? "IFCRAMP"
                 : MapCategoryToIfcType(elem.CategoryId)
                     ?? (elem.CategoryId == null && elem.Transform != null && elem.TypeId > 0
                         ? "IFCBUILDINGELEMENTPROXY"
@@ -1758,7 +1763,9 @@ public partial class IfcExporter
                     bool hasHost = elem.SuperInstanceId is > 0
                         || ResolveHostedElementHostIds(
                             elem, elemById, visibleWallIds, inverseHostedHostIds).Count > 0;
-                    if (!hasHost) { Skip(elem, "hosted-element-without-host"); continue; }
+                    // A freestanding door or window that has a body is a real product; one without valid bounds has nothing to write.
+                    if (!hasHost && !BoundsAreValid(elem.BoundingBox ?? elem.Geometry?.BoundingBox))
+                    { Skip(elem, "hosted-element-without-host"); continue; }
                 }
                 else
                 {
@@ -1780,6 +1787,15 @@ public partial class IfcExporter
                 continue;
             }
 
+            // A file of the 64-bit-id layout writes a product without bounds as it is, with no representation; where
+            // the bounds are decoded, a product without them has no body and is not exported. Bounds that are there but
+            // damaged do not make a missing body: the product is rejected by them below, as it always was.
+            if (boundsDecoded
+                && ShouldSkipRepresentationlessProduct(ifcType,
+                    hasBounds: (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 },
+                    isEmittedAggregateParent: _emittedAggregateParentElementIds.Contains(elem.Id)))
+            { Skip(elem, "product-without-body"); continue; }
+
             int elemStoreyId = ResolveStorey(elem, storeyIds, defaultStoreyId, elemById);
             if (Environment.GetEnvironmentVariable("RVTIO_STOREY_DIAG") is { Length: > 0 } storeyDiag)
                 File.AppendAllText(storeyDiag, string.Join(';', elem.Id, ifcType, elem.CategoryId, elem.SuperInstanceId, elem.NativeMasterSymbolId,
@@ -1799,6 +1815,8 @@ public partial class IfcExporter
 
             double[]? bbox = elem.BoundingBox ?? elem.Geometry?.BoundingBox;
             int shapeId = 0;
+            List<(int ShapeId, bool IsLanding)>? rampPartBodies = null;
+            var rampLayout = RampLayout.Single;
             int elemPlacementId = 0;
             if (bbox == null || bbox.Length < 6)
             {
@@ -4064,6 +4082,9 @@ public partial class IfcExporter
                     + preserveExactParameterizedRevealCollinearPlan + " "
                     + $"writerLatticePlan={useWriterLatticeBoundaryPlan} "
                     + $"accepted={canExportStandardCaseWallAsSweptSolid}");
+            // A ramp of several small solids is an IfcRamp without a body that aggregates its flights and landings.
+            if (CurrentProfile && ifcType == "IFCRAMP") rampLayout = ClassifyRamp(elem, rampsWithRailings.Contains(elem.Id));
+            var rampParts = rampLayout == RampLayout.Components ? ClassifyRampSolids(elem.Geometry) : null;
             if (false && ifcType == "IFCROOF" && decodedRichFaces < 4
                 && TryCreatePitchedRoofShape(w, elem, bbox, bodySubCtxId, out shapeId))
             {
@@ -4090,6 +4111,13 @@ public partial class IfcExporter
                 // The placed SolarWorld instances retain an array/group AABB, not the individual
                 // module mesh.
                 shapeId = CreateSolarPanelShape(w, bbox, bodySubCtxId, info.SharedTransform);
+                elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
+                withFaces++;
+            }
+            else if (rampParts != null && TryWriteRampPartBodies(w, elem.Geometry!, rampParts, bodySubCtxId, out var writtenRampBodies))
+            {
+                rampPartBodies = writtenRampBodies;
+                RegisterEmittedAggregateParent(elem.Id);
                 elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                 withFaces++;
             }
@@ -4254,7 +4282,7 @@ public partial class IfcExporter
                         + $"sectionFt={beamExtrusion.ProfileWidthFt:G17}x{beamExtrusion.ProfileDepthFt:G17}");
                 withFaces++;
             }
-            else if (richFaces > 0
+            else if (richFaces > 0 && !(CurrentProfile && IsSystemRamp(elem))
                 && TryCreateMappedShape(w, elem, elemById, representationMapsBySymbol,
                     bodySubCtxId, axisId, out shapeId, out bodyWriteOutcome,
                     ifcType, () => OthersCurrentProfileName(ResolveProductFamilyAndTypeName(
@@ -4454,7 +4482,7 @@ public partial class IfcExporter
             // Element name: "FamilyName:TypeName:ElementId" format (matching Revit IFC export)
             string elemTypeName = ResolveProductFamilyAndTypeName(
                 elem, ifcType, elemById, elementIdOccurrenceCounts, CurrentProfile);
-            string elemName = $"{elemTypeName}:{elem.Id}";
+            string elemName = elemTypeName.Length == 0 ? elem.Id.ToString() : $"{elemTypeName}:{elem.Id}";
             if (CurrentProfile && IsRunLengthRuleCurrent(elem, ifcType, elemById, elementIdOccurrenceCounts)) LengthRuleRunsCurrent.Add(elem.Id);
             if (ifcType == "IFCSTAIR")
                 elemName = ResolveNativeStairName(elem, elemById, elementIdOccurrenceCounts, CurrentProfile) ?? elemName;
@@ -4478,7 +4506,8 @@ public partial class IfcExporter
                 .ResolveReference(elem, stairComponentType ?? referenceElementType).State
                 == ExactIfcStringParameterState.Value;
             bool roofWithSlab = CurrentProfile && ifcType == "IFCROOF" && shapeId > 0 && RoofIsExportedWithSlabCurrent(elem);
-            string shapeArg = shapeId > 0 && !roofWithSlab ? R(shapeId) : "$";
+            bool rampWithBody = rampLayout == RampLayout.Monolithic && shapeId > 0 && rampPartBodies == null;
+            string shapeArg = shapeId > 0 && !roofWithSlab && !rampWithBody ? R(shapeId) : "$";
             string productGlobalId = (ExportIdProductClasses.Contains(ifcType)
                     ? ResolveExactElementGlobalId(elem, _usedExportIds, handleBased: CurrentProfile)
                     : null)
@@ -4528,6 +4557,14 @@ public partial class IfcExporter
             int elemEntityId = w.Add(ifcType, elemArgs);
             exportedIfcElements[elem.Id] = (elemEntityId, elemPlacementId, ifcType);
             exportedGlobalIds[elem.Id] = productGlobalId;
+            if (rampPartBodies != null)
+                rampBodies[elem.Id] = WriteRampComponentsCurrent(w, ownerHistId, elem, elemEntityId, productGlobalId, elemName, elemPlacementId, axisId, rampPartBodies);
+            else if (rampWithBody)
+            {
+                var (rampBody, rampRelation) = WriteRampBodyCurrent(w, ownerHistId, elem, elemEntityId, productGlobalId, elemName, elemTypeName, elemPlacementId, axisId, shapeId);
+                rampBodies[elem.Id] = [rampBody];
+                rampAggregations[elem.Id] = rampRelation;
+            }
             int roofSlabEntityId = roofWithSlab
                 ? roofSlabParts[elem.Id] = WriteRoofSlabCurrent(w, ownerHistId, elem, elemEntityId, elemName, elemTypeName,
                     elemStoreyPlacementId, axisId, shapeId)
@@ -4716,6 +4753,12 @@ public partial class IfcExporter
                         elemById, elementIdOccurrenceCounts,
                         propertySingleValueIds, CurrentProfile);
                 }
+                if (quantityTakeOffReferenceValueId.HasValue && CurrentProfile && ifcType == "IFCRAMP")
+                {
+                    ExportRampCommonPropertySet(
+                        w, elem, elemEntityId, ownerHistId, quantityTakeOffReferenceValueId.Value, propertySingleValueIds,
+                        OccurrenceIsExternalCurrent(elem, elemById) ?? false);
+                }
                 if (quantityTakeOffReferenceValueId.HasValue
                     && ifcType == "IFCBEAM")
                 {
@@ -4818,6 +4861,7 @@ public partial class IfcExporter
         var stairBodyParts = CurrentProfile
             ? StairAggregation.SplitLegacyBodies(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, axisId, _usedExportIds)
             : [];
+        AggregateRampRailings(w, info.Elements, exportedIfcElements, storeyContents, rampAggregations);
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
             foreach (int systemId in WriteJoistAssemblies(w, exportableElements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
@@ -5718,9 +5762,10 @@ public partial class IfcExporter
         foreach (var group in layeredProducts)
         {
             var first = group.First();
+            var compoundLayers = first.Native == null ? first.Element.Layers!.OrderBy(layer => layer.LayerIndex).ToList() : null;
             var layers = first.Native is { } nativeLayers
                 ? nativeLayers.Layers
-                : first.Element.Layers!.OrderBy(layer => layer.LayerIndex)
+                : compoundLayers!.Where(layer => layer.ThicknessMm > 0)
                     .Select(layer => (MaterialId: layer.MaterialId, ThicknessMm: layer.ThicknessMm)).ToList();
             string layerSetKey = first.Native is { } ownType
                 ? $"native|{ownType.TypeId}" : $"legacy|{group.Key}";
@@ -5730,8 +5775,10 @@ public partial class IfcExporter
                 ? elemById.TryGetValue(firstNative.TypeId, out var firstLayerType)
                     && firstLayerType.SerializedHostTypeLayers is { Length: > 0 } firstLayerRaw
                     && elemById.ContainsKey(firstLayerRaw[0].RawMaterialId) ? firstLayerRaw[0].RawMaterialId : 0
-                : layers.Count > 0 && elemById.ContainsKey(layers[0].MaterialId) ? layers[0].MaterialId : 0;
+                : compoundLayers!.Count > 0 && elemById.ContainsKey(compoundLayers[0].MaterialId) ? compoundLayers[0].MaterialId : 0;
             foreach (var item in group) bodyStyles.Uniform[item.Product.entityId] = firstLayerMaterial;
+            // No layer of positive thickness is left (the layers of zero thickness are left out): no IfcMaterialLayerSet without a layer.
+            if (layers.Count == 0) continue;
             if (!layerSetByKey.TryGetValue(layerSetKey, out var layerSet))
             {
                 var materialLayerIds = new List<int>(layers.Count);
@@ -5824,6 +5871,8 @@ public partial class IfcExporter
         var typeOnlyMaterialProducts = new Dictionary<string, List<int>>();
         foreach (var (elementId, product) in exportedIfcElements)
         {
+            // A ramp that holds its body in another entity has the material association on that entity.
+            IReadOnlyList<int> materialEntities = rampBodies.TryGetValue(elementId, out var rampEntities) ? rampEntities : [product.entityId];
             if (layerAssociatedElementIds.Contains(elementId)
                 || !elemById.TryGetValue(elementId, out var element)
                 || element.CategoryId == -2001340
@@ -5910,6 +5959,7 @@ public partial class IfcExporter
             // that body (usesInstanceGeometry), and its materials are those of the solids of that
             // one body, not the union of the materials of the instance.
             bool pieceBased = false;
+            List<int>? partMaterials = null;
             if (CurrentProfile && geometrySource != null)
             {
                 bool ownBody = !ReferenceEquals(geometrySource, element) && UsesInstanceGeometry(element, geometrySource);
@@ -5917,6 +5967,12 @@ public partial class IfcExporter
                 // Instances of one type share the symbol body: its solids are read once.
                 if (!pieceIdsBySource.TryGetValue(geometrySource, out var pieces))
                     pieceIdsBySource[geometrySource] = pieces = PieceMaterials(geometrySource.Geometry!,
+                        id => elemById.TryGetValue(id, out var m) && IsSerializedMaterial(m),
+                        style => info.GraphicsStyles?.GetValueOrDefault(style).Material ?? 0);
+                // The parts of a ramp made of its solids are written in the order of its solids, whatever the Geometry nodes group:
+                // each takes the material of the faces of its own solid.
+                if (materialEntities.Count > 1 && ClassifyRampSolids(element.Geometry) is { } rampParts && rampParts.Count == materialEntities.Count)
+                    pieces = RampPartMaterials(element.Geometry!, rampParts,
                         id => elemById.TryGetValue(id, out var m) && IsSerializedMaterial(m),
                         style => info.GraphicsStyles?.GetValueOrDefault(style).Material ?? 0);
                 // getBestMaterialIdFromParameter: a solid without a face material of a structural
@@ -5951,9 +6007,16 @@ public partial class IfcExporter
                     materialElementIds = [systemMaterial];
                 // The Body items follow the solids in their order, each in the best material of its
                 // own solid.
-                bodyStyles.Solids[product.entityId] = pieceSystemMaterial is int solidSystemMaterial
+                var solidMaterials = pieceSystemMaterial is int solidSystemMaterial
                     ? pieces.Select(_ => solidSystemMaterial).ToList() : pieces.Select(piece => piece.Material).ToList();
-                bodyStyles.Rules[product.entityId] = (pieceSystemMaterial, structuralFallback);
+                if (materialEntities.Count > 1 && solidMaterials.Count == materialEntities.Count) partMaterials = solidMaterials;
+                for (int part = 0; part < materialEntities.Count; part++)
+                {
+                    // The parts of a ramp made of its solids follow the solids in their order.
+                    bodyStyles.Solids[materialEntities[part]] = materialEntities.Count > 1 && solidMaterials.Count == materialEntities.Count
+                        ? [solidMaterials[part]] : solidMaterials;
+                    bodyStyles.Rules[materialEntities[part]] = (pieceSystemMaterial, structuralFallback);
+                }
                 pieceBased = true;
             }
             if (geometrySource != null && !pieceBased)
@@ -5995,15 +6058,22 @@ public partial class IfcExporter
             }
             if (materialElementIds.Count == 0) continue;
 
-            string materialKey = string.Join(',', materialElementIds);
-            if (!directMaterialProducts.TryGetValue(materialKey, out var association))
-                association = (materialElementIds, new List<int>());
-            if (pieceBased && product.ifcType == "IFCSLAB" && element.CategoryId == -2001300)
-                (typeOnlyMaterialProducts.TryGetValue(materialKey, out var typeOnly)
-                    ? typeOnly : typeOnlyMaterialProducts[materialKey] = []).Add(product.entityId);
-            else
-                association.ProductIds.Add(product.entityId);
-            directMaterialProducts[materialKey] = association;
+            // Each part of a ramp takes the material of its own solid.
+            for (int part = 0; part < (partMaterials?.Count ?? 1); part++)
+            {
+                var partIds = partMaterials == null ? materialElementIds : [partMaterials[part]];
+                string materialKey = string.Join(',', partIds);
+                if (!directMaterialProducts.TryGetValue(materialKey, out var association))
+                    association = (partIds, new List<int>());
+                if (pieceBased && product.ifcType == "IFCSLAB" && element.CategoryId == -2001300)
+                    (typeOnlyMaterialProducts.TryGetValue(materialKey, out var typeOnly)
+                        ? typeOnly : typeOnlyMaterialProducts[materialKey] = []).Add(product.entityId);
+                else if (partMaterials == null)
+                    association.ProductIds.AddRange(materialEntities);
+                else
+                    association.ProductIds.Add(materialEntities[part]);
+                directMaterialProducts[materialKey] = association;
+            }
         }
 
         var relatingMaterialByProductEntity = new Dictionary<int, int>();
@@ -6085,6 +6155,19 @@ public partial class IfcExporter
                 : areaByMaterial.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key).First().Key;
         }
 
+        // The best material of the faces of one solid: the dominant face material, else that of its
+        // graphics style, else the null material (id 0).
+        static (int Material, int Style, int Node) PieceMaterial(List<GeoFace> faces, Func<int, bool> isMaterial, Func<int, int> styleMaterial) =>
+            (DominantFaceMaterialId(faces, isMaterial)
+                ?? (faces[0].GeometryStyle > 0 && styleMaterial(faces[0].GeometryStyle) is > 0 and int fromStyle
+                    && isMaterial(fromStyle) ? fromStyle : 0), Math.Max(faces[0].GeometryStyle, 0),
+                Math.Max(faces[0].GeometryNode, 0));
+
+        // The material of each part of a ramp made of its solids, in the order of the parts.
+        static List<(int Material, int Style, int Node)> RampPartMaterials(GeometryData geometry,
+            List<(List<int> FaceIndices, bool IsLanding)> parts, Func<int, bool> isMaterial, Func<int, int> styleMaterial) =>
+            parts.Select(part => PieceMaterial(part.FaceIndices.Select(index => geometry.Faces[index]).ToList(), isMaterial, styleMaterial)).ToList();
+
         // The body export: every solid of the exported geometry gets its best material
         // (the dominant face material, else the null material, id 0); one entry per solid, in the
         // order of the solids.
@@ -6110,10 +6193,7 @@ public partial class IfcExporter
             var ids = new List<(int Material, int Style, int Node)>();
             foreach (var faces in pieces)
                 if (faces.Count > 0)
-                    ids.Add((DominantFaceMaterialId(faces, isMaterial)
-                        ?? (faces[0].GeometryStyle > 0 && styleMaterial(faces[0].GeometryStyle) is > 0 and int fromStyle
-                            && isMaterial(fromStyle) ? fromStyle : 0), Math.Max(faces[0].GeometryStyle, 0),
-                        Math.Max(faces[0].GeometryNode, 0)));
+                    ids.Add(PieceMaterial(faces, isMaterial, styleMaterial));
             foreach (var (_, ghostStyle, ghostMaterial) in geometry.GhostNodes ?? [])
                 ids.Add((ghostMaterial > 0 && isMaterial(ghostMaterial) ? ghostMaterial
                     : ghostStyle > 0 && styleMaterial(ghostStyle) is > 0 and int ghostFromStyle && isMaterial(ghostFromStyle)
@@ -63448,7 +63528,7 @@ public partial class IfcExporter
         "IFCBEAM" or "IFCBUILDINGELEMENTPROXY" or "IFCCOLUMN" or "IFCCOVERING"
             or "IFCCURTAINWALL" or "IFCDISTRIBUTIONFLOWELEMENT" or "IFCDOOR"
             or "IFCFLOWCONTROLLER" or "IFCFLOWFITTING" or "IFCFLOWSEGMENT" or "IFCFLOWTERMINAL"
-            or "IFCFURNISHINGELEMENT" or "IFCMEMBER" or "IFCOPENINGELEMENT"
+            or "IFCFOOTING" or "IFCFURNISHINGELEMENT" or "IFCMEMBER" or "IFCOPENINGELEMENT"
             or "IFCPLATE" or "IFCRAILING" or "IFCRAMP" or "IFCRAMPFLIGHT"
             or "IFCROOF" or "IFCSLAB" or "IFCSTAIR" or "IFCSTAIRFLIGHT" or "IFCREINFORCINGMESH"
             or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCWINDOW" => true,
@@ -63527,6 +63607,30 @@ public partial class IfcExporter
         string ifcType, bool hasEmittedRepresentation, bool isEmittedAggregateParent) =>
         !hasEmittedRepresentation
         && !isEmittedAggregateParent
+        && IsIfcElementSubclassProduct(ifcType);
+
+    /// <summary>Whether bounds are six finite values, each minimum not above its maximum. Bounds of an element whose decoding failed are not.</summary>
+    internal static bool BoundsAreValid(double[]? bounds)
+    {
+        if (bounds is not { Length: >= 6 }) return false;
+        for (int i = 0; i < 6; i++)
+            if (!double.IsFinite(bounds[i])) return false;
+        return bounds[0] <= bounds[3] && bounds[1] <= bounds[4] && bounds[2] <= bounds[5];
+    }
+
+    /// <summary>The classes that are written without a representation because they only group other products.</summary>
+    internal static bool IsRepresentationlessContainerClass(string ifcType) =>
+        ifcType is "IFCCURTAINWALL" or "IFCROOF" or "IFCSTAIR" or "IFCRAMP" or "IFCELEMENTASSEMBLY";
+
+    /// <summary>
+    /// An IfcElement product with no bounds (so no representation can be written), other than a container and
+    /// other than a wall, whose walls are handled by their own rule.
+    /// </summary>
+    internal static bool ShouldSkipRepresentationlessProduct(string ifcType, bool hasBounds, bool isEmittedAggregateParent) =>
+        !hasBounds
+        && !isEmittedAggregateParent
+        && ifcType is not ("IFCWALL" or "IFCWALLSTANDARDCASE")
+        && !IsRepresentationlessContainerClass(ifcType)
         && IsIfcElementSubclassProduct(ifcType);
 
     /// <summary>
@@ -64366,7 +64470,7 @@ public partial class IfcExporter
     {
         "IFCWALL", "IFCWALLSTANDARDCASE", "IFCCURTAINWALL", "IFCSLAB", "IFCROOF", "IFCFOOTING",
         "IFCDOOR", "IFCWINDOW", "IFCBUILDINGELEMENTPROXY", "IFCRAILING", "IFCCOVERING",
-        "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCCOLUMN", "IFCBEAM", "IFCMEMBER", "IFCPLATE",
+        "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCRAMP", "IFCCOLUMN", "IFCBEAM", "IFCMEMBER", "IFCPLATE",
         "IFCFURNISHINGELEMENT", "IFCFLOWSEGMENT", "IFCFLOWTERMINAL", "IFCFLOWFITTING",
         "IFCFLOWCONTROLLER", "IFCDISTRIBUTIONFLOWELEMENT", "IFCSITE", "IFCREINFORCINGMESH",
     };
@@ -67121,7 +67225,8 @@ public partial class IfcExporter
                 lines.Add($"H\t{id}\t{product.ifcType}\t{(element.IsDiscovered ? 1 : 0)}\t{element.CategoryId}\t" + string.Join(" ",
                     connectors.Select((connector, position) => $"{connector.Index};{connector.Direction};"
                         + $"{(element.SerializedConnectorSystems is { } systems && position < systems.Count ? systems[position] : 0)};"
-                        + string.Join(",", connector.Refs.Select(reference => $"{reference.Id}:{reference.Index}:{reference.Type}:{Kind(reference.Id)}")))));
+                        + string.Join(",", connector.Refs.Select(reference => $"{reference.Id}:{reference.Index}:{reference.Type}:{Kind(reference.Id)}"))
+                        + (element.SerializedConnectorModes is { } modes && position < modes.Count ? $";m{modes[position]}" : ""))));
             else if (PortHostClasses.Contains(product.ifcType))
                 lines.Add($"N\t{id}\t{product.ifcType}\t{element?.CategoryId}");
         }
@@ -67143,11 +67248,17 @@ public partial class IfcExporter
             if (PortHostClasses.Contains(product.ifcType)
                 && elemById.TryGetValue(id, out var host) && !host.IsDiscovered
                 && host.SerializedConnectorGraph is { Count: > 0 } connectors
-                && host.NativeRootClassName == null
                 && hostGlobalIds.ContainsKey(product.entityId))
-                graph[id] = connectors.Select((connector, position) => (connector.Index, connector.Direction,
-                    host.SerializedConnectorSystems is { } systems && position < systems.Count ? systems[position] : 0,
-                    new List<(int Id, int Index, int Type)>(connector.Refs))).ToList();
+            {
+                // Only the connectors of mode 1 and 2 get ports (connectors of mode 4, 16 and 32 get no port in the reference output);
+                // a walk that does not know the mode keeps every connector.
+                var exported = connectors.Select((connector, position) => (connector, position))
+                    .Where(item => host.SerializedConnectorModes is not { } modes || item.position >= modes.Count || modes[item.position] is 1 or 2)
+                    .Select(item => (item.connector.Index, item.connector.Direction,
+                        host.SerializedConnectorSystems is { } systems && item.position < systems.Count ? systems[item.position] : 0,
+                        new List<(int Id, int Index, int Type)>(item.connector.Refs))).ToList();
+                if (exported.Count > 0) graph[id] = exported;
+            }
         foreach (var (hostId, connectors) in graph)
             foreach (var connector in connectors)
                 foreach (var reference in connector.Refs.ToList())
@@ -67182,7 +67293,8 @@ public partial class IfcExporter
             Join(system, entityId, portId);
         }
 
-        void Pair(int inHost, int outHost, int index, bool bidirectional)
+        // inSystem and outSystem are the systems of the two connectors that are paired.
+        void Pair(int inHost, int outHost, int index, bool bidirectional, int inSystem, int outSystem)
         {
             if (connected.Contains((inHost, outHost)) || (bidirectional && connected.Contains((outHost, inHost)))) return;
             string inFlow = bidirectional ? "SOURCEANDSINK" : "SINK", outFlow = bidirectional ? "SOURCEANDSINK" : "SOURCE";
@@ -67204,7 +67316,8 @@ public partial class IfcExporter
                 $"{S(IfcGuid.FromMd5($"IfcRelConnectsPorts:{portInGuid}{portOutGuid}"))},{R(ownerHistId)},"
                 + $"{S($"{portInGuid}|{portOutGuid}")},{S("Flow")},{R(portIn)},{R(portOut)},$");
             connected.Add((inHost, outHost));
-            Join(graph[inHost].First(candidate => candidate.Index == index).System, inEntity, outEntity, portIn, portOut);
+            // A fitting stores no system of its own: the pair then belongs to the system of the connector it is paired with.
+            Join(inSystem > 0 ? inSystem : outSystem, inEntity, outEntity, portIn, portOut);
         }
 
         foreach (var (hostId, connectors) in graph)
@@ -67218,13 +67331,21 @@ public partial class IfcExporter
                     && elemById.TryGetValue(reference.Id, out var referenced) && !referenced.IsDiscovered);
                 var neighbours = connector.Refs.Where(reference => reference.Id != hostId && graph.ContainsKey(reference.Id)).ToList();
                 if (!IsConnected()) { Standalone(hostId, connector.Index, connector.Direction, connector.System); continue; }
-                bool bidirectional = connector.Direction is not (DirectionIn or DirectionOut);
                 foreach (var reference in neighbours)
-                    if (graph[reference.Id].Any(candidate => candidate.Index == connector.Index))
-                    {
-                        if (connector.Direction == DirectionOut) Pair(reference.Id, hostId, connector.Index, false);
-                        else Pair(hostId, reference.Id, connector.Index, bidirectional);
-                    }
+                {
+                    // The connector the reference names. It is missing when it was left out above (a connector of another mode): a connector
+                    // of the host with the number of this one is another connector and is not connected to this one.
+                    int referencedAt = graph[reference.Id].FindIndex(candidate => candidate.Index == reference.Index);
+                    if (referencedAt < 0 || !graph[reference.Id].Any(candidate => candidate.Index == connector.Index)) continue;
+                    var referenced = graph[reference.Id][referencedAt];
+                    // A connector without a direction of its own (a fitting) takes the opposite of the connector it references, when that one belongs to a
+                    // system (the stored direction of an electrical connector, whose calculation has no system, is not exported).
+                    int direction = connector.Direction;
+                    if (direction is not (DirectionIn or DirectionOut) && referenced.System > 0 && referenced.Direction is DirectionIn or DirectionOut)
+                        direction = DirectionIn + DirectionOut - referenced.Direction;
+                    if (direction == DirectionOut) Pair(reference.Id, hostId, connector.Index, false, referenced.System, connector.System);
+                    else Pair(hostId, reference.Id, connector.Index, direction is not DirectionIn, connector.System, referenced.System);
+                }
             }
         return systemMembers;
     }
@@ -67273,7 +67394,7 @@ public partial class IfcExporter
             if (roofContainer) typeClass = "IFCCURTAINWALLTYPE";
             // IFC2X3 has no IfcStairType: the current profile types a stair by the generic
             // IfcTypeProduct.
-            else if (currentProfile && product.ifcType == "IFCSTAIR") typeClass = "IFCTYPEPRODUCT";
+            else if (currentProfile && product.ifcType is "IFCSTAIR" or "IFCRAMP") typeClass = "IFCTYPEPRODUCT";
             else if (!TypeClassByProductClass.TryGetValue(product.ifcType, out typeClass)
                 && product.ifcType is not ("IFCFLOWFITTING" or "IFCFLOWCONTROLLER"))
                 continue;
@@ -67665,17 +67786,36 @@ public partial class IfcExporter
         // A run or landing names its type through TypeId (the serialized association), not ELEM_TYPE_PARAM, which a run does not have.
         Element? componentType = currentProfile && resolveComponentType
             ? ResolveStairComponentType(element, ifcType, elementsById, elementIdOccurrenceCounts) : null;
-        string typeName = componentType?.ValidatedStairComponentTypeName
+        string? knownTypeName = componentType?.ValidatedStairComponentTypeName
             ?? ResolveValidatedProductTypeName(element, ifcType, elementsById, currentProfile)
-            ?? element.Name ?? $"Element {element.Id}";
+            ?? element.Name;
+        string typeName = knownTypeName ?? $"Element {element.Id}";
         if (currentProfile && ifcType == "IFCSLAB" && element.CategoryId == -2000920) return typeName;
+        // A sweep-like proxy with neither a type name nor a family has no "family:type" part; it is named by its id alone.
+        if (knownTypeName == null && ifcType == "IFCBUILDINGELEMENTPROXY" && FixedSystemFamilyName(element) != null
+            && ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts) == null && element.FamilyName == null)
+            return "";
         string familyName = (currentProfile && ifcType == "IFCSTAIR" && element.RootClassName == "Stairs" ? element.ValidatedStairOccurrenceName : null)
             ?? ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts)
             ?? (componentType?.ValidatedSystemFamilyName is { Length: > 0 } componentFamily ? componentFamily : null)
             ?? element.FamilyName
+            ?? (currentProfile && IsSystemRamp(element) ? RampFamilyName : null)
+            ?? FixedSystemFamilyName(element)
             ?? element.Category ?? ifcType;
         return $"{familyName}:{typeName}";
     }
+
+    /// <summary>The fixed family name of a sweep-like element that has no family of its own (wall sweep, slab edge, fascia,
+    /// gutter, roof soffit, 3D model text), or null.</summary>
+    internal static string? FixedSystemFamilyName(Element element) => element.CategoryId switch
+    {
+        -2000181 => "Wall Sweep",
+        -2001392 => "Slab Edge",
+        -2001390 => "Fascia",
+        -2001391 => "Gutter",
+        -2001393 => "Compound Ceiling",
+        _ => element.RootClassName == "Text3dElem" ? "Model Text" : null,
+    };
 
     /// <summary>The type element of a stair run or landing: the one its serialized TypeId names (a run has no ELEM_TYPE_PARAM, and the
     /// parameter of a landing names a sibling landing, see <see cref="ResolveTypeObjectElementId"/>), when it is a unique element of the

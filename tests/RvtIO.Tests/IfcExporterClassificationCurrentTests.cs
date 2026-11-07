@@ -80,6 +80,78 @@ public class IfcExporterClassificationCurrentTests
     }
 
     [Fact]
+    public void RelationGlobalId_UsesFirstCharactersOfNameAndCode_AndTheFirstRelatedGlobalId()
+    {
+        const string related = "3ZGD7y6S5209$mGLi_sPlj";
+        Assert.Equal(IfcGuid.FromMd5("IfcRelAssociatesClassification:U C:" + related),
+            IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1020", related));
+        // only the first character of the code counts
+        Assert.Equal(IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1020", related),
+            IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C9", related));
+        Assert.NotEqual(IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1", related),
+            IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "D1", related));
+        // empty texts and a missing related object are defined, not errors
+        Assert.Equal(IfcGuid.FromMd5("IfcRelAssociatesClassification: :"), IfcExporter.ClassificationRelationGlobalIdCurrent("", "", ""));
+    }
+
+    [Fact]
+    public void RelationGlobalId_FollowsTheFirstRelatedProduct()
+    {
+        var m = new Model();
+        m.Elements[200] = Symbol(200, "C1020");
+        m.Elements[100] = Typed(100, 200);
+        int door = m.W.Add("IFCDOOR", "'0abcdefghijklmnopqrstu',#5,'x',$,$,#1,$,'100'");
+        m.ProductElement[door] = 100;
+
+        Assert.Equal(1, m.Run());
+
+        string relation = Assert.Single(m.Entities("IFCRELASSOCIATESCLASSIFICATION")).Args;
+        Assert.StartsWith($"'{IfcGuid.FromMd5("IfcRelAssociatesClassification:U C:0abcdefghijklmnopqrstu")}',", relation);
+    }
+
+    [Fact]
+    public void PanelWithItsOwnCode_AndItsParentsCode_GetDifferentRelationGlobalIds()
+    {
+        // The panel is written before its curtain wall and carries both codes (its own B2020100 and the wall's B2020): it is the first
+        // related object of both relations, and both codes start with B.
+        var m = new Model();
+        m.Elements[200] = Symbol(200, "B2020");
+        int panel = m.Product("IFCPLATE", Typed(101, 300, code: "B2020100"));
+        int wall = m.Product("IFCCURTAINWALL", Typed(100, 200));
+        m.W.Add("IFCRELAGGREGATES", $"{Guid22},#5,'','',#{wall},(#{panel})");
+
+        Assert.Equal(2, m.Run());
+
+        var relations = m.Entities("IFCRELASSOCIATESCLASSIFICATION").Select(r => r.Args).ToArray();
+        string GlobalId(string code) => Regex.Match(Assert.Single(relations, r => r.Contains($"'Uniformat:{code}'")), "^'([^']{22})'").Groups[1].Value;
+        string own = GlobalId("B2020100"), parent = GlobalId("B2020");
+        Assert.NotEqual(own, parent);
+        // the first relation keeps the GlobalId of the formula, the other takes the whole code
+        Assert.Equal(IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "B2020100", "3ZGD7y6S5209$mGLi_sPlj"), own);
+        Assert.Equal(IfcGuid.FromMd5("IfcRelAssociatesClassification:Uniformat:B2020:3ZGD7y6S5209$mGLi_sPlj"), parent);
+    }
+
+    [Fact]
+    public void RelationsWithTheSameFirstCharactersAndFirstRelatedObject_GetDifferentGlobalIds()
+    {
+        const string related = "3ZGD7y6S5209$mGLi_sPlj";
+        string[] codes = ["B2020100", "B2020", "B20"];
+        string[] Assign(HashSet<string> used) =>
+            codes.Select(code => IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", code, related, used)).ToArray();
+        var used = new HashSet<string>();
+        var ids = Assign(used);
+
+        Assert.Equal(codes.Length, ids.Distinct().Count());
+        // the first relation keeps the GlobalId of the formula, the others take the whole code, always the same way
+        Assert.Equal(IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "B2020100", related), ids[0]);
+        Assert.Equal(IfcGuid.FromMd5($"IfcRelAssociatesClassification:Uniformat:B20:{related}"), ids[2]);
+        Assert.Equal(ids, Assign([]));
+        // a code that does not collide keeps the GlobalId of the formula
+        Assert.Equal(IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1", related),
+            IfcExporter.ClassificationRelationGlobalIdCurrent("Uniformat", "C1", related, used));
+    }
+
+    [Fact]
     public void AnElementsOwnCodeWinsOverItsTypes_AndEmptyCodesMakeNoReference()
     {
         var m = new Model();
