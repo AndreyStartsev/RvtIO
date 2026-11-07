@@ -124,6 +124,20 @@ internal class StepWriter
 
     public static string Real(double v) => Real(v, "G15");
 
+    /// <summary>A real written with the 17 significant digits that identify the double, trailing zeros dropped (the
+    /// printf %.17g digits), a three-digit signed exponent when the value needs one (1.0000000000000001E-005) and a
+    /// decimal point after an integer part (100.). Used for quantities and property values, which are not rounded.</summary>
+    public static string RealExact(double v)
+    {
+        string value = v.ToString("G17", CultureInfo.InvariantCulture);
+        int exponentIndex = value.IndexOf('E');
+        if (exponentIndex < 0) return value.Contains('.') ? value : value + ".";
+        string mantissa = value[..exponentIndex];
+        if (!mantissa.Contains('.')) mantissa += ".0";
+        string digits = value[(exponentIndex + 2)..].PadLeft(3, '0');
+        return mantissa + "E" + value[exponentIndex + 1] + digits;
+    }
+
     internal static string Real(double v, string format)
     {
         string value = v.ToString(format, CultureInfo.InvariantCulture);
