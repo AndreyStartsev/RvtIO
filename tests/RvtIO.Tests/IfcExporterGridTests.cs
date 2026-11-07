@@ -441,4 +441,50 @@ public class IfcExporterGridTests
         Assert.Contains("IFCPOLYLINE", ifc);
         Assert.DoesNotContain("IFCTRIMMEDCURVE", ifc);
     }
+
+    [Theory]
+    [InlineData(IfcProfile.Current, true)]
+    [InlineData(IfcProfile.Current, false)]
+    [InlineData(IfcProfile.Legacy, true)]
+    [InlineData(IfcProfile.Legacy, false)]
+    public void ExportReport_CountsWrittenGridElementsAndKeepsUnwrittenGridsInSkipLog(IfcProfile profile, bool withSkipLog)
+    {
+        var elements = Model().ToList();
+        var curvedGrid = Grid(98, "Arc", 0, 0, 10, 0);
+        curvedGrid.Location!.ArcRadius = 5.0;
+        elements.Add(curvedGrid);
+
+        var typeElement = new Element { Id = 99, CategoryId = -2000220, Category = "OST_Grids", Name = "Grid Type" };
+        elements.Add(typeElement);
+
+        var info = new RevitFileInfo();
+        info.Elements.AddRange(elements);
+
+        string tempPath = Path.Combine(Path.GetTempPath(), $"rvtio-grid-count-{Guid.NewGuid():N}.ifc");
+        var skipLog = new SkipLog();
+        var exporter = new IfcExporter { Profile = profile, SkipLog = withSkipLog ? skipLog : null };
+        try
+        {
+            exporter.Export(info, tempPath);
+
+            Assert.Equal(4, exporter.ExportedProducts);
+            if (withSkipLog)
+            {
+                Assert.Equal(4, skipLog.Total);
+                Assert.Equal(info.Elements.Count, exporter.ExportedProducts + skipLog.Total);
+                var skippedIds = skipLog.Groups().SelectMany(g => g.Examples).ToHashSet();
+                Assert.Contains(98, skippedIds);
+                Assert.Contains(99, skippedIds);
+                foreach (int writtenId in new[] { 10, 11, 12, 13 })
+                {
+                    Assert.DoesNotContain(writtenId, skippedIds);
+                    Assert.False(skipLog.Remove(writtenId));
+                }
+            }
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
 }
