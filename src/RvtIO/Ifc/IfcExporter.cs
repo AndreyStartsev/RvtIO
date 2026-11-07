@@ -697,11 +697,10 @@ public partial class IfcExporter
         // The elements that the writers outside the product loop may write: the product loop leaves out the ones whose export flags say No
         // (ExportFlagIsNo), and so must they. The whole list stays the source of lookups (hosts, types, levels).
         var exportableElements = info.Elements.Where(element => !ExportFlagIsNo(element, elemById)).ToList();
-        if (CurrentProfile)
-            CreateCurrentGrids(w, ownerHistId, footPrintSubCtxId, axisId, exportableElements, info.ElemTableIsExact,
-                storeyIfcIds, storeyPlacements, storeyContents);
-        else
-            CreateSerializedGrids(w, ownerHistId, bodySubCtxId, axisId, exportableElements,
+        var writtenGridElementIds = CurrentProfile
+            ? CreateCurrentGrids(w, ownerHistId, footPrintSubCtxId, axisId, exportableElements, info.ElemTableIsExact,
+                storeyIfcIds, storeyPlacements, storeyContents)
+            : CreateSerializedGrids(w, ownerHistId, bodySubCtxId, axisId, exportableElements,
                 storeyIfcIds, storeyPlacements, storeyContents);
         var representationMapsBySymbol =
             new Dictionary<int, RepresentationMapCacheEntry>();
@@ -4884,6 +4883,14 @@ public partial class IfcExporter
                 SkipLog?.Remove(systemId);
             }
 
+        // the main loop left the grid elements out; their axes are products of the file
+        foreach (int gridId in writtenGridElementIds.OrderBy(id => id))
+        {
+            exportedCount++;
+            skippedCount--;
+            SkipLog?.Remove(gridId);
+        }
+
         // Resolve decomposition AFTER normal product emission.
         foreach (var pending in pendingCurtainParents.Values.OrderBy(item => item.Element.Id))
         {
@@ -6801,11 +6808,12 @@ public partial class IfcExporter
             ((packedColor >> 16) & 0xFF) / 255.0);
 
     /// <summary>Export the authored Revit datum curves as IFC grids on every building storey.</summary>
-    private static void CreateSerializedGrids(StepWriter w, int ownerHistId, int subCtxId,
+    private static HashSet<int> CreateSerializedGrids(StepWriter w, int ownerHistId, int subCtxId,
         int axisId, IReadOnlyList<Element> elements, IReadOnlyList<int> storeyIfcIds,
         IReadOnlyDictionary<int, int> storeyPlacements,
         IDictionary<int, List<int>> storeyContents)
     {
+        var written = new HashSet<int>();
         var axes = elements
             .Where(element => element.CategoryId == -2000220
                 && element.Location is { CurveType: "Line", ArcRadius: null } location
@@ -6816,7 +6824,7 @@ public partial class IfcExporter
             .Select(element => (Element: element, Curve: element.Location!))
             .OrderBy(item => item.Element.Id)
             .ToList();
-        if (axes.Count < 2) return;
+        if (axes.Count < 2) return written;
 
         const double MachineEpsilon = 2.2204460492503131e-16;
 
@@ -6894,6 +6902,9 @@ public partial class IfcExporter
             }
             if (directionGroups.Count < 2) continue;
 
+            foreach (int index in component)
+                written.Add(axes[index].Element.Id);
+
             foreach (int storeyIfcId in storeyIfcIds)
             {
                 var gridAxisIds = new Dictionary<int, int>();
@@ -6937,6 +6948,7 @@ public partial class IfcExporter
                 storeyContents[storeyIfcId].Add(gridId);
             }
         }
+        return written;
     }
 
     private static void CreateDistributionPorts(StepWriter w, int ownerHistId, int axisId,
