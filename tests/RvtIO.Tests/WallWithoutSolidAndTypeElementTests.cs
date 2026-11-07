@@ -56,39 +56,28 @@ public class WallWithoutSolidAndTypeElementTests
     {
         var wall = Wall(id, solid: false, box: false);
         wall.BoundingBox = [0, 0, 0, 4, 3, 2];
+        wall.BoundingBoxIsHeaderOutline = true;
         wall.Geometry = null;
         return wall;
     }
 
     private static string DataOf(string ifc) => ifc[ifc.IndexOf("DATA;", StringComparison.Ordinal)..];
 
-    /// <summary>Exports as the reader hands a file read without the R22 layout over: the geometry is undecoded and the elements carry only the outlines.</summary>
-    private static string ExportOutlinesOnly(params Element[] elements)
-    {
-        string path = Path.Combine(Path.GetTempPath(), $"rr-wall-outline-{Guid.NewGuid():N}.ifc");
-        try
-        {
-            new IfcExporter { Profile = IfcProfile.Current }.Export(new RevitFileInfo { Elements = [.. elements], GeometryUndecoded = true, HeaderOutlinesOnly = true }, path);
-            return File.ReadAllText(path);
-        }
-        finally { if (File.Exists(path)) File.Delete(path); }
-    }
-
     [Fact]
     public void TheHeaderOutlineOfTheElementsOfAFileWithoutDecodedGeometry_DoesNotChangeTheExport()
     {
         // The products of such a file are written without a representation, with or without the box of the header on their elements.
         string withoutOutline = DataOf(Export(true, Wall(100, solid: false, box: false), Wall(101, solid: false, box: false)));
-        string withOutline = DataOf(ExportOutlinesOnly(OutlineOnlyWall(100), OutlineOnlyWall(101)));
+        string withOutline = DataOf(Export(true, OutlineOnlyWall(100), OutlineOnlyWall(101)));
         Assert.Equal(2, Walls(withOutline));
         Assert.Equal(withoutOutline, withOutline);
     }
 
     [Fact]
-    public void TheHeaderOutlinesAreBackOnTheElementsAfterTheExport()
+    public void TheHeaderOutlinesAreStillOnTheElementsAfterTheExport()
     {
         var walls = new[] { OutlineOnlyWall(100), OutlineOnlyWall(101) };
-        ExportOutlinesOnly(walls);
+        Export(true, walls);
         Assert.All(walls, wall => Assert.Equal([0, 0, 0, 4, 3, 2], wall.BoundingBox));
     }
 

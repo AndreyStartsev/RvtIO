@@ -33,11 +33,6 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal bool GeometryUndecoded { get; set; }
 
-        /// <summary>The geometry of the file was not read at all (a file with its own class schema read without the R22 layout): its elements carry the
-        /// outline of their header, which is the box of the element and not that of a body, and nothing the exporter could place a body by.</summary>
-        [System.Text.Json.Serialization.JsonIgnore]
-        internal bool HeaderOutlinesOnly { get; set; }
-
         /// <summary>GStyleElem id -> the ElementId of its GStyle material (-1 or 0 stand for no material) and the
         /// ElementId of its category, for the graphics styles whose block decoded exactly once. The material
         /// of a solid whose faces carry none comes from the style of the solid,

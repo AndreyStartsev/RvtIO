@@ -18,7 +18,7 @@ public partial class IfcExporter
         double[]? start = host.Location?.StartPoint, end = host.Location?.EndPoint;
         double dx = start != null && end != null ? end[0] - start[0] : 0, dy = start != null && end != null ? end[1] - start[1] : 0;
         double length = Math.Sqrt(dx * dx + dy * dy);
-        var bounded = panels.Where(panel => (panel.BoundingBox ?? panel.Geometry?.BoundingBox) is { Length: >= 6 }).ToList();
+        var bounded = panels.Where(panel => (panel.DecodedBox ?? panel.Geometry?.BoundingBox) is { Length: >= 6 }).ToList();
         if (host.SerializedCurtainPanelOrder is { Length: > 0 } stored)
         {
             var listed = new HashSet<int>(panels.Select(panel => panel.Id));
@@ -33,7 +33,7 @@ public partial class IfcExporter
             dy /= length;
             var cells = panels.Select(panel =>
             {
-                double[] box = (panel.BoundingBox ?? panel.Geometry!.BoundingBox)!;
+                double[] box = (panel.DecodedBox ?? panel.Geometry!.BoundingBox)!;
                 return (Panel: panel, Bottom: box[2], Along: ((box[0] + box[3]) / 2 - start![0]) * dx + ((box[1] + box[4]) / 2 - start![1]) * dy);
             }).OrderBy(cell => cell.Bottom).ToList();
             var row = new List<(Element Panel, double Bottom, double Along)>();

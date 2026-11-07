@@ -211,10 +211,28 @@ public class ElementHeaderBoundingBoxTests
         ElementBuilder.ApplyHeaderBoundingBoxes(
             new RevitFileInfo { Elements = [boxed, unstored, disagreeing, unrecorded] }, state);
         Assert.Equal(box, boxed.BoundingBox);
+        Assert.True(boxed.BoundingBoxIsHeaderOutline);
         Assert.Null(unstored.BoundingBox);
+        Assert.False(unstored.BoundingBoxIsHeaderOutline);
+        Assert.False(disagreeing.BoundingBoxIsHeaderOutline);
         Assert.Equal([9, 9, 9, 9, 9, 9], disagreeing.BoundingBox);
         Assert.Equal([9, 9, 9, 9, 9, 9], unrecorded.BoundingBox);
         Assert.Same(box, state.HeaderBoundingBoxes[103]!.Box);
+    }
+
+    [Fact]
+    public void DecodedBox_IsTheBoxOfTheGeometry_NeverTheOutlineOfTheHeader()
+    {
+        double[] outline = [0, 0, 0, 10, 10, 10], tight = [1, 1, 1, 9, 9, 9], own = [2, 2, 2, 8, 8, 8];
+        // an element that was not read from a file has its own box, as it had before the outline was read: nothing else stands in for it
+        Assert.Same(own, new Element { BoundingBox = own, Geometry = new GeometryData { BoundingBox = tight } }.DecodedBox);
+        Assert.Null(new Element { Geometry = new GeometryData { BoundingBox = tight } }.DecodedBox);
+        Assert.Null(new Element().DecodedBox);
+        // an element whose box is the outline of its header: the box of its geometry, and none without geometry (the outline says
+        // nothing about a body: the application reports one for a roof that only holds curtain panels)
+        Assert.Same(tight, new Element { BoundingBox = outline, BoundingBoxIsHeaderOutline = true, Geometry = new GeometryData { BoundingBox = tight } }.DecodedBox);
+        Assert.Null(new Element { BoundingBox = outline, BoundingBoxIsHeaderOutline = true }.DecodedBox);
+        Assert.Null(new Element { BoundingBox = outline, BoundingBoxIsHeaderOutline = true, Geometry = new GeometryData() }.DecodedBox);
     }
 
     [SkippableTheory]
@@ -262,10 +280,11 @@ public class ElementHeaderBoundingBoxTests
         // The files of these releases carry their own class schema and are read from it, without the R22 layout: the outline is
         // read there too, and is the box the R22 layout reads for the same element.
         var plain = new RvtFileReader().Read(path);
-        // no geometry is decoded there: the exporter is told that the boxes are outlines and nothing else
-        Assert.True(plain.HeaderOutlinesOnly);
         var boxed = plain.Elements.Where(e => e.BoundingBox is { Length: 6 }).ToList();
         Assert.NotEmpty(boxed);
+        // the box is the outline of the header, and no geometry is decoded there: the export measures no body by it
+        Assert.All(boxed, e => Assert.True(e.BoundingBoxIsHeaderOutline));
+        Assert.All(boxed, e => Assert.Null(e.DecodedBox));
 
         var viaR22 = new RvtFileReader(new RvtReaderOptions { R22Layout = true }).Read(path).Elements
             .Where(e => e.BoundingBox is { Length: 6 }).GroupBy(e => e.Id).ToDictionary(group => group.Key, group => group.First().BoundingBox!);

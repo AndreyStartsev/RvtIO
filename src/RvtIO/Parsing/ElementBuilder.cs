@@ -6373,7 +6373,10 @@ internal static partial class ElementBuilder
         if (state == null) return;
         foreach (var e in rvtInfo.Elements)
             if (state.HeaderBoundingBoxes.TryGetValue((uint)e.Id, out var box) && box != null)
+            {
                 e.BoundingBox = box.Present ? box.Box : null;
+                e.BoundingBoxIsHeaderOutline = box.Present;
+            }
     }
 
     /// <param name="instanceOrder">The order key of the GInstance node the source geometry is the symbol of: the source's nodes then sort at that node's place among the nodes of the target (Revit walks a GInstance's symbol where the GInstance stands); null keeps the keys of the source as they are.</param>

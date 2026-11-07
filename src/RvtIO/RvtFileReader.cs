@@ -601,7 +601,6 @@ public partial class RvtFileReader
         {
             ElemTableIsExact = elemTableIsExact,
             GeometryUndecoded = state.WideSchema != null,
-            HeaderOutlinesOnly = state.WideSchema != null && !state.R22View,
             Metadata = new FileMetadata
             {
                 StreamVersion = fileMetadata.GetValueOrDefault("StreamVersion"),
@@ -877,7 +876,6 @@ public partial class RvtFileReader
         {
             ElemTableIsExact = elemTableIsExact,
             GeometryUndecoded = state.WideSchema != null,
-            HeaderOutlinesOnly = state.WideSchema != null && !state.R22View,
             Metadata = new FileMetadata
             {
                 StreamVersion = fileMetadata.GetValueOrDefault("StreamVersion"),

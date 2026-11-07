@@ -828,6 +828,17 @@ namespace RvtIO.Model
         /// tighter box of the decoded geometry stays on the geometry.</summary>
         public double[]? BoundingBox { get; set; }
 
+        /// <summary>True when <see cref="BoundingBox"/> is the outline the element header stores (the box the application reports), which
+        /// the reader sets for every element whose header stores one, and not a box taken from decoded geometry. An element that has no decoded
+        /// geometry at all can have an outline, so the outline says nothing about the geometry: see <see cref="DecodedBox"/>.</summary>
+        internal bool BoundingBoxIsHeaderOutline { get; set; }
+
+        /// <summary>The box the element carries apart from the outline of its header, the one the IFC export measures bodies by and takes the presence
+        /// of geometry from: <see cref="BoundingBox"/> of an element that was not read from a file (its box is its own), and the tight box of the
+        /// decoded <see cref="Geometry"/> of an element whose box is the outline of its header, none when it has no geometry (the application
+        /// reports an outline for a roof that only holds curtain panels). Everything that reads the box of an element in the IFC export reads this one.</summary>
+        internal double[]? DecodedBox => BoundingBoxIsHeaderOutline ? Geometry?.BoundingBox : BoundingBox;
+
         /// <summary>
         /// Revit UniqueId: "{document-GUID}-{elemId:08x}".
         /// Constructed from the document GUID extracted from binary data.
