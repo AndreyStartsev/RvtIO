@@ -6,6 +6,7 @@ API between minor releases.
 
 ## [Unreleased]
 
+- Documentation: clarifies in `docs/export-report.md` that `export.exported` in the export report counts Revit elements rather than exported product entities (a roof element writing both IfcRoof and IfcSlab counts once) (Closes #62).
 - Export report: grid elements (OST_Grids) written by the grid pass as IfcGrid axes are now credited in exported and removed from the skip log, preserving the considered == exported + skipped invariant. Unwritten grid elements (such as types or disconnected lines) remain logged as skipped (Closes #59).
 - Current profile: a foundation whose profile gives no width (a round pile has neither an extrusion body nor a vertical prism) takes the Width quantity from the Width parameter of the instance, else of its type, so the round piles of the Revit 2025 structural sample carry the diameter their types store there (2 feet for the 24 inch families, 2.5 feet for the 30 inch one) as the reference output does. Foundations with an extrusion body or a vertical prism keep the width of their profile.
 - The export refuses a `--report` path that names not only the input file or the export output, but also `--dev-external-dump` and the compact measurement dumps (`--dev-candidates`, `--dev-trace`, `--dev-facts`, `--dev-solids`, `--dev-user-params`, `--dev-collisions`), so the run can no longer overwrite one of its own outputs with the report.
