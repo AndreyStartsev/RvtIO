@@ -4492,7 +4492,9 @@ public partial class IfcExporter
             string elemTypeName = ResolveProductFamilyAndTypeName(
                 elem, ifcType, elemById, elementIdOccurrenceCounts, CurrentProfile);
             string elemName = elemTypeName.Length == 0 ? elem.Id.ToString() : $"{elemTypeName}:{elem.Id}";
-            if (CurrentProfile && IsRunLengthRuleCurrent(elem, ifcType, elemById, elementIdOccurrenceCounts)) LengthRuleRunsCurrent.Add(elem.Id);
+            if (CurrentProfile && IsRunLengthRuleCurrent(elem, ifcType, elemById, elementIdOccurrenceCounts)
+                && RunLengthTreadsCurrent(elem, elemById) is int lengthTreads)
+                LengthRuleRunsCurrent[elem.Id] = lengthTreads;
             if (ifcType == "IFCSTAIR")
                 elemName = ResolveNativeStairName(elem, elemById, elementIdOccurrenceCounts, CurrentProfile) ?? elemName;
             // A stair run or landing takes its type's name too (its own Name is empty in the files that do not carry the legacy name).
