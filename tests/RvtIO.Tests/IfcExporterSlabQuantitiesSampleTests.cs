@@ -76,4 +76,22 @@ public class IfcExporterSlabQuantitiesSampleTests
         Assert.NotEmpty(piles);
         Assert.All(piles, pile => Assert.InRange(pile["NetVolume"], 73.8, 76.2));
     }
+
+    [SkippableFact]
+    public void Struct25Sample_RoundPileWidth_IsTheDiameterItsTypeStores()
+    {
+        string ifc = ExportIfc("struct25.rvt");
+
+        // a round pile has no extrusion to measure, so the reference output gives it the Width parameter its type stores,
+        // the diameter of its round profile: 2 feet for the 24 inch families, 2.5 feet for the 30 inch one
+        var piles25 = SlabQuantities(ifc, "SFD_Round:24x24x25'");
+        Assert.NotEmpty(piles25);
+        Assert.All(piles25, pile => Assert.Equal(2, pile["Width"], 6));
+        var piles30 = SlabQuantities(ifc, "SFD_Round:30x30x25'");
+        Assert.NotEmpty(piles30);
+        Assert.All(piles30, pile => Assert.Equal(2.5, pile["Width"], 6));
+        var piles20 = SlabQuantities(ifc, "SFD_Round:24x24x20'");
+        Assert.NotEmpty(piles20);
+        Assert.All(piles20, pile => Assert.Equal(2, pile["Width"], 6));
+    }
 }
