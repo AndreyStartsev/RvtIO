@@ -15,6 +15,7 @@ public partial class IfcExporter
     private const int HostVolumeComputedParameterId = -1012806;
     private const int HostPerimeterComputedParameterId = -1001953;
     private const int WallWidthParameterId = -1001000;
+    private const int FoundationWidthParameterId = -1001568;
     private const int PipeInsulationCategoryId = -2008122, DuctInsulationCategoryId = -2008123, DuctLiningCategoryId = -2008124;
 
     /// <summary>Whether every product that the current profile gives a quantity set receives an IfcElementQuantity
@@ -825,7 +826,7 @@ public partial class IfcExporter
             "IFCDOOR" or "IFCWINDOW" => DoorWindowQuantitiesCurrent(context, element),
             "IFCMEMBER" => MemberQuantitiesCurrent(context, productId, element, body),
             "IFCPLATE" => PlateQuantitiesCurrent(element),
-            "IFCSLAB" => SlabQuantitiesCurrent(element, body, arguments),
+            "IFCSLAB" => SlabQuantitiesCurrent(context, element, body, arguments),
             "IFCCOVERING" => CoveringQuantitiesCurrent(element),
             "IFCCOLUMN" => ColumnQuantitiesCurrent(element, body),
             "IFCBEAM" => BeamQuantitiesCurrent(element, body),
@@ -1271,7 +1272,7 @@ public partial class IfcExporter
     /// <summary>The Slab description: GrossArea is the profile area of the slab prism, else the computed host area of the floor
     /// (the area of its top face); NetArea the computed host area, else the whole surface of the solids; GrossVolume the profile
     /// area times the thickness; Perimeter and Width come from the profile (outer loop length, world X extent).</summary>
-    private List<QuantityValue> SlabQuantitiesCurrent(Element element, ProfileExtrusion? body, string[] arguments)
+    private List<QuantityValue> SlabQuantitiesCurrent(QuantityContextCurrent context, Element element, ProfileExtrusion? body, string[] arguments)
     {
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
@@ -1339,6 +1340,11 @@ public partial class IfcExporter
                 : prism is { } vertical ? vertical.ExtentX * FeetToMetres
                 : (b.Rectangle && Math.Abs(b.AxisX?[0] ?? 1) < 0.1 ? b.ExtentY : b.ExtentX))
             : prism?.ExtentX * FeetToMetres;
+        // A foundation whose profile gives no width (a round pile has neither an extrusion body nor a vertical prism) takes the
+        // Width parameter (STRUCTURAL_FOUNDATION_WIDTH) of the instance, else of its type: the reference gives the pile the
+        // diameter its record stores there, so a 24 inch pile is 2 feet wide.
+        if (slabWidth == null && element.CategoryId == CurrentFoundationCategoryId)
+            slabWidth = ExactParameterFeetCurrent(element, TypeOfCurrent(element, context.Elements), FoundationWidthParameterId) * FeetToMetres;
         AddIfPositive(result, QuantityKind.Length, "Width", slabWidth);
         return result;
     }
