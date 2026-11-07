@@ -1609,6 +1609,10 @@ public partial class IfcExporter
         // decoder of that element, not a sign that the bounds of the file are read.
         bool boundsDecoded = info.GeometryUndecoded
             && info.Elements.Any(e => BoundsAreValid(e.BoundingBox ?? e.Geometry?.BoundingBox));
+        // A 64-bit-id file read without the R22 layout decodes no geometry at all, and then a wall without a body is the rule, not a
+        // finding: the bodies of the file count as decoded when any element holds one.
+        bool bodiesDecoded = info.GeometryUndecoded
+            && info.Elements.Any(e => e.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
@@ -1825,8 +1829,8 @@ public partial class IfcExporter
                 // representation.
                 if (info.GeometryUndecoded)
                 {
-                    // A wall with neither a solid body nor a face body has nothing to show.
-                    if (CurrentProfile && ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 }
+                    // A wall with neither a solid body nor a face body has nothing to show, where the bodies of the file are decoded.
+                    if (CurrentProfile && bodiesDecoded && ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 }
                         && elem.Geometry?.Faces is not { Count: > 0 })
                     { Skip(elem, "wall-without-solid"); continue; }
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");

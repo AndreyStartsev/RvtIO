@@ -42,9 +42,30 @@ public class WallWithoutSolidAndTypeElementTests
     [Fact]
     public void WallWithASolid_IsExported() => Assert.Equal(1, Walls(Export(Wall(100, solid: true))));
 
+    // The filter is a finding only where the geometry of the file was decoded: it holds a body somewhere.
     [Fact]
-    public void WallWithoutASolidAndWithoutBounds_InAFileWithUndecodedGeometry_IsNotExported() =>
-        Assert.Equal(0, Walls(Export(true, Wall(100, solid: false, box: false))));
+    public void WallWithoutASolidAndWithoutBounds_InAFileWithDecodedGeometry_IsNotExported() =>
+        Assert.Equal(1, Walls(Export(true, Wall(100, solid: false, box: false), Wall(101, solid: true, box: false))));
+
+    [Fact]
+    public void WallWithoutASolidAndWithoutBounds_InAFileWhoseGeometryWasNotDecodedAtAll_IsExported() =>
+        Assert.Equal(2, Walls(Export(true, Wall(100, solid: false, box: false), Wall(101, solid: false, box: false))));
+
+    [SkippableFact]
+    public void WallsOfAFileReadWithoutTheR22Layout_AreExported()
+    {
+        // A 64-bit-id file read by the default reader decodes no geometry: no element has a body, so a wall without one is the rule.
+        var info = new RvtFileReader().Read(TestFiles.FindRelative(Path.Combine("2025", "Test_2025.rvt")));
+        Assert.True(info.GeometryUndecoded);
+        Assert.DoesNotContain(info.Elements, element => element.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
+        string path = Path.Combine(Path.GetTempPath(), $"rr-wall-undecoded-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            new IfcExporter(TextWriter.Null) { Profile = IfcProfile.Current }.Export(info, path);
+            Assert.True(Walls(File.ReadAllText(path)) > 0);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
 
     [Fact]
     public void WallWithASolidAndWithoutBounds_InAFileWithUndecodedGeometry_IsExported() =>
