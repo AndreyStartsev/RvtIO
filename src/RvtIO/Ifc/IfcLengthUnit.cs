@@ -42,7 +42,7 @@ internal static class IfcLengthUnit
         ["IFCCARTESIANPOINT"] = [0],
     };
 
-    internal static string ToMillimetres(string type, string args)
+    internal static string ToMillimetres(string type, string args, bool exactQuantities = false)
     {
         bool scalar = Scalars.TryGetValue(type, out var scalarIndices);
         bool list = Lists.TryGetValue(type, out var listIndices);
@@ -53,7 +53,7 @@ internal static class IfcLengthUnit
         {
             // (the -0. offset of a building pad's layer set usage is a written negative zero, which a shift would lose)
             if (scalar && Array.IndexOf(scalarIndices!, i) >= 0)
-                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : ShiftNumber(parts[i]);
+                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : (exactQuantities && type == "IFCQUANTITYLENGTH" ? ShiftQuantity(parts[i]) : ShiftNumber(parts[i]));
             else if (list && Array.IndexOf(listIndices!, i) >= 0) parts[i] = ShiftList(parts[i]);
         }
         return string.Join(',', parts);
@@ -63,8 +63,8 @@ internal static class IfcLengthUnit
     /// (what every file wrote before the family existed); Metre keeps the metres of the table and moves the
     /// millimetre-written attributes; Foot divides every length, area and volume by its factor, which is what the Revit
     /// internal unit is, so those files are printed in the values of the document itself.</summary>
-    internal static Func<string, string, string> Converter(IfcUnitFamily family) =>
-        family == IfcUnitFamily.Millimetre ? ToMillimetres : (type, args) => ToFamily(type, args, family);
+    internal static Func<string, string, string> Converter(IfcUnitFamily family, bool exactQuantities = false) =>
+        family == IfcUnitFamily.Millimetre ? (type, args) => ToMillimetres(type, args, exactQuantities) : (type, args) => ToFamily(type, args, family, exactQuantities);
 
     internal const double MetresPerFoot = 0.3048;
     internal const double SquareMetresPerSquareFoot = MetresPerFoot * MetresPerFoot;
@@ -111,9 +111,9 @@ internal static class IfcLengthUnit
         ("IFCAREAMEASURE(", SourceUnit.SquareMetre), ("IFCVOLUMEMEASURE(", SourceUnit.CubicMetre),
     ];
 
-    internal static string ToFamily(string type, string args, IfcUnitFamily family)
+    internal static string ToFamily(string type, string args, IfcUnitFamily family, bool exact = false)
     {
-        if (family == IfcUnitFamily.Millimetre) return ToMillimetres(type, args);
+        if (family == IfcUnitFamily.Millimetre) return ToMillimetres(type, args, exact);
         bool metres = Scalars.ContainsKey(type) || Lists.ContainsKey(type);
         bool millimetres = Millimetres.ContainsKey(type), squares = SquareMetres.ContainsKey(type), cubes = CubicMetres.ContainsKey(type);
         bool property = type == "IFCPROPERTYSINGLEVALUE";
@@ -123,26 +123,26 @@ internal static class IfcLengthUnit
         for (int i = 0; i < parts.Count; i++)
         {
             if (metres && Scalars.TryGetValue(type, out var scalarIndices) && Array.IndexOf(scalarIndices, i) >= 0)
-                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : Scale(parts[i], Divisor(SourceUnit.Metre, family));
+                parts[i] = type == "IFCMATERIALLAYERSETUSAGE" && parts[i].Trim() == "-0." ? parts[i] : Scale(parts[i], Divisor(SourceUnit.Metre, family), exact && type.StartsWith("IFCQUANTITY", StringComparison.Ordinal));
             else if (metres && Lists.TryGetValue(type, out var listIndices) && Array.IndexOf(listIndices, i) >= 0)
                 parts[i] = ScaleList(parts[i], Divisor(SourceUnit.Metre, family));
             else if (millimetres && Array.IndexOf(Millimetres[type], i) >= 0) parts[i] = Scale(parts[i], Divisor(SourceUnit.Millimetre, family));
-            else if (squares && Array.IndexOf(SquareMetres[type], i) >= 0) parts[i] = Scale(parts[i], Divisor(SourceUnit.SquareMetre, family));
-            else if (cubes && Array.IndexOf(CubicMetres[type], i) >= 0) parts[i] = Scale(parts[i], Divisor(SourceUnit.CubicMetre, family));
-            else if (property && i == 2) parts[i] = ScaleMeasure(parts[i], family);
+            else if (squares && Array.IndexOf(SquareMetres[type], i) >= 0) parts[i] = Scale(parts[i], Divisor(SourceUnit.SquareMetre, family), exact && type == "IFCQUANTITYAREA");
+            else if (cubes && Array.IndexOf(CubicMetres[type], i) >= 0) parts[i] = Scale(parts[i], Divisor(SourceUnit.CubicMetre, family), exact);
+            else if (property && i == 2) parts[i] = ScaleMeasure(parts[i], family, exact);
         }
         return string.Join(',', parts);
     }
 
     /// <summary>The nominal value of a property, IFCLENGTHMEASURE(x) and the like, scaled when its measure type is a length,
     /// an area or a volume.</summary>
-    private static string ScaleMeasure(string value, IfcUnitFamily family)
+    private static string ScaleMeasure(string value, IfcUnitFamily family, bool exact)
     {
         string text = value.Trim();
         foreach (var (measure, source) in Measures)
         {
             if (!text.StartsWith(measure, StringComparison.Ordinal) || !text.EndsWith(')')) continue;
-            return measure + Scale(text[measure.Length..^1], Divisor(source, family)) + ")";
+            return measure + Scale(text[measure.Length..^1], Divisor(source, family), exact) + ")";
         }
         return value;
     }
@@ -158,12 +158,13 @@ internal static class IfcLengthUnit
 
     /// <summary>A real literal divided by a divisor, printed with the digits that identify the double; anything that is not a plain
     /// number ($, *, a reference) is returned unchanged. A divisor of 1 or an exact zero keeps the literal.</summary>
-    private static string Scale(string token, double divisor)
+    private static string Scale(string token, double divisor, bool exactReal = false)
     {
         string text = token.Trim();
         if (divisor == 1 || text.Length == 0 || !(char.IsDigit(text[0]) || text[0] is '-' or '+' or '.')) return token;
         if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)) return token;
         if (value == 0) return token;
+        if (exactReal) return StepWriter.RealExact(value / divisor);
         // millimetres to metres moves the decimal point of the literal, as metres to millimetres does
         string result = divisor == 1000 && decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal exact)
             ? (exact / 1000m).ToString("0.############################", CultureInfo.InvariantCulture)
@@ -207,6 +208,16 @@ internal static class IfcLengthUnit
         var items = SplitTopLevel(trimmed[1..^1]);
         for (int i = 0; i < items.Count; i++) items[i] = ShiftNumber(items[i]);
         return "(" + string.Join(',', items) + ")";
+    }
+
+    /// <summary>A quantity real times 1000 for the current profile, whose quantity literals are the exact text of a double (see
+    /// <see cref="StepWriter.RealExact"/>): moving the decimal point of such a text gives digits of no double, so the double is scaled
+    /// and printed again.</summary>
+    private static string ShiftQuantity(string token)
+    {
+        string text = token.Trim();
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && text.Length > 0 && !char.IsLetter(text[0])
+            ? StepWriter.RealExact(value * 1000) : token;
     }
 
     /// <summary>A real literal times 1000; anything that is not a plain number ($, *, a reference) is returned unchanged.</summary>

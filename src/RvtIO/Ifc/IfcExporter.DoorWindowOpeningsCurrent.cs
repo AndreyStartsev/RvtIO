@@ -91,7 +91,7 @@ public partial class IfcExporter
                 var qArgs = SplitStepArguments(w.EntityAt(qIndex).Args);
                 if (qArgs.Length < 4) continue;
                 string qName = qArgs[0].Trim('\'');
-                if (newValue(qName, qArgs[3]) is { } value) w.ReplaceArgs(qIndex, $"'{qName}','',$,{StepWriter.Real(value)}");
+                if (newValue(qName, qArgs[3]) is { } value) w.ReplaceArgs(qIndex, $"'{qName}','',$,{D17(value)}");
             }
         }
         foreach (var (openingId, fillingId) in fillingByOpening)
