@@ -335,6 +335,34 @@ public class ChunkDecompressorTests
     }
 
     [Fact]
+    public void AStreamWithoutAGzipMemberIsOneFailedMemberAndTheReportIsPartial()
+    {
+        // The bytes of a stream whose headers are gone: nothing in it can be cut into members, and none of its data decoded.
+        byte[] damaged = new byte[4000];
+        new Random(5).NextBytes(damaged);
+        damaged[0] = 0; damaged[1] = 1;
+        var decompressor = new ChunkDecompressor();
+
+        var chunks = decompressor.DecompressAll(damaged);
+
+        Assert.Empty(chunks);
+        Assert.Equal((1, 0, 1, 0, 0), decompressor.LastStats);
+        var report = ReportOf(decompressor);
+        Assert.Equal("partial", report.Status);
+        Assert.Equal(0, Assert.Single(report.Streams).DecodedFraction);
+    }
+
+    [Fact]
+    public void AnEmptyStreamHasNoMembersAndNothingMissing()
+    {
+        var decompressor = new ChunkDecompressor();
+
+        Assert.Empty(decompressor.DecompressAll([]));
+
+        Assert.Equal((0, 0, 0, 0, 0), decompressor.LastStats);
+        Assert.Equal("complete", ReportOf(decompressor).Status);
+    }
+    [Fact]
     public void AMemberWithItsLast100BytesCutIsUnverifiedAndTheReportIsPartial()
     {
         byte[] payload = new byte[2048];

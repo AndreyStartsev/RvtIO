@@ -427,6 +427,83 @@ public class ExportReportTests
         Assert.Equal("partial", recoveredReport.Status);
     }
 
+    /// <summary>A container whose Global and Formats storages hold the given streams, as a damaged file would: the bytes of a stream
+    /// whose gzip header is gone, next to one that is intact.</summary>
+    private static RootStorage ContainerWith(params (string Storage, string Stream, byte[] Bytes)[] streams)
+    {
+        var container = new MemoryStream();
+        using (var created = RootStorage.Create(container, OpenMcdf.Version.V3, StorageModeFlags.LeaveOpen))
+            foreach (var (storage, stream, bytes) in streams)
+            {
+                var parent = created.TryOpenStorage(storage, out var existing) ? existing : created.CreateStorage(storage);
+                using var written = parent.CreateStream(stream);
+                written.Write(bytes);
+            }
+        container.Position = 0;
+        return RootStorage.Open(container, StorageModeFlags.LeaveOpen);
+    }
+
+    private static byte[] NoGzipMember(int length)
+    {
+        byte[] bytes = new byte[length];
+        new Random(5).NextBytes(bytes);
+        bytes[0] = 0; bytes[1] = 1;
+        return bytes;
+    }
+
+    private static byte[] IntactMember()
+    {
+        using var stream = new MemoryStream();
+        using (var gzip = new System.IO.Compression.GZipStream(stream, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
+            gzip.Write(new byte[3000].Select((_, i) => (byte)(i * 7)).ToArray());
+        byte[] member = stream.ToArray();
+        member[8] = 0;
+        member[9] = 0x0B;   // the RVT member header
+        return member;
+    }
+
+    private static T InvokeReader<T>(RvtFileReader reader, string method, params object?[] arguments) =>
+        (T)typeof(RvtFileReader).GetMethod(method, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(reader, arguments)!;
+
+    private static ExportReport ReportOf(RvtReadDiagnostics diagnostics) =>
+        ExportReport.ForRead("damaged.rvt", 1, diagnostics, false, false, [1], new RevitFileInfo());
+
+    [Fact]
+    public void AStorageStreamWithoutAGzipHeaderIsAFailedStreamAndThePartialReport()
+    {
+        // The Global storage is read stream by stream (DecompressStorage): a stream that lost its gzip header decodes to nothing
+        // and is no stream without members.
+        using var root = ContainerWith(("Global", "History", NoGzipMember(14146)), ("Global", "PartitionTable", IntactMember()));
+        var diagnostics = new RvtReadDiagnostics();
+
+        InvokeReader<List<byte[]>>(new RvtFileReader(new RvtReaderOptions { Diagnostics = diagnostics }), "DecompressStorage", root, "Global", null);
+
+        var history = Assert.Single(diagnostics.Streams, s => s.Name == "Global/History");
+        Assert.Equal((14146L, 1, 0, 1), (history.RawBytes, history.Members, history.Decoded, history.Failed));
+        var intact = Assert.Single(diagnostics.Streams, s => s.Name == "Global/PartitionTable");
+        Assert.Equal((1, 1, 0), (intact.Members, intact.Decoded, intact.Failed));
+        var report = ReportOf(diagnostics);
+        Assert.Equal("partial", report.Status);
+        Assert.Equal(0, report.Streams.Single(s => s.Name == "Global/History").DecodedFraction);
+        Assert.Equal(1, report.Streams.Single(s => s.Name == "Global/PartitionTable").DecodedFraction);
+    }
+
+    [Fact]
+    public void ANamedStreamWithoutAGzipHeaderIsAFailedStreamAndThePartialReport()
+    {
+        // The episode table is read by name (ReadEpisodeTable, then DecompressNamedStream when the exact decode rejects it).
+        using var root = ContainerWith(("Global", "History", NoGzipMember(14146)));
+        var diagnostics = new RvtReadDiagnostics();
+
+        InvokeReader<object>(new RvtFileReader(new RvtReaderOptions { Diagnostics = diagnostics }), "ReadEpisodeTable", root, null, null);
+
+        var history = Assert.Single(diagnostics.Streams, s => s.Name == "Global/History");
+        Assert.Equal((14146L, 1, 0, 1), (history.RawBytes, history.Members, history.Decoded, history.Failed));
+        var report = ReportOf(diagnostics);
+        Assert.Equal("partial", report.Status);
+        Assert.Equal(0, Assert.Single(report.Streams).DecodedFraction);
+    }
     [Fact]
     public void RebuiltMembersTreatStreamAsUnverifiedInReportStatus()
     {
