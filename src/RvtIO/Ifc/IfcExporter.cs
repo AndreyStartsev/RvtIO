@@ -477,6 +477,8 @@ public partial class IfcExporter
                 // A topography payload referenced through IOSModelGroups is group-definition
                 // content, not a placed spatial site.
                 && !groupDefinitionTopographyIds.Contains(element.Id)
+                // A topography whose export flags say No is no site either.
+                && !ExportFlagIsNo(element, elementByIdForTerrain)
                 && element.Geometry?.Faces.Count(face => face.OuterVertices is { Count: >= 3 }) >= 3)
             .ToList();
         var placedTopographyById = placedTopographies.ToDictionary(element => element.Id);
@@ -691,11 +693,14 @@ public partial class IfcExporter
         }
         _elementsByIdCurrent = elemById;
         _axisExtrusionBodyCurrent.Clear();
+        // The elements that the writers outside the product loop may write: the product loop leaves out the ones whose export flags say No
+        // (ExportFlagIsNo), and so must they. The whole list stays the source of lookups (hosts, types, levels).
+        var exportableElements = info.Elements.Where(element => !ExportFlagIsNo(element, elemById)).ToList();
         if (CurrentProfile)
-            CreateCurrentGrids(w, ownerHistId, footPrintSubCtxId, axisId, info.Elements, info.ElemTableIsExact,
+            CreateCurrentGrids(w, ownerHistId, footPrintSubCtxId, axisId, exportableElements, info.ElemTableIsExact,
                 storeyIfcIds, storeyPlacements, storeyContents);
         else
-            CreateSerializedGrids(w, ownerHistId, bodySubCtxId, axisId, info.Elements,
+            CreateSerializedGrids(w, ownerHistId, bodySubCtxId, axisId, exportableElements,
                 storeyIfcIds, storeyPlacements, storeyContents);
         var representationMapsBySymbol =
             new Dictionary<int, RepresentationMapCacheEntry>();
@@ -705,14 +710,6 @@ public partial class IfcExporter
         {
             object? value = e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
             return value is int n ? n : null;
-        }
-        // "Export to IFC" (-1019012, instance) is read before "Export Type to IFC" (-1019013): 2 = No, 1 = Yes
-        // (beats a No on the type), anything else defers to the type.
-        bool ExportFlagIsNo(Element e)
-        {
-            int? own = IntParam(e, -1019012);
-            if (own is 1 or 2) return own == 2;
-            return e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var flagType) && IntParam(flagType, -1019013) == 2;
         }
         static bool HasProjectPhaseReference(Element e)
         {
@@ -1613,7 +1610,7 @@ public partial class IfcExporter
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
         {
-            if (ExportFlagIsNo(elem)) { Skip(elem, "export-to-ifc-flag-no"); continue; }
+            if (ExportFlagIsNo(elem, elemById)) { Skip(elem, "export-to-ifc-flag-no"); continue; }
             if (spatialTerrainElementIds.Contains(elem.Id)
                 || groupDefinitionTopographyIds.Contains(elem.Id))
             { Skip(elem, "terrain-or-group-topography"); continue; }
@@ -1687,7 +1684,7 @@ public partial class IfcExporter
             if (elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
                 && (IntParam(elem, -1013201) != -4
                     || elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
-                        && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall))) == true))
+                        && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))) == true))
             { Skip(elem, "opening-of-hidden-wall"); continue; }
 
             string? ifcType = elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
@@ -4823,7 +4820,7 @@ public partial class IfcExporter
             : [];
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
-            foreach (int systemId in WriteJoistAssemblies(w, info.Elements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
+            foreach (int systemId in WriteJoistAssemblies(w, exportableElements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
                          storeyContents, propertySingleValueIds))
             {
                 // counted with or without a skip log; the log entry is only there to be taken out
@@ -6214,7 +6211,7 @@ public partial class IfcExporter
         var spaceEntityIdByRoomId = new Dictionary<int, int>();
         var storeySpaceEntityIds = new Dictionary<int, List<int>>();
         var spaceTypeGuids = WriteSpaces(
-            w, ownerHistId, info.Elements, storeyIds, storeyPlacements,
+            w, ownerHistId, exportableElements, storeyIds, storeyPlacements,
             storeyElevationsMetres, bodySubCtxId, propertySingleValueIds, ResolveActiveRoomPhase(info), spaceEntityIdByRoomId,
             storeySpaceEntityIds);
         // A space is styled like any family body: each solid of its boundary takes its best
@@ -63474,6 +63471,16 @@ public partial class IfcExporter
         && bodyOutcome.OpenShellCount == 1
         && bodyOutcome.OpenShellFaceCount == 4
         && hasMaterializedHostedOpeningOperand;
+
+    /// <summary>Whether the "Export to IFC" flags keep an element out of the file: the instance flag (-1019012) is read first, 2 is No and 1 is Yes, which beats a No on
+    /// the type; any other value defers to the "Export Type to IFC" flag (-1019013) of the type of the element.</summary>
+    internal static bool ExportFlagIsNo(Element element, IReadOnlyDictionary<int, Element> elementsById)
+    {
+        static int? Flag(Element e, int id) => e.Parameters.FirstOrDefault(p => p.Id == id)?.Value is int n ? n : null;
+        int? own = Flag(element, -1019012);
+        if (own is 1 or 2) return own == 2;
+        return element.TypeId > 0 && elementsById.TryGetValue(element.TypeId, out var flagType) && Flag(flagType, -1019013) == 2;
+    }
 
     /// <summary>Exact product-role authority recovered from Element.m_unplacedOwnerId.</summary>
     internal static bool ShouldSuppressUnplacedOwnerProxyProduct(
