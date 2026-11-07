@@ -24,6 +24,22 @@ public class RoomNameSerializationTests
         Assert.False(state.ExactRoomPhaseIds.ContainsKey(100));
     }
 
+    [Fact]
+    public void Metadata_KeepsTheRoomPhaseOfZeroOfASchemaReadFile()
+    {
+        byte[] block = Block(phase: 0);
+        var state = new ParsingState { WideSchema = new FileSchema(new SchemaDocument()) };
+        RvtFileReader.RecordRoomNameSource(state, block, 0, Size(block), 3471, 100);
+        Assert.Equal(0, state.ExactRoomPhaseIds[100]);
+        // The Revit 2022 layout numbers phases from 1.
+        var narrow = new ParsingState();
+        RvtFileReader.RecordRoomNameSource(narrow, block, 0, Size(block), 3471, 100);
+        Assert.False(narrow.ExactRoomPhaseIds.ContainsKey(100));
+        // A second block of the same owner discards the validation.
+        RvtFileReader.RecordRoomNameSource(state, block, 0, Size(block), 3471, 100);
+        Assert.False(state.ExactRoomPhaseIds.ContainsKey(100));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
