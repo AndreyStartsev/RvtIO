@@ -271,7 +271,7 @@ public class IfcExporterBeamGeometryTests
             beam, out _));
     }
 
-    private static GeometryData RectangularPrism(
+    internal static GeometryData RectangularPrism(
         double[] centre, double[] axis, double[] profileX,
         double length, double width, double depth)
     {
@@ -332,7 +332,7 @@ public class IfcExporterBeamGeometryTests
         };
     }
 
-    private static double[] PrismBounds(
+    internal static double[] PrismBounds(
         double[] centre, double[] axis, double[] profileX,
         double length, double width, double depth)
     {

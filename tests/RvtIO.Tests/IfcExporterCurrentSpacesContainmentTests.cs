@@ -54,6 +54,7 @@ public class IfcExporterCurrentSpacesContainmentTests
         var proxy = Product(100, -2000151, "OST_GenericModel", 200);
         double bottom = 10.0 - 10.0 / (12.0 * 2.54) + aboveBoundary;
         proxy.BoundingBox = [0, 0, bottom, 4, 3, bottom + 2];
+        proxy.Geometry!.BoundingBox = [0, 0, bottom, 4, 3, bottom + 2];
         string ifc = Export(IfcProfile.Current, Levels().Append(Level(20, "Level B", 5.0)).Append(proxy).ToArray());
         Assert.Equal(storey, StoreyOf(ifc, "IFCBUILDINGELEMENTPROXY", 100));
     }

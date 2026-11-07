@@ -107,20 +107,27 @@ public class ElemTableAuthorityTests
         Assert.NotNull(method); Assert.Equal(expected, (bool)method.Invoke(state, [100u])!);
     }
 
-    [Theory]
-    [InlineData(false)] [InlineData(true)]
-    public void TableMembershipRetainsOwnGeometryAndTheRecordBoundingBoxPriority(bool hasRecord)
+    [Fact]
+    public void TableMembershipPutsTheRecordBoxOnTheGeometryAndTheElementBoxOnTheHeader()
     {
         var state = new ParsingState(); state.ElemTable[100] = 0;
         state.GrepBlocks[100] = new GRepData { BoundingBox = [1, 2, 3, 4, 5, 6] };
-        double[] expected = hasRecord ? [7, 8, 9, 10, 11, 12] : state.GrepBlocks[100].BoundingBox!;
-        if (hasRecord) state.Records[100] = new ElementRecord { ElemId = 100, Geometry = expected };
+        state.Records[100] = new ElementRecord { ElemId = 100, Geometry = [7, 8, 9, 10, 11, 12] };
         var info = new RevitFileInfo(); ElementBuilder.BuildElemTableElement(100, 0, state, info);
         var element = Assert.Single(info.Elements);
-        Assert.Equal(expected, element.BoundingBox);
+        // The tight box of the record lives on the geometry; the element box comes from the header
+        // outline alone, and this direct build holds no header verdict.
+        Assert.Null(element.BoundingBox);
         Assert.NotNull(element.Geometry);
         Assert.Equal(state.GrepBlocks[100].BoundingBox, element.Geometry.BoundingBox);
         Assert.Equal(-1, element.TypeId);
+        // The header verdict of the read is applied last and takes the element box.
+        state.HeaderBoundingBoxes[100] = new ElementHeaderBox(true, [7, 8, 9, 10, 11, 12]);
+        ElementBuilder.ApplyHeaderBoundingBoxes(info, state);
+        Assert.Equal([7, 8, 9, 10, 11, 12], element.BoundingBox);
+        state.HeaderBoundingBoxes[100] = new ElementHeaderBox(false, null);
+        ElementBuilder.ApplyHeaderBoundingBoxes(info, state);
+        Assert.Null(element.BoundingBox);
     }
 
     private static Dictionary<uint, uint> Parse(byte[] bytes)

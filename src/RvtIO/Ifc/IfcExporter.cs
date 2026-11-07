@@ -371,6 +371,9 @@ public partial class IfcExporter
             _facetedPlans.Clear(); // plans nobody asked for must not outlive the export
         }
     }
+    /// <summary>Whether any of the elements holds a decoded body: a solid or a face.</summary>
+    private static bool AnyElementHoldsABody(IEnumerable<Element> elements) =>
+        elements.Any(e => e.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
 
     private void ExportDocument(RevitFileInfo info, TextWriter output)
     {
@@ -527,7 +530,7 @@ public partial class IfcExporter
         int? siteShapeId = spatialTopography != null
             ? CreateFaceBasedSurfaceModels(w, spatialTerrainSurfaces.Select(surface =>
                 (Faces: (IReadOnlyList<GeoFace>)surface.Geometry!.Faces,
-                    Bounds: surface.BoundingBox ?? surface.Geometry.BoundingBox)).ToList(),
+                    Bounds: surface.DecodedBox ?? surface.Geometry.BoundingBox)).ToList(),
                 bodySubCtxId)
             : null;
 
@@ -834,12 +837,12 @@ public partial class IfcExporter
         foreach (var cutter in info.Elements.Where(element =>
                      element.CategoryId is -2000023 or -2000014
                      && element.SuperInstanceId is not > 0
-                     && element.BoundingBox is { Length: 6 } cutterBounds
+                     && element.DecodedBox is { Length: 6 } cutterBounds
                      && cutterBounds.All(double.IsFinite)))
             foreach (int hostId in ResolveHostedElementHostIds(
                          cutter, elemById, visibleWallIds, inverseHostedHostIds)
                      .Where(id => elemById[id].CategoryId == -2000011
-                         && HostedElementCanCutHost(cutter.BoundingBox!, elemById[id])))
+                         && HostedElementCanCutHost(cutter.DecodedBox!, elemById[id])))
             {
                 if (!hostedDoorWindowCutterIdsByWall.TryGetValue(
                         hostId, out var cutterIds))
@@ -901,7 +904,7 @@ public partial class IfcExporter
             new Dictionary<(int WallId, int CutterId), HostedOpeningGeometry>();
         foreach (var cutter in info.Elements.Where(element =>
                      element.SuperInstanceId is not > 0
-                     && element.BoundingBox is { Length: 6 } cutterBounds
+                     && element.DecodedBox is { Length: 6 } cutterBounds
                      && cutterBounds.All(double.IsFinite)))
         {
             bool doorOrWindow = cutter.CategoryId is -2000023 or -2000014;
@@ -914,7 +917,7 @@ public partial class IfcExporter
             var candidateHostIds = ResolveHostedElementHostIds(
                     cutter, elemById, visibleWallIds, inverseHostedHostIds)
                 .Where(id => elemById[id].CategoryId == -2000011
-                    && HostedElementCanCutHost(cutter.BoundingBox!, elemById[id])
+                    && HostedElementCanCutHost(cutter.DecodedBox!, elemById[id])
                     && (doorOrWindow || inverseCutHosts!.Contains(id)))
                 .ToList();
             bool precomputeDiagnostics = Environment.GetEnvironmentVariable(
@@ -973,12 +976,12 @@ public partial class IfcExporter
                         HasExactSixPointJoinShellWithTwoOpeningSourceAuthority(
                             hostWall.Geometry))
                     && TryBuildExactProfileConcordantAuthoredMultiHostEnvelope(
-                        cutter, cutter.BoundingBox!, candidateHostWalls,
+                        cutter, cutter.DecodedBox!, candidateHostWalls,
                         commonOpening, out var exactAuthoredEnvelope))
                     commonOpening = exactAuthoredEnvelope;
                 else if (!builtPrimitiveOpening)
                     builtPrimitiveOpening = TryBuildCommonHostedOpeningGeometry(
-                        cutter, cutter.BoundingBox!, candidateHostWalls,
+                        cutter, cutter.DecodedBox!, candidateHostWalls,
                         out commonOpening);
                 if (builtPrimitiveOpening)
                 {
@@ -990,14 +993,14 @@ public partial class IfcExporter
                         commonOpening = quarteredOpening;
                     else if (
                         TryBuildExactSteppedMultiHostOpeningFromAuthoredCutHosts(
-                            cutter, hostedType, cutter.BoundingBox!,
+                            cutter, hostedType, cutter.DecodedBox!,
                             candidateHostWalls, commonOpening,
                             out var steppedOpening))
                         commonOpening = steppedOpening;
                 }
                 else if (!builtPrimitiveOpening
                     && TryBuildUniqueExactSteppedMultiHostOpeningFromAuthoredHostProfiles(
-                        cutter, hostedType, cutter.BoundingBox!,
+                        cutter, hostedType, cutter.DecodedBox!,
                         candidateHostWalls, out var subsetSteppedOpening))
                     commonOpening = subsetSteppedOpening;
             }
@@ -1225,7 +1228,7 @@ public partial class IfcExporter
                     legacyEmittedOperand = legacyWriterOpening;
                 }
                 else if (!TryResolveHostedOpeningWriterOperand(
-                             cutter, cutter.BoundingBox!, elemById[hostId],
+                             cutter, cutter.DecodedBox!, elemById[hostId],
                              elemById, legacyWriterOpening,
                              out legacyEmittedOperand))
                 {
@@ -1241,7 +1244,7 @@ public partial class IfcExporter
                 if (builtExactSourceWallProfilesMappedBreakpoint)
                 {
                     if (!TryResolveHostedOpeningWriterOperand(
-                            cutter, cutter.BoundingBox!, elemById[hostId],
+                            cutter, cutter.DecodedBox!, elemById[hostId],
                             elemById, writerOpening,
                             out var exactSourceSteppedEmittedOperand))
                         continue;
@@ -1256,7 +1259,7 @@ public partial class IfcExporter
                         exactEmittedOperand = exactSingleLinkedSourceOpening;
                     }
                     else if (!TryResolveHostedOpeningWriterOperand(
-                                 cutter, cutter.BoundingBox!, elemById[hostId],
+                                 cutter, cutter.DecodedBox!, elemById[hostId],
                                  elemById, exactSingleLinkedSourceOpening,
                                  out exactEmittedOperand))
                     {
@@ -1441,7 +1444,7 @@ public partial class IfcExporter
                 RejectStandaloneWriterPath("undiscovered-without-geometry");
                 continue;
             }
-            if (opening.Geometry == null && opening.BoundingBox == null
+            if (opening.Geometry == null && opening.DecodedBox == null
                 && opening.Transform == null)
             {
                 RejectStandaloneWriterPath("instance-without-geometry");
@@ -1473,7 +1476,7 @@ public partial class IfcExporter
                 continue;
             }
 
-            double[]? openingBounds = opening.BoundingBox
+            double[]? openingBounds = opening.DecodedBox
                 ?? opening.Geometry?.BoundingBox;
             if (openingBounds == null || InvalidBbox(openingBounds))
             {
@@ -1607,11 +1610,10 @@ public partial class IfcExporter
         // The bounds of a 64-bit-id file count as decoded when any element carries valid ones: damaged bounds are a failure of the
         // decoder of that element, not a sign that the bounds of the file are read.
         bool boundsDecoded = info.GeometryUndecoded
-            && info.Elements.Any(e => BoundsAreValid(e.BoundingBox ?? e.Geometry?.BoundingBox));
+            && info.Elements.Any(e => BoundsAreValid(e.DecodedBox ?? e.Geometry?.BoundingBox));
         // A 64-bit-id file read without the R22 layout decodes no geometry at all, and then a wall without a body is the rule, not a
         // finding: the bodies of the file count as decoded when any element holds one.
-        bool bodiesDecoded = info.GeometryUndecoded
-            && info.Elements.Any(e => e.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
+        bool bodiesDecoded = info.GeometryUndecoded && AnyElementHoldsABody(info.Elements);
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
@@ -1683,7 +1685,7 @@ public partial class IfcExporter
                 // The record graph is not a reliable direct parent list: many placed panels and
                 // mullions are connected through CurtainGridLine/GridNode records rather than
                 // referencing the host wall themselves.
-                if (elem.BoundingBox == null && elem.Geometry?.BoundingBox == null && !info.GeometryUndecoded)
+                if (elem.DecodedBox == null && elem.Geometry?.BoundingBox == null && !info.GeometryUndecoded)
                 { Skip(elem, "curtain-child-without-bounds"); continue; }
             }
 
@@ -1739,7 +1741,7 @@ public partial class IfcExporter
                 File.AppendAllText(prodDiag, string.Join(',', elem.Id, ifcType, elem.IsDiscovered ? 1 : 0, elem.TypeId,
                     elem.CategoryId, elem.SerializedCreatedPhaseId, elem.SerializedDemolishedPhaseId, elem.SerializedFamilyId,
                     elem.SerializedUnplacedOwnerId, elem.SerializedOwnerDbViewId, elem.DocumentAccessHandle,
-                    elem.Geometry?.Faces?.Count ?? 0, elem.Geometry?.BrepSolids?.Count ?? 0, elem.BoundingBox != null ? 1 : 0,
+                    elem.Geometry?.Faces?.Count ?? 0, elem.Geometry?.BrepSolids?.Count ?? 0, elem.DecodedBox != null ? 1 : 0,
                     elem.Location != null ? 1 : 0, elem.Geometry?.Instances?.Count ?? 0,
                     elem.Parameters.FirstOrDefault(p => p.Id == -1019012)?.Value?.ToString() ?? "-",
                     (elem.TypeId > 0 && elemById.TryGetValue(elem.TypeId, out var diagType) ? diagType.Parameters.FirstOrDefault(p => p.Id == -1019013)?.Value?.ToString() : null) ?? "-",
@@ -1768,14 +1770,14 @@ public partial class IfcExporter
                         || ResolveHostedElementHostIds(
                             elem, elemById, visibleWallIds, inverseHostedHostIds).Count > 0;
                     // A freestanding door or window that has a body is a real product; one without valid bounds has nothing to write.
-                    if (!hasHost && !BoundsAreValid(elem.BoundingBox ?? elem.Geometry?.BoundingBox))
+                    if (!hasHost && !BoundsAreValid(elem.DecodedBox ?? elem.Geometry?.BoundingBox))
                     { Skip(elem, "hosted-element-without-host"); continue; }
                 }
                 else
                 {
                     // A real instance may have only an instance bbox when its family mesh lives in
                     // another stream member.
-                    if (elem.Geometry == null && elem.BoundingBox == null && elem.Transform == null
+                    if (elem.Geometry == null && elem.DecodedBox == null && elem.Transform == null
                         && !roofContainerChildren.ContainsKey(elem.Id) && !info.GeometryUndecoded)
                     { Skip(elem, "no-geometry-or-bounds"); continue; }
                 }
@@ -1796,14 +1798,14 @@ public partial class IfcExporter
             // damaged do not make a missing body: the product is rejected by them below, as it always was.
             if (boundsDecoded
                 && ShouldSkipRepresentationlessProduct(ifcType,
-                    hasBounds: (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 },
+                    hasBounds: (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 },
                     isEmittedAggregateParent: _emittedAggregateParentElementIds.Contains(elem.Id)))
             { Skip(elem, "product-without-body"); continue; }
 
             int elemStoreyId = ResolveStorey(elem, storeyIds, defaultStoreyId, elemById);
             if (Environment.GetEnvironmentVariable("RVTIO_STOREY_DIAG") is { Length: > 0 } storeyDiag)
                 File.AppendAllText(storeyDiag, string.Join(';', elem.Id, ifcType, elem.CategoryId, elem.SuperInstanceId, elem.NativeMasterSymbolId,
-                    (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } diagBox ? diagBox[2].ToString("R", CultureInfo.InvariantCulture) : "-",
+                    (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } diagBox ? diagBox[2].ToString("R", CultureInfo.InvariantCulture) : "-",
                     storeyIds.FirstOrDefault(pair => pair.Value == elemStoreyId).Key,
                     string.Join(',', elem.Parameters.Where(p => p.StorageType == StorageType.ElementId && p.Value is int)
                         .Select(p => $"{p.Id}:{p.Definition?.Name}={p.Value}"))) + "\n");
@@ -1817,7 +1819,13 @@ public partial class IfcExporter
             // include the level elevation), so parent placements to the BUILDING, not the storey.
             int elemStoreyPlacementId = bldgLocalPlacementId;
 
-            double[]? bbox = elem.BoundingBox ?? elem.Geometry?.BoundingBox;
+            // The wall strategies below match the boundary of a wall with the box of its element, and the reference writes a wall from the box the
+            // application reports (the outline of its header), which is larger than the tight box of the geometry where a wall is joined or cut.
+            // That holds for a wall that has decoded geometry: the outline says nothing about a body, and every other product is placed by the
+            // box of its decoded geometry (for a framing member the outline measures the envelope, not the body).
+            double[]? bbox = ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.BoundingBoxIsHeaderOutline
+                && elem.BoundingBox is { Length: 6 } outline && (elem.DecodedBox ?? elem.Geometry?.BoundingBox) != null
+                ? outline : elem.DecodedBox ?? elem.Geometry?.BoundingBox;
             int shapeId = 0;
             List<(int ShapeId, bool IsLanding)>? rampPartBodies = null;
             var rampLayout = RampLayout.Single;
@@ -1889,7 +1897,7 @@ public partial class IfcExporter
                 && debugIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     .Any(x => int.TryParse(x, out int id) && id == elem.Id);
             if (debugGeometry)
-                DiagnosticSink.WriteLine($"IFCGEOM eid={elem.Id} type={ifcType} faces={decodedRichFaces} elemBox=[{string.Join(',', elem.BoundingBox ?? [])}] geoBox=[{string.Join(',', elem.Geometry?.BoundingBox ?? [])}]");
+                DiagnosticSink.WriteLine($"IFCGEOM eid={elem.Id} type={ifcType} faces={decodedRichFaces} elemBox=[{string.Join(',', elem.DecodedBox ?? [])}] geoBox=[{string.Join(',', elem.Geometry?.BoundingBox ?? [])}]");
             int richFaces = decodedRichFaces;
             var straightWallBoundary = new GeometryData();
             bool hasStraightWallBoundary = ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE"
@@ -5090,7 +5098,7 @@ public partial class IfcExporter
                         (wallId, cutterId))
                     || !wallIfcIds.ContainsKey(wallId)
                     || !elemById.TryGetValue(cutterId, out var cutter)
-                    || cutter.BoundingBox is not { Length: 6 } cutterBounds)
+                    || cutter.DecodedBox is not { Length: 6 } cutterBounds)
                     continue;
                 int cutterIfcId = exportedIfcElements.TryGetValue(
                         cutterId, out var exportedCutter)
@@ -5367,7 +5375,7 @@ public partial class IfcExporter
                         && item.hostWallElemId == hostId))
                     continue;
                 hostedElements.Add((
-                    cutter, hostId, cutter.BoundingBox!, cutterIfcId));
+                    cutter, hostId, cutter.DecodedBox!, cutterIfcId));
             }
             commonHostedOpenings[cutterId] =
                 partition.SecondaryWriterOpening;
@@ -11111,7 +11119,7 @@ public partial class IfcExporter
         if (host?.Location is not { } wl) return null;
         double thk = P(host, -1001000);
         if (thk <= 0 && host.TypeId > 0 && elemById.TryGetValue(host.TypeId, out var hty)) thk = P(hty, -1001000);
-        double[]? hostBbox = host.BoundingBox ?? host.Geometry?.BoundingBox;
+        double[]? hostBbox = host.DecodedBox ?? host.Geometry?.BoundingBox;
         if (hostBbox is { Length: >= 6 })
         {
             double bt = Math.Min(Math.Abs(hostBbox[3] - hostBbox[0]), Math.Abs(hostBbox[4] - hostBbox[1]));
@@ -11217,7 +11225,7 @@ public partial class IfcExporter
             foreach (var wall in _wallIndex)
             {
                 var l = wall.Location!;
-                if (wall.BoundingBox is { Length: >= 6 } wb && (pz0 < wb[2] - 1 || pz0 > wb[5] + 1)) continue;
+                if (wall.DecodedBox is { Length: >= 6 } wb && (pz0 < wb[2] - 1 || pz0 > wb[5] + 1)) continue;
                 double ax = l.StartPoint[0], ay = l.StartPoint[1];
                 double bx = l.EndPoint[0], by = l.EndPoint[1];
                 double vx = bx - ax, vy = by - ay;
@@ -11254,7 +11262,7 @@ public partial class IfcExporter
         if (wFt <= 0 || hFt <= 0) { _dbgOpenNoParam++; return null; }
         _dbgOpenOk++;
         _resolvedOpenings[elem.Id] = (host.Id, wFt * FeetToMetres, hFt * FeetToMetres);
-        if (thkFt > 3 && host.BoundingBox is { Length: >= 6 } hbb)
+        if (thkFt > 3 && host.DecodedBox is { Length: >= 6 } hbb)
             thkFt = Math.Min(Math.Abs(hbb[3] - hbb[0]), Math.Abs(hbb[4] - hbb[1]));
         if (thkFt <= 0 || thkFt > 3) thkFt = 0.66; // ~200 mm fallback
 
@@ -11268,9 +11276,9 @@ public partial class IfcExporter
             wFt = bboxWidthFt;
 
         double pcx = (bbox[0] + bbox[3]) / 2, pcy = (bbox[1] + bbox[4]) / 2;
-        double wallCx = host.BoundingBox is { Length: >= 6 } hostBox
+        double wallCx = host.DecodedBox is { Length: >= 6 } hostBox
             ? (hostBox[0] + hostBox[3]) / 2 : (hl.StartPoint[0] + hl.EndPoint[0]) / 2;
-        double wallCy = host.BoundingBox is { Length: >= 6 } hostBox2
+        double wallCy = host.DecodedBox is { Length: >= 6 } hostBox2
             ? (hostBox2[1] + hostBox2[4]) / 2 : (hl.StartPoint[1] + hl.EndPoint[1]) / 2;
         double along = (pcx - wallCx) * ux + (pcy - wallCy) * uy;
         double cx = (wallCx + along * ux) * FeetToMetres;
@@ -11683,7 +11691,7 @@ public partial class IfcExporter
     {
         extrusion = default;
         if (element.CategoryId != -2001320
-            || element.BoundingBox is not { Length: >= 6 } envelope
+            || element.DecodedBox is not { Length: >= 6 } envelope
             || element.Geometry is not { } geometry
             || geometry.BrepSolids is not { Count: > 0 } solids)
             return false;
@@ -16111,7 +16119,7 @@ public partial class IfcExporter
                 && candidate.CategoryId == -2000011
                 && candidate.TypeId == wall.Id
                 && candidate.FamilyTypeId is not > 0
-                && candidate.BoundingBox == null
+                && candidate.DecodedBox == null
                 && candidate.Geometry?.Faces.Count is not > 0
                 && candidate.SketchLoops is { Count: 1 }
                 && candidate.References?.Contains(wall.Id) == true)
@@ -16364,7 +16372,7 @@ public partial class IfcExporter
             if (!elemById.TryGetValue(referenceId, out var line)
                 || line.CategoryId != -2000045
                 || line.HostId != owner.Id
-                || line.BoundingBox != null
+                || line.DecodedBox != null
                 || line.Geometry?.Faces.Count is > 0
                 || line.References?.Contains(wall.Id) != true
                 || line.References?.Contains(owner.Id) != true
@@ -20258,7 +20266,7 @@ public partial class IfcExporter
         foreach (var emitted in emittedOperands)
         {
             if (!elemById.TryGetValue(emitted.CutterId, out var cutter)
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value)))
                 return Reject("cutter-definition", [emitted.CutterId]);
             double[] associationBox =
@@ -21277,7 +21285,7 @@ public partial class IfcExporter
             || cutter.CategoryId != -2000151
             || cutter.IsBlockOnly
             || cutter.SuperInstanceId is > 0
-            || cutter.BoundingBox is not { Length: 6 } cutterBounds
+            || cutter.DecodedBox is not { Length: 6 } cutterBounds
             || cutterBounds.Any(value => !double.IsFinite(value))
             || cutter.HostId is not > 0
             || cutter.SerializedHostId != cutter.HostId
@@ -21314,7 +21322,7 @@ public partial class IfcExporter
             if (!visibleWallIds.Contains(hostId)
                 || !elemById.TryGetValue(hostId, out var host)
                 || host.CategoryId != -2000011
-                || host.BoundingBox is not { Length: 6 } hostBounds
+                || host.DecodedBox is not { Length: 6 } hostBounds
                 || hostBounds.Any(value => !double.IsFinite(value))
                 || !HostedElementCanCutHost(cutterBounds, host)
                 || host.References?.Count(id => id == cutterId) != 1
@@ -26392,7 +26400,7 @@ public partial class IfcExporter
                     { CurveType: "Line", ArcRadius: null } neighbourLocation
                 || !TryGetSerializedWallWidthFeet(
                     neighbour, out double neighbourWidthFt)
-                || neighbour.BoundingBox is not { Length: 6 } neighbourBounds
+                || neighbour.DecodedBox is not { Length: 6 } neighbourBounds
                 || neighbourBounds.Any(value => !double.IsFinite(value))
                 || !TryBuildStraightWallBoundary(
                     neighbour, out var neighbourBoundary)
@@ -30303,7 +30311,7 @@ public partial class IfcExporter
                 || !elemById.TryGetValue(cutterId, out var cutter)
                 || cutter.Id != cutterId || cutter.Id == wall.Id
                 || cutter.IsBlockOnly || cutter.SuperInstanceId is > 0
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value))
                 || cutter.HostId is not int directHostId
                 || directHostId <= 0
@@ -31323,7 +31331,7 @@ public partial class IfcExporter
                 || cutter.IsBlockOnly
                 || cutter.CategoryId is not (-2000023 or -2000014)
                 || cutter.SuperInstanceId is > 0
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value))
                 || !HostedElementCanCutHost(cutterBounds, wall))
                 return Reject("cutter-element", [cutterId]);
@@ -31601,7 +31609,7 @@ public partial class IfcExporter
         int cutterId = emittedIds[0];
         if (!elemById.TryGetValue(cutterId, out var cutter)
             || cutter.SuperInstanceId is > 0
-            || cutter.BoundingBox is not { Length: 6 } cutterBounds
+            || cutter.DecodedBox is not { Length: 6 } cutterBounds
             || cutterBounds.Any(value => !double.IsFinite(value))
             || !HostedElementCanCutHost(cutterBounds, wall))
             return Reject("cutter-element", emittedIds);
@@ -31775,7 +31783,7 @@ public partial class IfcExporter
             && (wall.CuttingElementIds is not { Count: 1 } cutterIds
                 || cutterIds[0] != cutterId))
             return Reject("decoded-cutter");
-        if (wall.BoundingBox is not { Length: 6 } bounds
+        if (wall.DecodedBox is not { Length: 6 } bounds
             || bounds.Any(value => !double.IsFinite(value))
             || wall.Location is not { CurveType: "Line", ArcRadius: null } location
             || !TryGetSerializedWallWidthFeet(wall, out double widthFt))
@@ -37768,7 +37776,7 @@ public partial class IfcExporter
             || directHostId <= 0 || directHostId == wall.Id
             || cutter.ExtraHostIds is { Count: > 0 }
             || cutter.ExplicitHostIds is { Count: > 0 }
-            || cutter.BoundingBox is not { Length: 6 } cutterBounds
+            || cutter.DecodedBox is not { Length: 6 } cutterBounds
             || cutterBounds.Any(value => !double.IsFinite(value))
             || !elemById.TryGetValue(directHostId, out var directHost)
             || directHost.CategoryId != -2000011
@@ -38393,7 +38401,7 @@ public partial class IfcExporter
             || extraHostIds.Count(id => id == wall.Id) != 1
             || extraHostIds.Contains(directHostId)
             || cutter.ExplicitHostIds is { Count: > 0 }
-            || cutter.BoundingBox is not { Length: 6 } cutterBounds
+            || cutter.DecodedBox is not { Length: 6 } cutterBounds
             || cutterBounds.Any(value => !double.IsFinite(value))
             || inverseCutHostIds is not { Count: 35 }
             || inverseCutHostIds.Distinct().Count() != 35
@@ -38449,7 +38457,7 @@ public partial class IfcExporter
             out HostedOpeningGeometry opening)
     {
         opening = default;
-        IReadOnlyList<double> bounds = wall.BoundingBox
+        IReadOnlyList<double> bounds = wall.DecodedBox
             ?? wall.Geometry?.BoundingBox ?? [];
         if (!HasExactThirtyFiveHostTenForwardFamilyCutGraph(
                 cutter, wall, candidateHostIds, inverseCutHostIds,
@@ -38737,7 +38745,7 @@ public partial class IfcExporter
             || !elemById.TryGetValue(cutterId, out var cutter)
             || cutter.CategoryId is not (-2000023 or -2000014)
             || cutter.SuperInstanceId is > 0
-            || cutter.BoundingBox is not { Length: 6 } cutterBounds
+            || cutter.DecodedBox is not { Length: 6 } cutterBounds
             || cutterBounds.Any(value => !double.IsFinite(value))
             || !HostedElementCanCutHost(cutterBounds, wall))
             return Reject("secondary-cutter", cutterId);
@@ -39722,7 +39730,7 @@ public partial class IfcExporter
                 && candidate.CategoryId == -2000011
                 && candidate.TypeId == wall.Id
                 && candidate.FamilyTypeId == wall.Id
-                && candidate.BoundingBox == null
+                && candidate.DecodedBox == null
                 && candidate.Geometry?.Faces.Count is not > 0
                 && candidate.SketchLoops is { Count: 1 }
                 && candidate.References?.Contains(wall.Id) == true)
@@ -39970,7 +39978,7 @@ public partial class IfcExporter
                 if (!elemById.TryGetValue(referenceId, out var line)
                     || line.CategoryId != -2000045
                     || line.HostId != owner.Id
-                    || line.BoundingBox != null
+                    || line.DecodedBox != null
                     || line.Geometry?.Faces.Count is > 0
                     || line.References?.Contains(wall.Id) != true
                     || line.References?.Contains(owner.Id) != true
@@ -40192,7 +40200,7 @@ public partial class IfcExporter
                 && candidate.CategoryId == -2000011
                 && candidate.TypeId == wall.Id
                 && candidate.FamilyTypeId is not > 0
-                && candidate.BoundingBox == null
+                && candidate.DecodedBox == null
                 && candidate.Geometry?.Faces.Count is not > 0
                 && candidate.SketchLoops is { Count: 1 }
                 && candidate.References?.Contains(wall.Id) == true)
@@ -40479,7 +40487,7 @@ public partial class IfcExporter
             if (!elemById.TryGetValue(referenceId, out var line)
                 || line.CategoryId != -2000045
                 || line.HostId != owner.Id
-                || line.BoundingBox != null
+                || line.DecodedBox != null
                 || line.Geometry?.Faces.Count is > 0
                 || line.References?.Contains(wall.Id) != true
                 || line.References?.Contains(owner.Id) != true
@@ -40957,7 +40965,7 @@ public partial class IfcExporter
                 && candidate.CategoryId == -2000011
                 && candidate.TypeId == wall.Id
                 && candidate.FamilyTypeId is not > 0
-                && candidate.BoundingBox == null
+                && candidate.DecodedBox == null
                 && candidate.Geometry?.Faces.Count is not > 0
                 && candidate.SketchLoops is { Count: 1 }
                 && candidate.References?.Contains(wall.Id) == true)
@@ -41104,7 +41112,7 @@ public partial class IfcExporter
             if (!elemById.TryGetValue(referenceId, out var line)
                 || line.CategoryId != -2000045
                 || line.HostId != owner.Id
-                || line.BoundingBox != null
+                || line.DecodedBox != null
                 || line.Geometry?.Faces.Count is > 0
                 || line.References?.Contains(wall.Id) != true
                 || line.References?.Contains(owner.Id) != true
@@ -41312,7 +41320,7 @@ public partial class IfcExporter
             return Reject($"path-mentions-{targetPathMentions}-"
                 + cutterPathMentions);
 
-        double[] cutterBounds = cutterWall.BoundingBox
+        double[] cutterBounds = cutterWall.DecodedBox
             ?? cutterWall.Geometry?.BoundingBox ?? [];
         if (cutterBounds.Length < 6
             || cutterBounds.Take(6).Any(value => !double.IsFinite(value))
@@ -41989,7 +41997,7 @@ public partial class IfcExporter
                 && candidate.CategoryId == -2000011
                 && candidate.TypeId == wall.Id
                 && candidate.FamilyTypeId is not > 0
-                && candidate.BoundingBox == null
+                && candidate.DecodedBox == null
                 && candidate.Geometry?.Faces.Count is not > 0
                 && candidate.SketchLoops is { Count: 1 }
                 && candidate.References?.Contains(wall.Id) == true)
@@ -42127,7 +42135,7 @@ public partial class IfcExporter
             if (!elemById.TryGetValue(referenceId, out var line)
                 || line.CategoryId != -2000045
                 || line.HostId != owner.Id
-                || line.BoundingBox != null
+                || line.DecodedBox != null
                 || line.Geometry?.Faces.Count is > 0
                 || line.References?.Contains(wall.Id) != true
                 || line.References?.Contains(owner.Id) != true
@@ -43674,7 +43682,7 @@ public partial class IfcExporter
         foreach (int cutterId in decodedCutterIds)
         {
             if (!elemById.TryGetValue(cutterId, out var cutter)
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value))
                 || cutter.SuperInstanceId is > 0
                 || cutter.HostId is not > 0
@@ -43817,7 +43825,7 @@ public partial class IfcExporter
         bool Empty(IReadOnlyCollection<int>? ids) =>
             ids is not { Count: > 0 };
         bool HasNoShape(Element element) =>
-            element.BoundingBox == null
+            element.DecodedBox == null
             && element.FamilyCutGeometry == null
             && element.FamilyCutLoops is not { Count: > 0 }
             && (element.Geometry == null
@@ -45432,7 +45440,7 @@ public partial class IfcExporter
             return Reject("cutter-missing", cutterId);
         if (cutter.SuperInstanceId is > 0)
             return Reject("cutter-super-instance", cutter.Id);
-        if (cutter.BoundingBox is not { Length: 6 } cutterBounds
+        if (cutter.DecodedBox is not { Length: 6 } cutterBounds
             || cutterBounds.Any(value => !double.IsFinite(value)))
             return Reject("cutter-bounds", cutter.Id);
         if (!HostedElementCanCutHost(cutterBounds, wall))
@@ -46004,9 +46012,9 @@ public partial class IfcExporter
                 $"matches=[{string.Join(',', subsetHosts.Select(item => item.Id))}]");
 
         Element subsetHost = subsetHosts[0];
-        IReadOnlyList<double> subsetBounds = subsetHost.BoundingBox
+        IReadOnlyList<double> subsetBounds = subsetHost.DecodedBox
             ?? subsetHost.Geometry?.BoundingBox ?? [];
-        IReadOnlyList<double> companionBounds = companionCutter.BoundingBox
+        IReadOnlyList<double> companionBounds = companionCutter.DecodedBox
             ?? companionCutter.Geometry?.BoundingBox ?? [];
         if (subsetBounds.Count < 6 || companionBounds.Count < 6
             || subsetBounds.Any(value => !double.IsFinite(value))
@@ -46207,7 +46215,7 @@ public partial class IfcExporter
         string geometryReason = "straight-boundary";
         if (!TryBuildStraightWallBoundary(host, out var rebuiltBoundary)
             || !TryGetExactCompleteOpenFourteenFaceBottomSlotFamilyCutGeometry(
-                host, host.BoundingBox ?? host.Geometry?.BoundingBox ?? [],
+                host, host.DecodedBox ?? host.Geometry?.BoundingBox ?? [],
                 rebuiltBoundary, directedWriter,
                 out _, out opening, out geometryReason))
         {
@@ -46370,7 +46378,7 @@ public partial class IfcExporter
                     "candidate-wall",
                     $"host={candidateHostId}");
             IReadOnlyList<double> candidateBounds =
-                candidateHost.BoundingBox
+                candidateHost.DecodedBox
                 ?? candidateHost.Geometry?.BoundingBox
                 ?? [];
             if (candidateBounds.Count < 6
@@ -46402,7 +46410,7 @@ public partial class IfcExporter
                 host, out var completeOpenTwelveFaceBoundary)
             && TryGetExactVerticalWallBoundaryFromCompleteOpenTwelveFaceMinimumCapShell(
                 host, completeOpenTwelveFaceBoundary,
-                host.BoundingBox ?? host.Geometry?.BoundingBox ?? [],
+                host.DecodedBox ?? host.Geometry?.BoundingBox ?? [],
                 out var exactMinimumCapBoundary,
                 out var exactMinimumCapLocation,
                 out string minimumCapReason)
@@ -46538,7 +46546,7 @@ public partial class IfcExporter
         }
         if (cutter.Id <= 0
             || cutter.SuperInstanceId is > 0
-            || cutter.BoundingBox is not { Length: 6 } cutterBounds
+            || cutter.DecodedBox is not { Length: 6 } cutterBounds
             || cutterBounds.Any(value => !double.IsFinite(value))
             || cutter.SerializedHostId is not { } directHostId
             || cutter.HostId is { } compatibilityHostId
@@ -46808,7 +46816,7 @@ public partial class IfcExporter
     /// </summary>
     internal static bool HostedElementCanCutHost(double[]? hostedBounds, Element host)
     {
-        var hostBounds = host.BoundingBox ?? host.Geometry?.BoundingBox;
+        var hostBounds = host.DecodedBox ?? host.Geometry?.BoundingBox;
         if (hostedBounds is not { Length: >= 6 } || hostBounds is not { Length: >= 6 }) return false;
         if (hostedBounds.Any(value => !double.IsFinite(value))
             || hostBounds.Any(value => !double.IsFinite(value))) return false;
@@ -47005,7 +47013,7 @@ public partial class IfcExporter
         {
             lowStart = lowEnd = highStart = highEnd = 0;
             var serializedBounds = elem.Geometry?.BoundingBox is { Length: 6 } geometryBounds
-                ? geometryBounds : elem.BoundingBox;
+                ? geometryBounds : elem.DecodedBox;
             if (serializedBounds is not { Length: 6 }) return false;
             double serializedMinZ = serializedBounds[2];
             double serializedMaxZ = serializedBounds[5];
@@ -47362,7 +47370,7 @@ public partial class IfcExporter
         boundary = new GeometryData
         {
             BoundingBox = elem.Geometry.BoundingBox is { Length: 6 } box
-                ? (double[])box.Clone() : elem.BoundingBox is { Length: 6 } elementBox
+                ? (double[])box.Clone() : elem.DecodedBox is { Length: 6 } elementBox
                     ? (double[])elementBox.Clone() : null,
             Faces = faces,
             BrepSolids =
@@ -47379,7 +47387,7 @@ public partial class IfcExporter
         bool MatchesSerializedBounds(IReadOnlyCollection<GeoFace> candidateFaces)
         {
             var serializedBounds = elem.Geometry.BoundingBox is { Length: 6 } geometryBounds
-                ? geometryBounds : elem.BoundingBox;
+                ? geometryBounds : elem.DecodedBox;
             if (serializedBounds is not { Length: 6 }) return true;
             var points = candidateFaces.SelectMany(face => face.OuterVertices ?? []).ToList();
             if (points.Count == 0) return false;
@@ -47650,7 +47658,7 @@ public partial class IfcExporter
             faces.AddRange(outerConnectors.Select(vertices => NewBoundaryFace(vertices)));
 
             var serializedBounds = elem.Geometry.BoundingBox is { Length: 6 } geometryBounds
-                ? geometryBounds : elem.BoundingBox;
+                ? geometryBounds : elem.DecodedBox;
             if (serializedBounds is { Length: 6 })
             {
                 var points = faces.SelectMany(face => face.OuterVertices ?? []).ToList();
@@ -47953,7 +47961,7 @@ public partial class IfcExporter
         Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds)
     {
         var wallSolid = wallElem.Geometry?.Solids?.FirstOrDefault();
-        double[] wallBbox = wallElem.BoundingBox ?? wallElem.Geometry?.BoundingBox ?? Array.Empty<double>();
+        double[] wallBbox = wallElem.DecodedBox ?? wallElem.Geometry?.BoundingBox ?? Array.Empty<double>();
         if (wallBbox.Length < 6) return;
 
         double wallThick, wallCx, wallCy, wallZ0, refDirX, refDirY;
@@ -49126,8 +49134,8 @@ public partial class IfcExporter
 
         static bool StrictVerticalBoundsOverlap(Element first, Element second)
         {
-            var firstBounds = first.BoundingBox ?? first.Geometry?.BoundingBox;
-            var secondBounds = second.BoundingBox ?? second.Geometry?.BoundingBox;
+            var firstBounds = first.DecodedBox ?? first.Geometry?.BoundingBox;
+            var secondBounds = second.DecodedBox ?? second.Geometry?.BoundingBox;
             if (firstBounds is not { Length: >= 6 }
                 || secondBounds is not { Length: >= 6 })
                 return false;
@@ -49351,8 +49359,8 @@ public partial class IfcExporter
 
         static bool StrictVerticalBoundsOverlap(Element first, Element second)
         {
-            var firstBounds = first.BoundingBox ?? first.Geometry?.BoundingBox;
-            var secondBounds = second.BoundingBox ?? second.Geometry?.BoundingBox;
+            var firstBounds = first.DecodedBox ?? first.Geometry?.BoundingBox;
+            var secondBounds = second.DecodedBox ?? second.Geometry?.BoundingBox;
             if (firstBounds is not { Length: >= 6 }
                 || secondBounds is not { Length: >= 6 })
                 return false;
@@ -51847,7 +51855,7 @@ public partial class IfcExporter
         HostedOpeningGeometry commonOpening, out HostedOpeningGeometry opening)
     {
         opening = default;
-        double[] wallBbox = wallElem.BoundingBox
+        double[] wallBbox = wallElem.DecodedBox
             ?? wallElem.Geometry?.BoundingBox ?? Array.Empty<double>();
         if (bbox.Length < 6 || wallBbox.Length < 6) return false;
 
@@ -52099,7 +52107,7 @@ public partial class IfcExporter
         bool writeExactBrepPrismAsSweptSolid = false,
         bool alignExactBrepPrismSweptSolidToDefinition = false)
     {
-        double[] wallBbox = wallElem.BoundingBox ?? wallElem.Geometry?.BoundingBox ?? Array.Empty<double>();
+        double[] wallBbox = wallElem.DecodedBox ?? wallElem.Geometry?.BoundingBox ?? Array.Empty<double>();
         if (wallBbox.Length < 6) return;
         if (CurrentProfile && hostedIfcId <= 0 && !createFillRelationship
             && TryBuildOwnUnfilledPrimaryFamilyCutout(hostedElem, wallElem, out var ownUnfilled))
@@ -52769,7 +52777,7 @@ public partial class IfcExporter
             return false;
         List<double[]> hostPlan = [];
         IReadOnlyList<double> hostBounds =
-            host.BoundingBox ?? host.Geometry?.BoundingBox ?? [];
+            host.DecodedBox ?? host.Geometry?.BoundingBox ?? [];
         bool hasExactRebuiltPlan =
             host.Location is { CurveType: "Line", ArcRadius: null } location
             && hostBounds.Count >= 6
@@ -54797,7 +54805,7 @@ public partial class IfcExporter
         if (j0!=notch || j1-b!=b-j0 || j1-j0!=Key(neighbourWidth)
             || y0!=n || y1!=far.Y-m || y1<=m || !(bottom<band && band<head)
             || !BoundsMatchAtIfcPrecision(nb,Bounds(nf.SelectMany(f=>f.OuterVertices!)))
-            || neighbour.BoundingBox is not { Length: 6 } eb || !BoundsMatchAtIfcPrecision(nb,eb)
+            || neighbour.DecodedBox is not { Length: 6 } eb || !BoundsMatchAtIfcPrecision(nb,eb)
             || !WallVerticalParametersMatchSerializedBounds(neighbour,neighbour.Location,nb)
             || !TryGetExactWallVerticalParameterDefinition(neighbour,nb,out double jb,out double jt)
             || Key(jb)!=bottom || Key(jt)!=head) return Reject("join-intersection");
@@ -56024,7 +56032,7 @@ public partial class IfcExporter
             if (!elemById.TryGetValue(cutterId, out var cutter)
                 || cutter.CategoryId is not (-2000023 or -2000014)
                 || cutter.SuperInstanceId is > 0
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value))
                 || !HostedElementCanCutHost(cutterBounds, wall)
                 || !inverseHostedHostIds.TryGetValue(
@@ -56455,7 +56463,7 @@ public partial class IfcExporter
         static bool WriterBoxMatchesSerializedBoundsAtIfcPrecision(
             Element cutter, HostedOpeningGeometry operand)
         {
-            if (cutter.BoundingBox is not { Length: 6 } serializedBounds
+            if (cutter.DecodedBox is not { Length: 6 } serializedBounds
                 || serializedBounds.Any(value => !double.IsFinite(value))
                 || serializedBounds[0] >= serializedBounds[3]
                 || serializedBounds[1] >= serializedBounds[4]
@@ -56607,7 +56615,7 @@ public partial class IfcExporter
                 || cutter.Id != cutterId || cutter.IsBlockOnly
                 || cutter.CategoryId != -2000014
                 || cutter.SuperInstanceId is > 0
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value))
                 || !inverseHostedHostIds.TryGetValue(
                     cutterId, out var inverseIds)
@@ -56677,7 +56685,7 @@ public partial class IfcExporter
                     || !elemById.TryGetValue(hostId, out var host)
                     || host.Id != hostId || host.IsBlockOnly
                     || host.CategoryId != -2000011
-                    || host.BoundingBox is not { Length: 6 } hostBounds
+                    || host.DecodedBox is not { Length: 6 } hostBounds
                     || hostBounds.Any(value => !double.IsFinite(value))
                     || host.Location is not
                         { CurveType: "Line", ArcRadius: null }
@@ -56802,7 +56810,7 @@ public partial class IfcExporter
                 transform.Origin[0], transform.Origin[1],
                 transform.BasisX[0], transform.BasisX[1],
                 widthFt, thicknessFt,
-                cutter.BoundingBox![2], heightFt,
+                cutter.DecodedBox![2], heightFt,
                 ExactDepth: true);
         HostedOpeningGeometry sevenHostDesired = Desired(
             sevenHostCutter, sevenHostTransform,
@@ -56854,7 +56862,7 @@ public partial class IfcExporter
             resolvedIds.Where(hostId =>
                 elemById[hostId].CategoryId == -2000011
                 && HostedElementCanCutHost(
-                    cutter.BoundingBox!, elemById[hostId]))
+                    cutter.DecodedBox!, elemById[hostId]))
                 .ToHashSet();
         var sevenCandidateHosts = CandidateHosts(
             sevenHostCutter, sevenHostIds);
@@ -56908,7 +56916,7 @@ public partial class IfcExporter
             Element host, out HostedOpeningGeometry opening)
         {
             opening = default;
-            double[] hostBounds = host.BoundingBox
+            double[] hostBounds = host.DecodedBox
                 ?? host.Geometry?.BoundingBox ?? [];
             if (host.Location is not
                 {
@@ -57225,7 +57233,7 @@ public partial class IfcExporter
 
         if (wall.CategoryId != -2000011
             || bounds.Count < 6 || bounds.Take(6).Any(value => !double.IsFinite(value))
-            || wall.BoundingBox is not { Length: 6 } wallBounds
+            || wall.DecodedBox is not { Length: 6 } wallBounds
             || wallBounds.Any(value => !double.IsFinite(value))
             || !BoundsMatchAtIfcPrecision(wallBounds, bounds)
             || wall.Location is not
@@ -57817,7 +57825,7 @@ public partial class IfcExporter
         foreach (int cutterId in decodedCutterIds)
         {
             if (!elementsById.TryGetValue(cutterId, out var cutter)
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value))
                 || cutter.HostId is not > 0
                 || cutter.SerializedHostId != cutter.HostId
@@ -58225,7 +58233,7 @@ public partial class IfcExporter
                         + $"wall={wall.Id} source=reject stage={stage}");
                 return false;
             }
-            if (wall.BoundingBox is not { Length: 6 } bounds
+            if (wall.DecodedBox is not { Length: 6 } bounds
                 || bounds.Any(value => !double.IsFinite(value))
                 || wall.Location is not
                     { CurveType: "Line", ArcRadius: null } location
@@ -58481,7 +58489,7 @@ public partial class IfcExporter
         }
 
         if (hostedElement.CategoryId != -2000014
-            || hostedElement.BoundingBox is not { Length: 6 } hostedBounds
+            || hostedElement.DecodedBox is not { Length: 6 } hostedBounds
             || hostedBounds.Any(value => !double.IsFinite(value))
             || hostedElement.HostId is not > 0
             || hostedElement.SerializedHostId != hostedElement.HostId
@@ -58492,7 +58500,7 @@ public partial class IfcExporter
             || candidateHostWalls.Select(wall => wall.Id).Distinct().Count()
                 != candidateHostWalls.Count
             || candidateHostWalls.Any(wall => wall.CategoryId != -2000011
-                || wall.BoundingBox is not { Length: 6 } wallBounds
+                || wall.DecodedBox is not { Length: 6 } wallBounds
                 || wallBounds.Any(value => !double.IsFinite(value))
                 || !HostedElementCanCutHost(hostedBounds, wall)))
             return Reject("instance-host-set");
@@ -58569,7 +58577,7 @@ public partial class IfcExporter
         foreach (int cutterId in targetCutterIds)
         {
             if (!elementsById.TryGetValue(cutterId, out var cutter)
-                || cutter.BoundingBox is not { Length: 6 } cutterBounds
+                || cutter.DecodedBox is not { Length: 6 } cutterBounds
                 || cutterBounds.Any(value => !double.IsFinite(value))
                 || cutter.HostId is not > 0
                 || cutter.SerializedHostId != cutter.HostId
@@ -58824,7 +58832,7 @@ public partial class IfcExporter
             foreach (Element host in candidateHostWalls)
             {
                 if (host.Id == primaryHosts[0].Id
-                    || host.BoundingBox is not { Length: 6 } hostBounds
+                    || host.DecodedBox is not { Length: 6 } hostBounds
                     || hostBounds.Any(value => !double.IsFinite(value))
                     || host.Location is not
                         { CurveType: "Line", ArcRadius: null } hostLocation
@@ -59007,7 +59015,7 @@ public partial class IfcExporter
         {
             if (host.CuttingElementIds?.Count(
                     id => id == hostedElement.Id) != 1
-                || host.BoundingBox is not { Length: 6 } bounds
+                || host.DecodedBox is not { Length: 6 } bounds
                 || bounds.Any(value => !double.IsFinite(value))
                 || host.Location is not
                     { CurveType: "Line", ArcRadius: null } location
@@ -59163,7 +59171,7 @@ public partial class IfcExporter
                 bool builtPeerPrimitive =
                     TryBuildSerializedHostedOpeningGeometry(
                         peer, peerType, out peerPrimitive)
-                    || peer.BoundingBox is { Length: 6 } peerBounds
+                    || peer.DecodedBox is { Length: 6 } peerBounds
                     && TryBuildCommonHostedOpeningGeometry(
                         peer, peerBounds, candidateHostWalls,
                         out peerPrimitive);
@@ -59178,7 +59186,7 @@ public partial class IfcExporter
                     continue;
                 bool peerHasPhysicalValidation =
                     candidateHostWalls.Any(host =>
-                        host.BoundingBox is { Length: 6 } hostBounds
+                        host.DecodedBox is { Length: 6 } hostBounds
                         && hostBounds.All(double.IsFinite)
                         && host.Location is
                             { CurveType: "Line", ArcRadius: null }
@@ -59558,7 +59566,7 @@ public partial class IfcExporter
             || sourceHost.Id != primaryHostId
             || sourceHost.CuttingElementIds?.Count(
                 id => id == hostedElement.Id) != 1
-            || sourceHost.BoundingBox is not { Length: 6 } hostBounds
+            || sourceHost.DecodedBox is not { Length: 6 } hostBounds
             || hostBounds.Any(value => !double.IsFinite(value))
             || sourceHost.Location is not
                 { CurveType: "Line", ArcRadius: null } hostLocation
@@ -60553,7 +60561,7 @@ public partial class IfcExporter
                 + $"stage={stage}");
         bool RobustlyDisjointFromCandidateOpening(Element host)
         {
-            return host.BoundingBox is { Length: 6 } bounds
+            return host.DecodedBox is { Length: 6 } bounds
                 && bounds.All(double.IsFinite)
                 && host.Location is
                     { CurveType: "Line", ArcRadius: null } location
@@ -60624,7 +60632,7 @@ public partial class IfcExporter
             {
                 if (!TryBuildStraightWallBoundary(host, out var straightBoundary))
                     return false;
-                if (host.BoundingBox is { Length: 6 } wallBounds
+                if (host.DecodedBox is { Length: 6 } wallBounds
                     && wallBounds.All(double.IsFinite)
                     && host.Location is
                         { CurveType: "Line", ArcRadius: null } location
@@ -61033,7 +61041,7 @@ public partial class IfcExporter
             if (directHost.CuttingElementIds is { Count: > 0 } cuttingIds
                 && cuttingIds.Count(id => id == hostedElement.Id) != 1)
                 return false;
-            if (directHost.BoundingBox is not { Length: 6 } wallBounds
+            if (directHost.DecodedBox is not { Length: 6 } wallBounds
                 || !wallBounds.All(double.IsFinite)
                 || directHost.Location is not
                     { CurveType: "Line", ArcRadius: null } location
@@ -61309,7 +61317,7 @@ public partial class IfcExporter
             if (directHost.CuttingElementIds is { Count: > 0 } cuttingIds
                 && cuttingIds.Count(id => id == hostedElement.Id) != 1)
                 return false;
-            if (directHost.BoundingBox is not { Length: 6 } wallBounds
+            if (directHost.DecodedBox is not { Length: 6 } wallBounds
                 || !wallBounds.All(double.IsFinite)
                 || directHost.Location is not
                     { CurveType: "Line", ArcRadius: null } location
@@ -62530,7 +62538,7 @@ public partial class IfcExporter
 
             bool hasExactHole = false;
             RectangularWallThroughOpening exactHole = default;
-            if (host.BoundingBox is { Length: 6 } wallBounds
+            if (host.DecodedBox is { Length: 6 } wallBounds
                 && wallBounds.All(double.IsFinite)
                 && TryGetSerializedWallWidthFeet(host, out double wallWidthFt)
                 && TryBuildStraightWallBoundary(host, out var straightBoundary)
@@ -67415,7 +67423,7 @@ public partial class IfcExporter
             // type of its roof type.
             bool roofContainer = product.ifcType == "IFCROOF" && instElem.CategoryId == -2000035
                 && instElem.Geometry?.Faces is not { Count: > 0 }
-                && (instElem.BoundingBox ?? instElem.Geometry?.BoundingBox) is not { Length: >= 6 };
+                && (instElem.DecodedBox ?? instElem.Geometry?.BoundingBox) is not { Length: >= 6 };
             string? typeClass = null;
             if (roofContainer) typeClass = "IFCCURTAINWALLTYPE";
             // IFC2X3 has no IfcStairType: the current profile types a stair by the generic
@@ -67736,7 +67744,7 @@ public partial class IfcExporter
             if (hostId <= 0 || !byId.TryGetValue(hostId, out var roof) || roof.Id != hostId
                 || roof.CategoryId != -2000035 || roof.IsBlockOnly
                 || occurrenceCounts.GetValueOrDefault(roof.Id) != 1
-                || (roof.BoundingBox ?? roof.Geometry?.BoundingBox) is { Length: >= 6 }
+                || (roof.DecodedBox ?? roof.Geometry?.BoundingBox) is { Length: >= 6 }
                 || roof.Geometry?.Faces is { Count: > 0 })
                 continue;
             if (!result.TryGetValue(roof.Id, out var children))
@@ -69510,11 +69518,11 @@ public partial class IfcExporter
         if (CurrentProfile && storeyIds.Count > 0)
         {
             int byBottom = ResolveStoreyByBottomCurrent(
-                (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
+                (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
                 storeyIds, elemById);
             return byBottom != 0 ? byBottom : defaultStoreyId;
         }
-        if ((elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } bounds && storeyIds.Count > 0)
+        if ((elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } bounds && storeyIds.Count > 0)
         {
             const double Tolerance = 1e-6;
             int best = defaultStoreyId;
@@ -69627,8 +69635,8 @@ public partial class IfcExporter
                 return d;
         }
         // Fallback: bbox Z
-        if (level.BoundingBox != null && level.BoundingBox.Length >= 3)
-            return level.BoundingBox[2];
+        if (level.DecodedBox != null && level.DecodedBox.Length >= 3)
+            return level.DecodedBox[2];
         return 0;
     }
 
@@ -69642,7 +69650,7 @@ public partial class IfcExporter
         double? frameExtent = InstanceFrameExtentMetresCurrent(elem, 2);
         if (frameExtent != null && frameExtent > 0)
             return frameExtent.Value * 1000;
-        double[]? bbox = elem.Geometry?.BoundingBox ?? elem.BoundingBox;
+        double[]? bbox = elem.Geometry?.BoundingBox ?? elem.DecodedBox;
         if (bbox != null && bbox.Length >= 6)
             return Math.Abs(bbox[5] - bbox[2]) * FeetToMetres * 1000;
         return 0;
@@ -69657,7 +69665,7 @@ public partial class IfcExporter
         double? frameExtent = InstanceFrameExtentMetresCurrent(elem, 0);
         if (frameExtent != null && frameExtent > 0)
             return frameExtent.Value * 1000;
-        double[]? bbox = elem.Geometry?.BoundingBox ?? elem.BoundingBox;
+        double[]? bbox = elem.Geometry?.BoundingBox ?? elem.DecodedBox;
         if (bbox != null && bbox.Length >= 6)
         {
             double dx = Math.Abs(bbox[3] - bbox[0]) * FeetToMetres * 1000;

@@ -142,8 +142,8 @@ public partial class IfcExporter
 
     internal static bool CutterBoxIntersectsHostCurrent(Element host, Element cutter)
     {
-        var a = host.BoundingBox ?? host.Geometry?.BoundingBox;
-        var b = cutter.BoundingBox ?? cutter.Geometry?.BoundingBox;
+        var a = host.DecodedBox ?? host.Geometry?.BoundingBox;
+        var b = cutter.DecodedBox ?? cutter.Geometry?.BoundingBox;
         if (a is not { Length: >= 6 } || b is not { Length: >= 6 }
             || a.Take(6).Any(value => !double.IsFinite(value)) || b.Take(6).Any(value => !double.IsFinite(value)))
             return false;
@@ -203,7 +203,7 @@ public partial class IfcExporter
         {
             // No usable body: the world bounding box (exact for a wall parallel to the axes).
             found = NewExtent();
-            if (element.BoundingBox is not { Length: 6 } box || box.Any(value => !double.IsFinite(value)))
+            if (element.DecodedBox is not { Length: 6 } box || box.Any(value => !double.IsFinite(value)))
             {
                 extent = found;
                 return false;
