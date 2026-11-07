@@ -13,10 +13,10 @@ internal static class ElementHeaderCategory
 
     // The fields of the header behind m_regenHistory, in the order of the schema: the six ids
     // m_categroryId, m_familyId, m_ownerViewId, m_designOptionId, m_unplacedOwnerId and m_miscId, then
-    // m_viewRules (a u32 handle), m_abFlags4Bytes (u32), m_classDef (a class reference of two bytes) and
-    // the two owned pointers m_pBBox and m_parents. A pointer is a u32 handle and, when the handle is not
-    // 0, a u16 class tag; the objects the pointers name follow the fields in the order the pointers were
-    // met, so the Outline is the first of them: six doubles.
+    // m_viewRules (four bytes of flags, all ones where no rule is set), m_abFlags4Bytes (u32), m_classDef (a
+    // class reference of two bytes) and the two owned pointers m_pBBox and m_parents. A pointer is a u32
+    // handle and, when the handle is not 0, a u16 class tag; the objects the pointers name follow the fields
+    // in the order the pointers were met, so the Outline is the first of them: six doubles.
     private const int IdFieldsBeforeViewRules = 6;
     private const int ViewRulesLength = 4, FlagsLength = 4, ClassDefinitionLength = 2;
     private const uint NewObjectHandle = 0xFFFFFFFF;
@@ -92,8 +92,6 @@ internal static class ElementHeaderCategory
         if (recordEnd > buffer.Length) return null;
         long at = categoryAt + (long)IdFieldsBeforeViewRules * idWidth;
         if (at + ViewRulesLength + FlagsLength + ClassDefinitionLength + 4 > recordEnd) return null;
-        // a view rules handle that names a new object carries a class tag and queues an object in front of the outline
-        if (BitConverter.ToUInt32(buffer, (int)at) == NewObjectHandle) return null;
         at += ViewRulesLength + FlagsLength + ClassDefinitionLength;
 
         uint boxHandle = BitConverter.ToUInt32(buffer, (int)at);
