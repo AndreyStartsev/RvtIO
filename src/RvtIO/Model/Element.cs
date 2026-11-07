@@ -823,7 +823,9 @@ namespace RvtIO.Model
         /// <summary>The parameters of the element.</summary>
         public List<Parameter> Parameters { get; set; } = new();
 
-        /// <summary>Bounding box [minX, minY, minZ, maxX, maxY, maxZ] in Revit internal units (feet).</summary>
+        /// <summary>The axis-aligned outline the element header stores: [minX, minY, minZ, maxX, maxY, maxZ] in Revit internal
+        /// units (feet, project coordinates) - the box the application reports. Null when the header stores no outline; the
+        /// tighter box of the decoded geometry stays on the geometry.</summary>
         public double[]? BoundingBox { get; set; }
 
         /// <summary>

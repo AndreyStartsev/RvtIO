@@ -51,7 +51,7 @@ internal static partial class ElementBuilder
             state.CoarseView = level == 1; state.DetailView = level;
             try
             {
-                var alt = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.BoundingBox };
+                var alt = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.Geometry?.BoundingBox };
                 var own = level == 1 ? grep?.Coarse ?? grep : grep?.Medium ?? grep;
                 if (own != null)
                 {

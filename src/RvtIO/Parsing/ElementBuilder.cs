@@ -34,8 +34,6 @@ internal static partial class ElementBuilder
         DeduplicateExactFaces(elem.Geometry);
         if (ownFaceCount == 0 && expandedTopLevel.Count > 0)
             elem.Geometry.ExactMappedInstances = expandedTopLevel;
-        if (elem.BoundingBox is { Length: >= 6 })
-            elem.Geometry.BoundingBox = (double[])elem.BoundingBox.Clone();
     }
 
     /// <summary>
@@ -62,8 +60,10 @@ internal static partial class ElementBuilder
         if (!hadOwnFaces)
             elem.Geometry.ExactMappedInstances =
             [new GeoInstance { SymbolId = fi.SymbolId, Transform = (double[])fi.Trf.Clone() }];
-        elem.Geometry.BoundingBox = elem.BoundingBox is { Length: >= 6 }
-            ? (double[])elem.BoundingBox.Clone()
+        // The tight box of the placed symbol, or the one the element's own GRep stores (a
+        // transform-only instance of a symbol-less family keeps its record's own box).
+        elem.Geometry.BoundingBox = state.GrepBlocks.TryGetValue(elemId, out var ownGrep) && ownGrep.BoundingBox != null
+            ? (double[])ownGrep.BoundingBox.Clone()
             : placed.BoundingBox;
     }
 
@@ -88,7 +88,9 @@ internal static partial class ElementBuilder
         var placed = BuildPlacedSymbolGeometry(symbol.SymbolId, transform, state, new HashSet<int>());
         if (placed?.Faces is not { Count: > 0 }) return;
         placed.ExactMappedInstances = [new GeoInstance { SymbolId = symbol.SymbolId, Transform = (double[])transform.Clone() }];
-        if (elem.BoundingBox is { Length: >= 6 }) placed.BoundingBox = (double[])elem.BoundingBox.Clone();
+        // The placed symbol carries the tight box of the instance's decoded geometry; the header
+        // outline on Element.BoundingBox is the API envelope.
+        if (GeometryBox(elem) is { Length: >= 6 } tightBox) placed.BoundingBox = (double[])tightBox.Clone();
         elem.SerializedComputedSymbolGeometry = placed;
     }
 
@@ -1036,11 +1038,16 @@ internal static partial class ElementBuilder
 
     /// <summary>
     /// For FamilyInstance elements (doors, windows, furniture, etc.) that lack dimension params,
-    /// compute GENERIC_WIDTH/HEIGHT/THICKNESS from the bounding box.
+    /// compute GENERIC_WIDTH/HEIGHT/THICKNESS from the tight box of the element's own geometry
+    /// record (the same source the estimates had before the header outline took the element box).
     /// </summary>
-    public static void AddBboxDimensionsIfMissing(Element elem)
+    public static void AddBboxDimensionsIfMissing(Element elem, ParsingState state)
     {
-        if (elem.BoundingBox == null || elem.BoundingBox.Length != 6) return;
+        // The tight box of the decoded geometry, else the element's own box (the header outline):
+        // the estimates the rules measured before the outline took Element.BoundingBox over.
+        double[]? box = state.GrepBlocks.TryGetValue((uint)elem.Id, out var grep) ? grep.BoundingBox : null
+            ?? elem.BoundingBox;
+        if (box == null || box.Length != 6) return;
         string cat = elem.Category ?? "";
         if (!cat.Contains("Door") && !cat.Contains("Window") && !cat.Contains("Furniture")
             && !cat.Contains("Generic") && !cat.Contains("Casework")
@@ -1049,9 +1056,9 @@ internal static partial class ElementBuilder
             return;
 
         var existingBips = new HashSet<int>(elem.Parameters.Select(p => p.Id));
-        double dx = elem.BoundingBox[3] - elem.BoundingBox[0];
-        double dy = elem.BoundingBox[4] - elem.BoundingBox[1];
-        double dz = elem.BoundingBox[5] - elem.BoundingBox[2];
+        double dx = box[3] - box[0];
+        double dy = box[4] - box[1];
+        double dz = box[5] - box[2];
         if (dx < 1e-6 || dy < 1e-6 || dz < 1e-6) return;
 
         // Width = max of dx/dy (horizontal), Height = dz, Thickness = min of dx/dy
@@ -1159,8 +1166,6 @@ internal static partial class ElementBuilder
                     elem.Category = catName;
             }
 
-            if (rec.Geometry != null) elem.BoundingBox = rec.Geometry;
-
             if (rec.References.Count > 0)
             {
                 elem.References = rec.References.Select(r => (int)r).ToList();
@@ -1186,7 +1191,8 @@ internal static partial class ElementBuilder
 
         if (state.GrepBlocks.TryGetValue(elemId, out grepDataForElem))
         {
-            elem.BoundingBox ??= grepDataForElem.BoundingBox;
+            // The tight box of the record stays on the geometry; the element box comes from the
+            // header outline (ApplyHeaderBoundingBoxes).
             elem.Geometry = BuildGeometryData(grepDataForElem);
             ExpandInstanceGeometry(elem, grepDataForElem, (int)typeId, state);
         }
@@ -1202,7 +1208,7 @@ internal static partial class ElementBuilder
         if (grepDataForElem != null)
             AddComputedBipsFromGeometry(elem, grepDataForElem);
 
-        AddBboxDimensionsIfMissing(elem);
+        AddBboxDimensionsIfMissing(elem, state);
         BuildLocationCurve(elem, elemId, state);
         BuildInstanceTransform(elem, elemId, state);
         ExpandTransformOnlyInstanceGeometry(elem, elemId, (int)typeId, state);
@@ -2778,7 +2784,7 @@ internal static partial class ElementBuilder
             if (e.CategoryId is not (-2000170 or -2000171)) continue;
             bool panel = e.CategoryId == -2000170;
             var shell = SolidQuantities.OfSingleClosedShell(e.Geometry);
-            if (shell is null && e.BoundingBox is not { Length: 6 }) continue;
+            if (shell is null && GeometryBox(e) is not { Length: 6 }) continue;
 
             var existing = new HashSet<int>();
             foreach (var p in e.Parameters) existing.Add(p.Id);
@@ -2795,7 +2801,7 @@ internal static partial class ElementBuilder
                 continue;
             }
 
-            var bb = e.BoundingBox!;
+            var bb = GeometryBox(e)!;
             double[] dims = [bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]];
             Array.Sort(dims);
             double w = dims[0], d = dims[1], len = dims[2];
@@ -3725,7 +3731,7 @@ internal static partial class ElementBuilder
         var wallVotes = new Dictionary<int, List<double>>();
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId != -2000011 || e.BoundingBox is not { Length: 6 } wb) continue;
+            if (e.CategoryId != -2000011 || GeometryBox(e) is not { Length: 6 } wb) continue;
             int baseId = -1; double bo = 0;
             foreach (var p in e.Parameters)
             {
@@ -3808,7 +3814,7 @@ internal static partial class ElementBuilder
                 else if (baseId > 0 && topId > 0) WallHeightSkippedNoElev++;
             }
 
-            if (e.BoundingBox is not { Length: 6 } bb) continue;
+            if (GeometryBox(e) is not { Length: 6 } bb) continue;
             double zExt = bb[5] - bb[2];
 
             // (3) curtain panel height/width
@@ -3997,7 +4003,7 @@ internal static partial class ElementBuilder
             if (e.Location?.Length is double ll && ll > 1e-9) len = ll;
             // Mullions are straight bars along one axis: length = dominant bbox dimension.
             // Approximate - flagged below.
-            else if (e.CategoryId == -2000171 && e.BoundingBox is { Length: 6 } bb)
+            else if (e.CategoryId == -2000171 && GeometryBox(e) is { Length: 6 } bb)
             {
                 len = Math.Max(bb[3] - bb[0], Math.Max(bb[4] - bb[1], bb[5] - bb[2]));
                 approximate = true;
@@ -4031,13 +4037,11 @@ internal static partial class ElementBuilder
                 elem.Category = catName;
         }
 
-        if (rec.Geometry != null) elem.BoundingBox = rec.Geometry;
-        else if (state.GrepBlocks.TryGetValue(eid, out var grepBbox) && grepBbox.BoundingBox != null)
-            elem.BoundingBox = grepBbox.BoundingBox;
-
         GRepData? grepData = null;
         if (state.GrepBlocks.TryGetValue(eid, out grepData))
         {
+            // The tight box of the record stays on the geometry; the element box comes from the
+            // header outline (ApplyHeaderBoundingBoxes).
             elem.Geometry = BuildGeometryData(grepData);
             ExpandInstanceGeometry(elem, grepData, elem.TypeId, state);
         }
@@ -4076,7 +4080,7 @@ internal static partial class ElementBuilder
         if (grepData != null)
             AddComputedBipsFromGeometry(elem, grepData);
 
-        AddBboxDimensionsIfMissing(elem);
+        AddBboxDimensionsIfMissing(elem, state);
         BuildLocationCurve(elem, eid, state);
         BuildInstanceTransform(elem, eid, state);
         ExpandTransformOnlyInstanceGeometry(elem, eid, elem.TypeId, state);
@@ -4097,7 +4101,8 @@ internal static partial class ElementBuilder
         GRepData? grepData = null;
         if (state.GrepBlocks.TryGetValue(bid, out grepData))
         {
-            if (grepData.BoundingBox != null) elem.BoundingBox = grepData.BoundingBox;
+            // The tight box of the record stays on the geometry; the element box comes from the
+            // header outline (ApplyHeaderBoundingBoxes).
             elem.Geometry = BuildGeometryData(grepData);
             ExpandInstanceGeometry(elem, grepData, elem.TypeId, state);
         }
@@ -4109,7 +4114,7 @@ internal static partial class ElementBuilder
         if (grepData != null)
             AddComputedBipsFromGeometry(elem, grepData);
 
-        AddBboxDimensionsIfMissing(elem);
+        AddBboxDimensionsIfMissing(elem, state);
         AttachDimension(elem, bid, state);
         AttachSketchCurve(elem, bid, state);
 
@@ -5792,12 +5797,12 @@ internal static partial class ElementBuilder
         // which often equals wall width.
         foreach (var e in rvtInfo.Elements)
         {
-            if (e.Category != "OST_Walls" || e.BoundingBox == null || e.BoundingBox.Length != 6) continue;
+            if (e.Category != "OST_Walls" || GeometryBox(e) is not { Length: 6 }) continue;
             var hp = e.Parameters.FirstOrDefault(p => p.Id == -1001105); // WALL_USER_HEIGHT_PARAM
             var wp = e.Parameters.FirstOrDefault(p => p.Id == -1001000); // WALL_ATTR_WIDTH_PARAM
             if (hp?.Value is double storedH && wp?.Value is double storedW && storedW > 0)
             {
-                double dz = e.BoundingBox[5] - e.BoundingBox[2];
+                double dz = GeometryBox(e)![5] - GeometryBox(e)![2];
                 // Only fix if stored height equals stored width (type default leak) AND dz differs
                 if (Math.Abs(storedH - storedW) < 0.001 && dz > 0.01 && Math.Abs(dz - storedH) > 0.01)
                     hp.Value = dz;
@@ -6120,7 +6125,7 @@ internal static partial class ElementBuilder
 
                 var le = e.Parameters.FirstOrDefault(p => p.Id == BIP_LEVEL_ELEV2);
                 if (le?.Value is not double levelElev) continue;
-                if (e.BoundingBox is not double[] bb || bb.Length < 6) continue;
+                if (GeometryBox(e) is not double[] bb || bb.Length < 6) continue;
 
                 double instElev = bb[2] - levelElev; // MinZ - level elevation
 
@@ -6345,9 +6350,30 @@ internal static partial class ElementBuilder
             }
         }
         CreateElemTablePlaceholders(rvtInfo, state);
+        ApplyHeaderBoundingBoxes(rvtInfo, state);
         // NOTE: PropagateFamilyTypeValues remains disabled. The chain rule that works perfectly for
         // instance 0x0702 values (value of entry K belongs to chain[K] = next entry's binKey) does
         // NOT generalize to type-level 0x0725 values.
+    }
+
+    /// <summary>The box the parser rules measure: the tight box of the decoded geometry, else the
+    /// element's own box. Before the header outline took Element.BoundingBox over (the API envelope)
+    /// this was the value of Element.BoundingBox alone.</summary>
+    internal static double[]? GeometryBox(Element element) => element.Geometry?.BoundingBox ?? element.BoundingBox;
+
+    /// <summary>
+    /// The axis-aligned outline the element header stores is the element's bounding box, in every
+    /// release (the box the application reports); the tighter box of the decoded geometry stays on
+    /// Geometry.BoundingBox. A header that stores no outline clears the box: the materials, levels
+    /// and groups the geometry gave a box have none in the application either. Records that
+    /// disagree leave the element unchanged.
+    /// </summary>
+    internal static void ApplyHeaderBoundingBoxes(RevitFileInfo rvtInfo, ParsingState? state)
+    {
+        if (state == null) return;
+        foreach (var e in rvtInfo.Elements)
+            if (state.HeaderBoundingBoxes.TryGetValue((uint)e.Id, out var box) && box != null)
+                e.BoundingBox = box.Present ? box.Box : null;
     }
 
     /// <param name="instanceOrder">The order key of the GInstance node the source geometry is the symbol of: the source's nodes then sort at that node's place among the nodes of the target (Revit walks a GInstance's symbol where the GInstance stands); null keeps the keys of the source as they are.</param>
@@ -6602,7 +6628,7 @@ internal static partial class ElementBuilder
 
             // Plausibility: net must sit within [0.3, 1.05] of the bbox footprint (when known) -
             // rejects wrong/partial sketches (drops half the bad cases at equal ok cost).
-            if (e.BoundingBox is { Length: >= 6 } bb)
+            if (GeometryBox(e) is { Length: >= 6 } bb)
             {
                 double foot = (bb[3] - bb[0]) * (bb[4] - bb[1]);
                 if (foot > 1e-6 && (net < 0.3 * foot || net > 1.05 * foot)) continue;
@@ -7860,13 +7886,13 @@ internal static partial class ElementBuilder
             // INSTANCE_ELEVATION_PARAM: instance elevation relative to its level. bbox.MinZ -
             // level.elev. (LEVEL_ELEV is propagated through ElemBipDoubles as BIP -1007102.)
             // Override existing -1 sentinel.
-            if (e.BoundingBox != null && e.BoundingBox.Length == 6 && firstLevelId > 0
+            if (GeometryBox(e) is { Length: 6 } && firstLevelId > 0
                 && elemById.TryGetValue(firstLevelId, out var lvlEl)
                 && lvlEl.Parameters.FirstOrDefault(p => p.Id == -1007102)?.Value is double lvlElev)
             {
                 // Only when the level's elevation actually resolved - assuming 0 for an unresolved
                 // level produced garbage elevations (= raw bbox z).
-                double minZ = e.BoundingBox[2];
+                double minZ = GeometryBox(e)![2];
                 double elev = Math.Round(minZ - lvlElev, 12);
                 var iepExisting = e.Parameters.FirstOrDefault(p => p.Id == -1001360);
                 if (iepExisting == null)
@@ -8724,7 +8750,7 @@ internal static partial class ElementBuilder
         nx /= nh; ny /= nh;
         double px = vs2[0][0], py = vs2[0][1];
         double sgn = 1;
-        if (elem.BoundingBox is { Length: >= 6 } bb)
+        if (GeometryBox(elem) is { Length: >= 6 } bb)
         {
             double cx = (bb[0] + bb[3]) / 2, cy = (bb[1] + bb[4]) / 2;
             sgn = ((cx - px) * nx + (cy - py) * ny) >= 0 ? 1 : -1;

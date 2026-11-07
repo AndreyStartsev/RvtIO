@@ -1232,7 +1232,8 @@ public class IfcExporterOpeningElementCommonPropertySetTests
 
         var boundary = new GeometryData
         {
-            BoundingBox = [0, -0.52, 0, 4, 0.5, 3],
+            // The stored bounds name the wall's own extent; the remnant face is decoded separately.
+            BoundingBox = [0, -0.5, 0, 4, 0.5, 3],
             Faces = faces,
             BrepSolids = [new GeoBrepSolid
             {

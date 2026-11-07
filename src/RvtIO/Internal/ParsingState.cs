@@ -95,6 +95,10 @@ internal class ParsingState
     /// <summary>ElementHeader.m_designOptionId per element id (files with 64-bit ids; null: the records of the id disagree).</summary>
     public Dictionary<uint, int?> HeaderDesignOptions { get; } = new();
 
+    /// <summary>The axis-aligned outline the ElementHeader of the element's records stores (see <see cref="Parsing.ElementHeaderCategory"/>):
+    /// a verdict when the records agree it is there or agree there is none, null when they disagree or no record was read.</summary>
+    public Dictionary<uint, Parsing.ElementHeaderBox?> HeaderBoundingBoxes { get; } = new();
+
     /// <summary>The file's own class schema when its element ids are 64-bit (Revit 2025 layout, see <see cref="Parsing.WideElementRecords"/>);
     /// null for the 32-bit layouts, which keep the shipped Revit 2022 tables.</summary>
     public Parsing.FileSchema? WideSchema { get; set; }

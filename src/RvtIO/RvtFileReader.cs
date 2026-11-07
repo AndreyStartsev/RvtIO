@@ -962,6 +962,13 @@ public partial class RvtFileReader
             {
                 if (!walks.TryGetValue(id, out var list)) walks[id] = list = [];
                 list.Add((fields.Walker.Run(data, offset, size, cls), cls));
+                if (Environment.GetEnvironmentVariable("RVTIO_ROOT_DIAG") == "1" && state.HeaderBoundingBoxes.Count < 2)
+                {
+                    int n = Math.Min(size, 160);
+                    var hex = new System.Text.StringBuilder();
+                    for (int i = 0; i < n; i++) hex.Append(data[offset + i].ToString("X2"));
+                    DiagnosticSink.WriteLine($"ROOT cls={cls} id={id} size={size} box={(state.HeaderBoundingBoxes.TryGetValue(id, out var vb) && vb?.Present == true ? "yes" : "no")} hex={hex}");
+                }
                 // the roots of a straight or an arc wall: the block of the drive curve (the classes the Revit 2022 reader names)
                 if (state.StaleCopiesRemoved && fields.R22Id(cls) is 3524 or 361)
                 {
@@ -2074,6 +2081,8 @@ public partial class RvtFileReader
     private static void RunTfStreamWalk(ParsingState state)
     {
         // The walk reads 4-byte ids and Revit 2022 class numbers; a 64-bit-id file is decoded by WideElementRecords.
+        if (Environment.GetEnvironmentVariable("RVTIO_HDR_DIAG") == "1")
+            DiagnosticSink.WriteLine($"WALK wide={(state.WideSchema != null)} r22view={state.R22View}");
         if (state.WideSchema != null && !state.R22View) return;
         // Diagnostic: RVTIO_DUMP_GREP=<eid> dumps that element's raw G-blocks.
         string? dumpGrepEnv = Environment.GetEnvironmentVariable("RVTIO_DUMP_GREP");
