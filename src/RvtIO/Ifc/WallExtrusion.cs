@@ -30,8 +30,8 @@ internal static partial class WallExtrusion
     /// area pairing or a hole in a vertical face does not confirm that the real solid fails the same test. For such a body
     /// only the failures that do not depend on reveals or on the order of several solids make the wall an IfcWall.
     /// A single closed shell is built from the Faces' own EdgeLoops, so the test applies literally.
-    /// A second solid never helps: the body route makes a wall standard-case only for exactly one solid, so
-    /// a wall of several solids is standard-case only when its first solid is "simple rectangular".
+    /// A wall of several solids is judged by its first solid alone: it is standard-case when that solid is "simple rectangular"
+    /// on its own faces and a vertical extrusion; the number of solids is not checked.
     /// shortcut: a hole in a vertical face of an open shell counts as passing the test, upgrade when the reveals of an
     /// open shell are decoded; the first solid is the first one of the decoded body, which is not validated to be the first of the exporter.
     /// </remarks>
@@ -48,10 +48,16 @@ internal static partial class WallExtrusion
         // SHORT_CURVE_TOL gets no such loop and goes through the body route like any other wall.
         bool axisFits = trimmedAxisLength is not { } axisLength || axisLength >= ShortCurveTolerance;
         // (a body with a face that is not planar is refused; a round Face the dense shell lacks is in the face meshes)
-        bool roundFace = geometry.HasCurvedFace;
+        // (only the node of the first solid counts: a curved face of another solid of the wall does not stop its first one)
+        bool roundFace = first.Select(face => face.GeometryNode).Where(node => node > 0).Distinct().ToArray() is { Length: > 0 } firstNodes
+            ? geometry.HasCurvedFace(firstNodes) : geometry.HasCurvedFace();
         if (axisFits && !roundFace && IsSimpleRectangularWall(first, helper, geometry.InactiveFaces)) return true;
-        // The extrusion found by the body exporter makes a wall standard-case only for a single solid.
-        if (HasTiltedFace(first) || solids is { Count: > 1 }) return false;
+        if (HasTiltedFace(first)) return false;
+        // Several solids: the first one decides, on its own faces only (inactive faces and other solids are not looked at).
+        // shortcut: unproven asymmetry. A single-solid wall counts its inactive faces (reference data need that), a multi-solid one
+        // must not (reference data need that too); the reason is not known, upgrade when the per-solid geometry of the reference exporter is explained.
+        if (solids is { Count: > 1 })
+            return IsSimpleRectangularWall(first, helper) && TryFindVerticalExtrusion(first, out _, exactCylinders: true);
         var edgeBounds = first.Any(IsVerticalCylinderPatch) && first.All(face => face.MeshEdgeBounds is { Length: 6 })
             ? first.Select(face => face.MeshEdgeBounds!).ToList() : null;
         if (TryFindVerticalExtrusion(first, out string reason, exactCylinders: true, edgeBounds)) return true;
@@ -204,7 +210,8 @@ internal static partial class WallExtrusion
 
     /// <summary>The first test of the simple rectangular check: a complete ElementExtrusionHelper whose definition (outer)
     /// loop has a number of curves other than four makes the wall not simple, whatever its faces are. The outer loop is the
-    /// first one of the helper. A wall without a helper, or one that cannot be read, is not rejected here.</summary>
+    /// first one of the helper. A wall without a helper, or one that cannot be read, is not rejected here.
+    /// shortcut: the loop type is not decoded, so the loops after the first count as holes; upgrade when the type is read.</summary>
     internal static bool HelperProfileIsQuadrilateral(Parsing.TfBlockDeserializer.OwnWallHelperInput? helper) =>
         helper is not { Present: true, Complete: true, LoopCurveCounts: { Count: > 0 } counts } || counts[0] == 4;
 

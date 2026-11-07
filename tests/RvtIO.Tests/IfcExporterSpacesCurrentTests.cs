@@ -136,6 +136,33 @@ public class IfcExporterSpacesCurrentTests
         Assert.Equal($"#{groupId}", relation[6]);
     }
 
+    // instance flag, type flag of the scheme, groups written
+    [Theory]
+    [InlineData(null, null, 1)]
+    [InlineData(2, null, 0)]
+    [InlineData(null, 2, 0)]
+    [InlineData(1, 2, 1)]
+    public void AreaScheme_WhoseExportFlagIsNo_GetsNoGroup_AndItsAreaStays(int? instanceFlag, int? typeFlag, int expected)
+    {
+        var scheme = new Element { Id = 15979, CategoryId = AreaSchemeCategoryId, Name = "Gross Building",
+            SerializedAreaScheme = ("Gross Building", "Sum of the floor areas.") };
+        var elements = new List<Element> { Level(900), scheme };
+        if (instanceFlag is int own) scheme.Parameters.Add(new Parameter { Id = -1019012, StorageType = StorageType.Integer, Value = own });
+        if (typeFlag is int type)
+        {
+            scheme.TypeId = 15980;
+            elements.Add(new Element { Id = 15980, Name = "Scheme type", Parameters = [new Parameter { Id = -1019013, StorageType = StorageType.Integer, Value = type }] });
+        }
+        var area = Room(100, "Office", "1", categoryId: AreaCategoryId);
+        area.Parameters.Add(new Parameter { Id = -1012704, StorageType = StorageType.ElementId, Value = 15979 });
+        elements.Add(area);
+
+        string ifc = Export(new RevitFileInfo { Elements = elements });
+
+        Assert.Single(Ids(ifc, "IFCSPACE"));
+        Assert.Equal(expected, Ids(ifc, "IFCGROUP").Count);
+    }
+
     [Fact]
     public void AreaWithoutSchemeText_GetsNoGroup()
     {

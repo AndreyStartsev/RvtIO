@@ -380,7 +380,7 @@ public class IfcExporterSpacesTests
     }
 
 
-    private static Element Level(int id, string name, double elevationFt, bool isBuildingStory = true)
+    internal static Element Level(int id, string name, double elevationFt, bool isBuildingStory = true)
     {
         var parameters = new List<Parameter>
         {
@@ -404,7 +404,7 @@ public class IfcExporterSpacesTests
         };
     }
 
-    private static Element Room(
+    internal static Element Room(
         int id, string? longName, string? number, int? levelId, int categoryId = RoomCategoryId)
     {
         var parameters = new List<Parameter>();

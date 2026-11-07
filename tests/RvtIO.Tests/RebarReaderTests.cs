@@ -151,7 +151,7 @@ public class RebarReaderTests
     }
 
     /// <summary>One bar of a line (1 foot) and a quarter circle (radius 0.5 foot), in a system.</summary>
-    private static Element Bar(int id, int systemId, bool inAssembly = false)
+    internal static Element Bar(int id, int systemId, bool inAssembly = false)
     {
         IReadOnlyList<RebarSegment> bar =
         [
