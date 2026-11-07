@@ -2617,7 +2617,7 @@ internal static partial class ElementBuilder
     /// Synthesize room identity/relationship parameters from already decoded data. Exact ROOM_NAME
     /// is applied before this pass; geometric quantities remain omitted.
     /// </summary>
-    private static void ApplyRoomParams(RevitFileInfo info)
+    internal static void ApplyRoomParams(RevitFileInfo info)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId[e.Id] = e;
@@ -2656,10 +2656,15 @@ internal static partial class ElementBuilder
                 Add(-1006916, "ROOM_LEVEL_ID", StorageType.ElementId, levelId);
                 Add(-1006922, "ROOM_UPPER_LEVEL", StorageType.ElementId, levelId);
             }
-            if (phase > 0)
+            // The room's own record keeps its phase even when no reference resolves it: a phase
+            // of id 0 has no element row to resolve against, and a room of a schema-read file
+            // carries no phase reference at all.
+            int roomPhase = phase > 0 ? phase
+                : e.SerializedRoomPhaseId is int serializedPhase && serializedPhase >= 0 ? serializedPhase : -1;
+            if (roomPhase >= 0)
             {
-                Add(-1012113, "ROOM_PHASE", StorageType.ElementId, phase);
-                Add(-1012112, "ROOM_PHASE_ID", StorageType.ElementId, phase);
+                Add(-1012113, "ROOM_PHASE", StorageType.ElementId, roomPhase);
+                Add(-1012112, "ROOM_PHASE_ID", StorageType.ElementId, roomPhase);
             }
             // ROOM_VOLUME / ROOM_PERIMETER / ROOM_HEIGHT are deliberately not emitted:
             // volume/perimeter/height are computed by Revit at runtime and are not persisted

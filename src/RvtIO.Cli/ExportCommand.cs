@@ -40,9 +40,9 @@ internal static partial class Program
             Console.Error.WriteLine("--report requires one value: the path of the JSON report.");
             return 1;
         }
-        if (reportPath != null && (ExportReport.SameFile(reportPath, rvtPath) || ExportReport.SameFile(reportPath, outputPath)))
+        if (reportPath != null && RvtIO.Cli.ReportPathOption.OutputPaths(args, rvtPath, outputPath, externalDumpPath).Any(path => ExportReport.SameFile(reportPath, path)))
         {
-            Console.Error.WriteLine("--report must not name the input file or the export output; nothing was read or written.");
+            Console.Error.WriteLine("--report must not name the input file or an output of the run; nothing was read or written.");
             return 1;
         }
         var readDiagnostics = new RvtReadDiagnostics();

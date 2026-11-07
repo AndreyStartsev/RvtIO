@@ -124,6 +124,45 @@ public class SpatialPhaseTests
         Assert.Equal(expected, room.SerializedRoomPhaseId);
     }
 
+    [Fact]
+    public void Builder_AddsTheRoomPhaseParametersOfPhaseZeroFromTheRoomRecord()
+    {
+        var state = new ParsingState { WideSchema = new FileSchema(new SchemaDocument()) };
+        var room = new Element { Id = 100, CategoryId = -2000160 };
+        var info = new RevitFileInfo { Elements = [room] };
+        state.RoomNameSource[100] = (1, "Room");
+        state.ExactRoomPhaseIds[100] = 0;
+        ElementBuilder.ApplySerializedSpatialPhases(info, state);
+        ElementBuilder.ApplyRoomParams(info);
+        Assert.Equal(0, room.Parameters.Single(p => p.Id == -1012113).Value);
+        Assert.Equal(0, room.Parameters.Single(p => p.Id == -1012112).Value);
+    }
+
+    [Fact]
+    public void Builder_TakesTheRoomPhaseParametersFromThePhaseReferenceWhenItResolves()
+    {
+        var state = new ParsingState { WideSchema = new FileSchema(new SchemaDocument()) };
+        var room = new Element { Id = 100, CategoryId = -2000160 };
+        room.Parameters.Add(new Parameter { Id = -1012100, Value = 7, StorageType = StorageType.ElementId });
+        var info = new RevitFileInfo { Elements = [room] };
+        state.RoomNameSource[100] = (1, "Room");
+        state.ExactRoomPhaseIds[100] = 0;
+        ElementBuilder.ApplySerializedSpatialPhases(info, state);
+        ElementBuilder.ApplyRoomParams(info);
+        Assert.Equal(7, room.Parameters.Single(p => p.Id == -1012113).Value);
+        Assert.Equal(7, room.Parameters.Single(p => p.Id == -1012112).Value);
+    }
+
+    [Fact]
+    public void Builder_AddsNoRoomPhaseParametersWhenNoPhaseIsKnown()
+    {
+        // A room of a Revit 2022 layout file whose record names no phase keeps neither parameter.
+        var room = new Element { Id = 100, CategoryId = -2000160 };
+        var info = new RevitFileInfo { Elements = [room] };
+        ElementBuilder.ApplyRoomParams(info);
+        Assert.Empty(room.Parameters);
+    }
+
     private static uint Size(byte[] block) => BitConverter.ToUInt32(block, 8);
 
     private static byte[] Block(int[] phases, string? mutation = null)

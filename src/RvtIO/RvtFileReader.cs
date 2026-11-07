@@ -1943,7 +1943,10 @@ public partial class RvtFileReader
         state.ExactRoomCircuitIds.Remove(owner);
         if (state.RoomNameSource[owner].BlockCount == 1 && circuit is { } cachedCircuit)
             state.ExactRoomCircuitIds[owner] = cachedCircuit;
-        if (state.RoomNameSource[owner].BlockCount == 1 && name != null && phase is > 0)
+        // A project phase can have id 0 when the file's layout is read from its own schema; the
+        // Revit 2022 layout numbers phases from 1.
+        if (state.RoomNameSource[owner].BlockCount == 1 && name != null
+            && (phase is > 0 || state.WideSchema != null && phase is >= 0))
             state.ExactRoomPhaseIds[owner] = phase.Value;
         if (state.RoomNameSource[owner].BlockCount == 1 && name != null && locationless is { } flag)
             state.ExactRoomLocationless[owner] = flag;
