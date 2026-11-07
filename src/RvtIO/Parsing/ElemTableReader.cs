@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using OpenMcdf;
+using RvtIO;
 
 namespace RvtIO.Parsing;
 
@@ -56,6 +57,7 @@ internal static class ElemTableReader
 
             if (PagedGzipStream.Decompress(data) is { } exactTable)
             {
+                RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 1, 0, 0, 0);
                 // Every version but R22: the layout comes from the file's own schema, not from a constant. The shipped R22 layout
                 // is used only for a file whose release in force (the older of the saved and the schema release) is 2022 or unknown.
                 var formats = FormatsSchema.TryRead(root);
@@ -97,7 +99,11 @@ internal static class ElemTableReader
             int gzStart = -1;
             for (int ii = 0; ii < data.Length - 2; ii++)
                 if (data[ii] == 0x1F && data[ii + 1] == 0x8B) { gzStart = ii; break; }
-            if (gzStart < 0) return result;
+            if (gzStart < 0)
+            {
+                RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 0, 1, 0, 0);
+                return result;
+            }
 
             int gzLen = data.Length - gzStart;
             byte[]? decompressed = null;
@@ -165,6 +171,7 @@ internal static class ElemTableReader
             if (decompressed == null || decompressed.Length < 28)
             {
                 DiagnosticSink.WriteLine($"ElemTable: decompression failed (raw={data.Length}, gzStart={gzStart})");
+                RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 0, 1, 0, 0);
                 return result;
             }
 
@@ -172,12 +179,20 @@ internal static class ElemTableReader
             if (decompressed.Length >= 2 && BitConverter.ToUInt16(decompressed) == ElementExportIds.ElemTableClassId)
             {
                 DiagnosticSink.WriteLine("ElemTable: R22 stream failed exact paged CRC/length decoding");
+                RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 0, 1, 0, 0);
                 return result;
             }
+            int rec = recovered != null && outcome.DesyncCount > 0 ? 1 : 0;
+            int unverified = recovered == null ? 1 : 0;
+            RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 1, 0, rec, unverified);
             ParseRows(decompressed, result, out worksets, out creationDates);
 
         }
-        catch (Exception ex) { DiagnosticSink.WriteLine($"ElemTable: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            DiagnosticSink.WriteLine($"ElemTable: {ex.Message}");
+            RecordStream(diagnostics, "Global/ElemTable", 0, 1, 0, 1, 0, 0);
+        }
         return result;
     }
 
@@ -350,5 +365,12 @@ internal static class ElemTableReader
             result.TryAdd(elemId, 0);
         }
         return result.Count > 0;
+    }
+
+    private static void RecordStream(RvtReadDiagnostics? diagnostics, string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified)
+    {
+        if (diagnostics == null) return;
+        if (diagnostics.Streams.Any(s => s.Name == name)) return;
+        diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified));
     }
 }

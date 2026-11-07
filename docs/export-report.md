@@ -61,13 +61,13 @@ The report is one JSON object, UTF-8, property names in camelCase. `schema` name
 
 | Property | Meaning |
 | --- | --- |
-| `status` | `complete`: no limit cut a stream and every member of every partition stream decoded and verified. `partial`: a limit cut a stream, a member did not decode, a member decoded without its checksum matching, or the element table decoded no row. `failed`: the file could not be read at all (exit codes 2 and 4, and 3 for a stream over the platform array length). A read cut by a limit that is not accepted (exit code 3) is `partial` and has no `export` property, because nothing was exported. |
+| `status` | `complete`: no limit cut a stream and every member of every stream decoded and verified. `partial`: a limit cut a stream, a member did not decode, a member decoded without its checksum matching, a member was rebuilt by structural recovery, or the element table decoded no row. `failed`: the file could not be read at all (exit codes 2 and 4, and 3 for a stream over the platform array length). A read cut by a limit that is not accepted (exit code 3) is `partial` and has no `export` property, because nothing was exported. |
 | `exitCode` | The exit code of the process. |
 | `input.file`, `input.bytes` | File name (no directory) and size of the input. |
 | `error` | Only when `status` is `failed`: `kind` (`cannot-open`, `empty-file`, `not-a-compound-file`, `truncated-or-damaged`, `limit-exceeded`, `decode-failure`), `message`, and for `decode-failure` the `detail` with the stack trace. |
 | `limits.raised`, `limits.partialAllowed` | Whether `--raise-limits` and `--allow-partial` were given. |
 | `limits.hit[]` | Every stream cut by a limit: `stream`, `limit` (code from the table above), `value` (the limit in force), `raisable`, `detail`. |
-| `streams[]` | The partition streams. `members` are the gzip members the stream is cut into; `decoded` produced output; `failed` produced none and their data is missing; `recovered` were rescued by a structural relock; `unverified` were kept although their checksum did not match or was never checked, which includes every rescued member. `decodedFraction` is `decoded / members`. |
+| `streams[]` | The partition, Global, Formats and element table streams. `members` are the gzip members the stream is cut into; `decoded` produced output; `failed` produced none and their data is missing; `recovered` were rescued by a structural relock; `unverified` were kept although their checksum did not match or was never checked, which includes every rescued member. `decodedFraction` is `decoded / members`. |
 | `elements.inTable`, `elements.decoded` | Rows of the element table, and those with a parsed record. `decodedFraction` is their quotient (1 for an empty table). |
 | `issues[]` | Other findings that make a read `partial`, as `stream`, `code`, `detail`. The one code is `no-rows`: the element table decoded no row (a project always has elements, so the table did not decode). |
 | `elements.undecoded[]` | Rows of the element table without a parsed record, as `class`, `reason`, `count`, `examples`. The class of an element that never decoded is `unknown`. |

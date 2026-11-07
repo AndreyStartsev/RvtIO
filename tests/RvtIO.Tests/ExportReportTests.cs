@@ -325,11 +325,16 @@ public class ExportReportTests
         Assert.NotEmpty(diagnostics.Streams);
         Assert.All(diagnostics.Streams, s =>
         {
-            Assert.StartsWith("Partitions/", s.Name);
             Assert.True(s.Members > 0);
             Assert.Equal(s.Members, s.Decoded);
             Assert.Equal(0, s.Failed);
+            Assert.Equal(0, s.Recovered);
+            Assert.Equal(0, s.Unverified);
         });
+        Assert.Contains(diagnostics.Streams, s => s.Name.StartsWith("Partitions/"));
+        Assert.Contains(diagnostics.Streams, s => s.Name == "Global/ElemTable");
+        Assert.Contains(diagnostics.Streams, s => s.Name == "Global/History");
+        Assert.Contains(diagnostics.Streams, s => s.Name == "Formats/Latest");
         Assert.Empty(diagnostics.LimitHits);
         var report = ExportReport.ForRead("TESTFILE.rvt", new FileInfo(path).Length, diagnostics, false, false,
             reader.LastParsingState!.ElemTable.Keys.ToList(), info);
@@ -416,6 +421,19 @@ public class ExportReportTests
         var inLimitsDiagnostics = new RvtReadDiagnostics();
         ElemTableReader.Read(root, out _, out _, out _, null, inLimitsDiagnostics);
         Assert.Empty(inLimitsDiagnostics.LimitHits);
+        var elemTableStream = Assert.Single(inLimitsDiagnostics.Streams, s => s.Name == "Global/ElemTable");
+        Assert.True(elemTableStream.Recovered > 0 || elemTableStream.Unverified > 0);
+        var recoveredReport = ExportReport.ForRead("damaged.rvt", 1, inLimitsDiagnostics, false, false, [1], new RvtIO.Model.RevitFileInfo());
+        Assert.Equal("partial", recoveredReport.Status);
+    }
+
+    [Fact]
+    public void RebuiltMembersTreatStreamAsUnverifiedInReportStatus()
+    {
+        var diagnostics = new RvtReadDiagnostics();
+        diagnostics.Streams.Add(new StreamRecord("Partitions/0", 1000, 10, 10, 0, 1, 0));
+        var report = ExportReport.ForRead("test.rvt", 1000, diagnostics, false, false, [1], new RvtIO.Model.RevitFileInfo());
+        Assert.Equal("partial", report.Status);
     }
 
     private sealed class TempFile : IDisposable

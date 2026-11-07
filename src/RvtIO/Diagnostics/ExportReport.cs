@@ -316,7 +316,7 @@ public sealed class ExportReport
         // A project always has elements: a table without a row did not decode, whatever the streams say.
         if (elementIds.Count == 0)
             report.Issues.Add(new ReportIssue { Stream = "Global/ElemTable", Code = "no-rows", Detail = "the element table decoded no row" });
-        bool lostMembers = report.Streams.Any(stream => stream.Failed > 0 || stream.Unverified > 0);
+        bool lostMembers = report.Streams.Any(stream => stream.Failed > 0 || stream.Unverified > 0 || stream.Recovered > 0);
         report.Status = diagnostics.LimitHits.Count > 0 || lostMembers || report.Issues.Count > 0 ? "partial" : "complete";
         return report;
     }
