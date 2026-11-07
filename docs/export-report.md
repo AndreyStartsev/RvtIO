@@ -72,7 +72,7 @@ The report is one JSON object, UTF-8, property names in camelCase. `schema` name
 | `issues[]` | Other findings that make a read `partial`, as `stream`, `code`, `detail`. The one code is `no-rows`: the element table decoded no row (a project always has elements, so the table did not decode). |
 | `elements.undecoded[]` | Rows of the element table without a parsed record, as `class`, `reason`, `count`, `examples`. The class of an element that never decoded is `unknown`. |
 | `export.format` | `ifc`, `json` (the compact export) or `json-full`. |
-| `export.considered`, `exported`, `skipped` | Parsed elements the export looked at, wrote, and left out, counted as the exporter counts them. `exportedFraction` is `exported / considered`. |
+| `export.considered`, `exported`, `skipped` | Parsed elements the export looked at, wrote, and left out, counted as the exporter counts them (`exported` counts elements, not product entities: for example, a roof element that writes two product entities, an `IfcRoof` and an `IfcSlab` with the same tag, counts once in `exported`, so the exported total can be below the number of product entities). `exportedFraction` is `exported / considered`. |
 | `export.skippedByClass[]` | Every skipped element class with its reason, count and up to five element ids (`examples`), largest first. The counts add up to `export.skipped`. |
 
 A complete input also has skipped elements: the exporters leave out element types, annotations, records that only live inside other records and similar. `exportedFraction` is therefore not a measure of lost data; `status`, `streams` and `elements` are. The reasons below name the rule that left the element out.
