@@ -478,6 +478,8 @@ public partial class IfcExporter
                 // A topography payload referenced through IOSModelGroups is group-definition
                 // content, not a placed spatial site.
                 && !groupDefinitionTopographyIds.Contains(element.Id)
+                // A topography whose export flags say No is no site either.
+                && !ExportFlagIsNo(element, elementByIdForTerrain)
                 && element.Geometry?.Faces.Count(face => face.OuterVertices is { Count: >= 3 }) >= 3)
             .ToList();
         var placedTopographyById = placedTopographies.ToDictionary(element => element.Id);
@@ -692,11 +694,14 @@ public partial class IfcExporter
         }
         _elementsByIdCurrent = elemById;
         _axisExtrusionBodyCurrent.Clear();
+        // The elements that the writers outside the product loop may write: the product loop leaves out the ones whose export flags say No
+        // (ExportFlagIsNo), and so must they. The whole list stays the source of lookups (hosts, types, levels).
+        var exportableElements = info.Elements.Where(element => !ExportFlagIsNo(element, elemById)).ToList();
         if (CurrentProfile)
-            CreateCurrentGrids(w, ownerHistId, footPrintSubCtxId, axisId, info.Elements, info.ElemTableIsExact,
+            CreateCurrentGrids(w, ownerHistId, footPrintSubCtxId, axisId, exportableElements, info.ElemTableIsExact,
                 storeyIfcIds, storeyPlacements, storeyContents);
         else
-            CreateSerializedGrids(w, ownerHistId, bodySubCtxId, axisId, info.Elements,
+            CreateSerializedGrids(w, ownerHistId, bodySubCtxId, axisId, exportableElements,
                 storeyIfcIds, storeyPlacements, storeyContents);
         var representationMapsBySymbol =
             new Dictionary<int, RepresentationMapCacheEntry>();
@@ -1597,19 +1602,22 @@ public partial class IfcExporter
             !e.IsBlockOnly && visibleWallIds.Contains(e.Id) && e.Location is { ArcRadius: null }).ToList();
 
         // Robust model centre: median of element bbox centres.
-        bool InvalidBbox(double[] b)
-        {
-            if (b.Length < 6) return true;
-            for (int bi = 0; bi < 6; bi++)
-                if (!double.IsFinite(b[bi])) return true;
-            return b[0] > b[3] || b[1] > b[4] || b[2] > b[5];
-        }
+        bool InvalidBbox(double[] b) => !BoundsAreValid(b);
 
         void Skip(Element skipped, string why) { skippedCount++; SkipLog?.Add(skipped.Id, RvtIO.SkipLog.ClassOf(skipped), why); }
+        // The bounds of a 64-bit-id file count as decoded when any element carries valid ones: damaged bounds are a failure of the
+        // decoder of that element, not a sign that the bounds of the file are read.
+        bool boundsDecoded = info.GeometryUndecoded
+            && info.Elements.Any(e => BoundsAreValid(e.BoundingBox ?? e.Geometry?.BoundingBox));
+        // A 64-bit-id file read without the R22 layout decodes no geometry at all, and then a wall without a body is the rule, not a
+        // finding: the bodies of the file count as decoded when any element holds one.
+        bool bodiesDecoded = info.GeometryUndecoded
+            && info.Elements.Any(e => e.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
         foreach (var elem in info.Elements)
         {
+            if (ExportFlagIsNo(elem, elemById)) { Skip(elem, "export-to-ifc-flag-no"); continue; }
             if (spatialTerrainElementIds.Contains(elem.Id)
                 || groupDefinitionTopographyIds.Contains(elem.Id))
             { Skip(elem, "terrain-or-group-topography"); continue; }
@@ -1634,9 +1642,10 @@ public partial class IfcExporter
             if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
             bool transformOnlyFamily = elem.Transform != null && elem.TypeId > 0
                 && elem.CategoryId is null or -2000080 or -2001000 or -2001100;
-            // Wall type propagation is not yet reliable enough to use for suppression:
-            // system-family walls may legitimately be referenced by neighbouring walls.
-            if (elem.CategoryId != -2000011 && typeElementIds.Contains(elem.Id)
+            // Current profile: a wall record that is itself the type of another element (it names no project phase)
+            // is a type definition; the type is written from the instances that use it. The legacy profile keeps
+            // wall records, as wall type propagation is not reliable enough there.
+            if ((CurrentProfile || elem.CategoryId != -2000011) && typeElementIds.Contains(elem.Id)
                 && !HasProjectPhaseReference(elem) && !transformOnlyFamily)
             { Skip(elem, "type-element"); continue; }
 
@@ -1683,7 +1692,7 @@ public partial class IfcExporter
             if (elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
                 && (IntParam(elem, -1013201) != -4
                     || elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
-                        && wall.CategoryId == -2000011 && !visibleWallIds.Contains(r)) == true))
+                        && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))) == true))
             { Skip(elem, "opening-of-hidden-wall"); continue; }
 
             string? ifcType = elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
@@ -1759,7 +1768,9 @@ public partial class IfcExporter
                     bool hasHost = elem.SuperInstanceId is > 0
                         || ResolveHostedElementHostIds(
                             elem, elemById, visibleWallIds, inverseHostedHostIds).Count > 0;
-                    if (!hasHost) { Skip(elem, "hosted-element-without-host"); continue; }
+                    // A freestanding door or window that has a body is a real product; one without valid bounds has nothing to write.
+                    if (!hasHost && !BoundsAreValid(elem.BoundingBox ?? elem.Geometry?.BoundingBox))
+                    { Skip(elem, "hosted-element-without-host"); continue; }
                 }
                 else
                 {
@@ -1780,6 +1791,15 @@ public partial class IfcExporter
                 Skip(elem, "phantom-storey-wall");
                 continue;
             }
+
+            // A file of the 64-bit-id layout writes a product without bounds as it is, with no representation; where
+            // the bounds are decoded, a product without them has no body and is not exported. Bounds that are there but
+            // damaged do not make a missing body: the product is rejected by them below, as it always was.
+            if (boundsDecoded
+                && ShouldSkipRepresentationlessProduct(ifcType,
+                    hasBounds: (elem.BoundingBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 },
+                    isEmittedAggregateParent: _emittedAggregateParentElementIds.Contains(elem.Id)))
+            { Skip(elem, "product-without-body"); continue; }
 
             int elemStoreyId = ResolveStorey(elem, storeyIds, defaultStoreyId, elemById);
             if (Environment.GetEnvironmentVariable("RVTIO_STOREY_DIAG") is { Length: > 0 } storeyDiag)
@@ -1809,6 +1829,10 @@ public partial class IfcExporter
                 // representation.
                 if (info.GeometryUndecoded)
                 {
+                    // A wall with neither a solid body nor a face body has nothing to show, where the bodies of the file are decoded.
+                    if (CurrentProfile && bodiesDecoded && ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" && elem.Geometry?.BrepSolids is not { Count: > 0 }
+                        && elem.Geometry?.Faces is not { Count: > 0 })
+                    { Skip(elem, "wall-without-solid"); continue; }
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                     goto productWithoutGeometry;
                 }
@@ -4467,7 +4491,7 @@ public partial class IfcExporter
             // Element name: "FamilyName:TypeName:ElementId" format (matching Revit IFC export)
             string elemTypeName = ResolveProductFamilyAndTypeName(
                 elem, ifcType, elemById, elementIdOccurrenceCounts, CurrentProfile);
-            string elemName = $"{elemTypeName}:{elem.Id}";
+            string elemName = elemTypeName.Length == 0 ? elem.Id.ToString() : $"{elemTypeName}:{elem.Id}";
             if (CurrentProfile && IsRunLengthRuleCurrent(elem, ifcType, elemById, elementIdOccurrenceCounts)
                 && RunLengthTreadsCurrent(elem, elemById) is int lengthTreads)
                 LengthRuleRunsCurrent[elem.Id] = lengthTreads;
@@ -4851,7 +4875,7 @@ public partial class IfcExporter
         AggregateRampRailings(w, info.Elements, exportedIfcElements, storeyContents, rampAggregations);
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
-            foreach (int systemId in WriteJoistAssemblies(w, info.Elements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
+            foreach (int systemId in WriteJoistAssemblies(w, exportableElements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
                          storeyContents, propertySingleValueIds))
             {
                 // counted with or without a skip log; the log entry is only there to be taken out
@@ -6278,7 +6302,7 @@ public partial class IfcExporter
         var spaceEntityIdByRoomId = new Dictionary<int, int>();
         var storeySpaceEntityIds = new Dictionary<int, List<int>>();
         var spaceTypeGuids = WriteSpaces(
-            w, ownerHistId, info.Elements, storeyIds, storeyPlacements,
+            w, ownerHistId, exportableElements, storeyIds, storeyPlacements,
             storeyElevationsMetres, bodySubCtxId, propertySingleValueIds, ResolveActiveRoomPhase(info), spaceEntityIdByRoomId,
             storeySpaceEntityIds);
         // A space is styled like any family body: each solid of its boundary takes its best
@@ -6536,7 +6560,7 @@ public partial class IfcExporter
             FinalizeUnitAssignmentCurrent(w, unitsCurrent!);
         }
         if (CurrentProfile) ApplyCurrentOpeningOrder(w, openingOrderKeys);
-        w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily));
+        w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily, CurrentProfile));
         w.WriteTo(output, headerFileName, "IFC2X3", desc, appName, headerOrganization);
 
         ExportedProducts = exportedCount;
@@ -63515,7 +63539,7 @@ public partial class IfcExporter
         "IFCBEAM" or "IFCBUILDINGELEMENTPROXY" or "IFCCOLUMN" or "IFCCOVERING"
             or "IFCCURTAINWALL" or "IFCDISTRIBUTIONFLOWELEMENT" or "IFCDOOR"
             or "IFCFLOWCONTROLLER" or "IFCFLOWFITTING" or "IFCFLOWSEGMENT" or "IFCFLOWTERMINAL"
-            or "IFCFURNISHINGELEMENT" or "IFCMEMBER" or "IFCOPENINGELEMENT"
+            or "IFCFOOTING" or "IFCFURNISHINGELEMENT" or "IFCMEMBER" or "IFCOPENINGELEMENT"
             or "IFCPLATE" or "IFCRAILING" or "IFCRAMP" or "IFCRAMPFLIGHT"
             or "IFCROOF" or "IFCSLAB" or "IFCSTAIR" or "IFCSTAIRFLIGHT" or "IFCREINFORCINGMESH"
             or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCWINDOW" => true,
@@ -63538,6 +63562,16 @@ public partial class IfcExporter
         && bodyOutcome.OpenShellCount == 1
         && bodyOutcome.OpenShellFaceCount == 4
         && hasMaterializedHostedOpeningOperand;
+
+    /// <summary>Whether the "Export to IFC" flags keep an element out of the file: the instance flag (-1019012) is read first, 2 is No and 1 is Yes, which beats a No on
+    /// the type; any other value defers to the "Export Type to IFC" flag (-1019013) of the type of the element.</summary>
+    internal static bool ExportFlagIsNo(Element element, IReadOnlyDictionary<int, Element> elementsById)
+    {
+        static int? Flag(Element e, int id) => e.Parameters.FirstOrDefault(p => p.Id == id)?.Value is int n ? n : null;
+        int? own = Flag(element, -1019012);
+        if (own is 1 or 2) return own == 2;
+        return element.TypeId > 0 && elementsById.TryGetValue(element.TypeId, out var flagType) && Flag(flagType, -1019013) == 2;
+    }
 
     /// <summary>Exact product-role authority recovered from Element.m_unplacedOwnerId.</summary>
     internal static bool ShouldSuppressUnplacedOwnerProxyProduct(
@@ -63584,6 +63618,30 @@ public partial class IfcExporter
         string ifcType, bool hasEmittedRepresentation, bool isEmittedAggregateParent) =>
         !hasEmittedRepresentation
         && !isEmittedAggregateParent
+        && IsIfcElementSubclassProduct(ifcType);
+
+    /// <summary>Whether bounds are six finite values, each minimum not above its maximum. Bounds of an element whose decoding failed are not.</summary>
+    internal static bool BoundsAreValid(double[]? bounds)
+    {
+        if (bounds is not { Length: >= 6 }) return false;
+        for (int i = 0; i < 6; i++)
+            if (!double.IsFinite(bounds[i])) return false;
+        return bounds[0] <= bounds[3] && bounds[1] <= bounds[4] && bounds[2] <= bounds[5];
+    }
+
+    /// <summary>The classes that are written without a representation because they only group other products.</summary>
+    internal static bool IsRepresentationlessContainerClass(string ifcType) =>
+        ifcType is "IFCCURTAINWALL" or "IFCROOF" or "IFCSTAIR" or "IFCRAMP" or "IFCELEMENTASSEMBLY";
+
+    /// <summary>
+    /// An IfcElement product with no bounds (so no representation can be written), other than a container and
+    /// other than a wall, whose walls are handled by their own rule.
+    /// </summary>
+    internal static bool ShouldSkipRepresentationlessProduct(string ifcType, bool hasBounds, bool isEmittedAggregateParent) =>
+        !hasBounds
+        && !isEmittedAggregateParent
+        && ifcType is not ("IFCWALL" or "IFCWALLSTANDARDCASE")
+        && !IsRepresentationlessContainerClass(ifcType)
         && IsIfcElementSubclassProduct(ifcType);
 
     /// <summary>
@@ -66528,14 +66586,16 @@ public partial class IfcExporter
         if (p.StorageType == StorageType.ElementId && p.Value is int referenced
             && elemById.TryGetValue(referenced, out var target) && target.Name is { } targetName)
             return $"IFCLABEL({S(targetName)})";
+        // the legacy profile keeps its 15-digit reals
+        string Real(double value) => angleInDegrees ? D17(value) : D(value);
         switch (p.StorageType)
         {
             case StorageType.Double when p.Value is double d && double.IsFinite(d):
                 return dataType switch
                 {
                     "autodesk.spec.aec:length" => $"IFCLENGTHMEASURE({D17(d * 304.8)})",
-                    "autodesk.spec.aec:area" => $"IFCAREAMEASURE({D(d * FeetToMetres * FeetToMetres)})",
-                    "autodesk.spec.aec:volume" => $"IFCVOLUMEMEASURE({D(d * FeetToMetres * FeetToMetres * FeetToMetres)})",
+                    "autodesk.spec.aec:area" => $"IFCAREAMEASURE({Real(d * FeetToMetres * FeetToMetres)})",
+                    "autodesk.spec.aec:volume" => $"IFCVOLUMEMEASURE({Real(d * FeetToMetres * FeetToMetres * FeetToMetres)})",
                     "autodesk.spec.aec:angle" => $"IFCPLANEANGLEMEASURE({(angleInDegrees ? D17(d * (180.0 / Math.PI)) : D(d))})",
                     _ => null,
                 };
@@ -66566,7 +66626,7 @@ public partial class IfcExporter
                 case StorageType.Double:
                     if (p.Value is double dv && double.IsFinite(dv))
                     {
-                        propValue = $"IFCREAL({D(dv)})";
+                        propValue = $"IFCREAL({(CurrentProfile ? D17(dv) : D(dv))})";
                     }
                     else continue;
                     break;
@@ -67042,7 +67102,8 @@ public partial class IfcExporter
             if (depth > MaxGroupNesting) return null;
             if (groupEntityIds.TryGetValue(groupId, out int? done)) return done;
             groupEntityIds[groupId] = null; // a cycle yields no group
-            if (!elemById.TryGetValue(groupId, out var group) || group.CategoryId != -2000095
+            // A group whose export flags say No is not written; its members are products of their own and stay.
+            if (!elemById.TryGetValue(groupId, out var group) || group.CategoryId != -2000095 || ExportFlagIsNo(group, elemById)
                 || !membersByGroup.TryGetValue(groupId, out var memberIds))
                 return null;
             // The current profile names every group "Model Group"; only the legacy profile needs the localized label,
@@ -67086,7 +67147,7 @@ public partial class IfcExporter
     {
         foreach (var (systemId, members) in membersBySystem)
         {
-            if (members.Count == 0 || !elemById.TryGetValue(systemId, out var system)
+            if (members.Count == 0 || !elemById.TryGetValue(systemId, out var system) || ExportFlagIsNo(system, elemById)
                 || system.SerializedMepSystem is not var (name, typeId))
                 continue;
             string objectType = elemById.TryGetValue(typeId, out var type) ? type.Name ?? "" : "";
@@ -67739,18 +67800,36 @@ public partial class IfcExporter
         // A run or landing names its type through TypeId (the serialized association), not ELEM_TYPE_PARAM, which a run does not have.
         Element? componentType = currentProfile && resolveComponentType
             ? ResolveStairComponentType(element, ifcType, elementsById, elementIdOccurrenceCounts) : null;
-        string typeName = componentType?.ValidatedStairComponentTypeName
+        string? knownTypeName = componentType?.ValidatedStairComponentTypeName
             ?? ResolveValidatedProductTypeName(element, ifcType, elementsById, currentProfile)
-            ?? element.Name ?? $"Element {element.Id}";
+            ?? element.Name;
+        string typeName = knownTypeName ?? $"Element {element.Id}";
         if (currentProfile && ifcType == "IFCSLAB" && element.CategoryId == -2000920) return typeName;
+        // A sweep-like proxy with neither a type name nor a family has no "family:type" part; it is named by its id alone.
+        if (knownTypeName == null && ifcType == "IFCBUILDINGELEMENTPROXY" && FixedSystemFamilyName(element) != null
+            && ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts) == null && element.FamilyName == null)
+            return "";
         string familyName = (currentProfile && ifcType == "IFCSTAIR" && element.RootClassName == "Stairs" ? element.ValidatedStairOccurrenceName : null)
             ?? ResolveSystemFamilyName(element, elementsById, elementIdOccurrenceCounts)
             ?? (componentType?.ValidatedSystemFamilyName is { Length: > 0 } componentFamily ? componentFamily : null)
             ?? element.FamilyName
             ?? (currentProfile && IsSystemRamp(element) ? RampFamilyName : null)
+            ?? FixedSystemFamilyName(element)
             ?? element.Category ?? ifcType;
         return $"{familyName}:{typeName}";
     }
+
+    /// <summary>The fixed family name of a sweep-like element that has no family of its own (wall sweep, slab edge, fascia,
+    /// gutter, roof soffit, 3D model text), or null.</summary>
+    internal static string? FixedSystemFamilyName(Element element) => element.CategoryId switch
+    {
+        -2000181 => "Wall Sweep",
+        -2001392 => "Slab Edge",
+        -2001390 => "Fascia",
+        -2001391 => "Gutter",
+        -2001393 => "Compound Ceiling",
+        _ => element.RootClassName == "Text3dElem" ? "Model Text" : null,
+    };
 
     /// <summary>The type element of a stair run or landing: the one its serialized TypeId names (a run has no ELEM_TYPE_PARAM, and the
     /// parameter of a landing names a sibling landing, see <see cref="ResolveTypeObjectElementId"/>), when it is a unique element of the
@@ -69581,20 +69660,6 @@ public partial class IfcExporter
     private static string S(string? s) => StepWriter.Str(s);
     private static string D(double v) => StepWriter.Real(v);
 
-    /// <summary>
-    /// Kept separate from the exporter's legacy G15 geometry formatter so this narrow property
-    /// slice cannot perturb existing IFC data.
-    /// </summary>
-    private static string D17(double value)
-    {
-        string result = value.ToString("G17", CultureInfo.InvariantCulture);
-        int exponentIndex = result.IndexOfAny(['E', 'e']);
-        if (exponentIndex >= 0)
-        {
-            string mantissa = result[..exponentIndex];
-            if (!mantissa.Contains('.')) mantissa += ".0";
-            return mantissa + result[exponentIndex..];
-        }
-        return result.Contains('.') ? result : result + ".";
-    }
+    /// <summary>A real that keeps every digit of the double (quantities and property values); see <see cref="StepWriter.RealExact"/>.</summary>
+    private static string D17(double value) => StepWriter.RealExact(value);
 }

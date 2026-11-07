@@ -324,7 +324,7 @@ public class IfcExporterBeamCommonPropertySetTests
         Regex.Matches(ifc, $@"#(\d+)={ifcType}\(")
             .Select(match => int.Parse(match.Groups[1].Value)).ToList();
 
-    private static Element Product(
+    internal static Element Product(
         int id, int typeId, int categoryId, string category, string? name,
         double centreX = 0) =>
         new()
@@ -351,7 +351,7 @@ public class IfcExporterBeamCommonPropertySetTests
             Geometry = SolidPrism(centreX),
         };
 
-    private static GeometryData SolidPrism(double centreX)
+    internal static GeometryData SolidPrism(double centreX)
     {
         double[][] points =
         [

@@ -137,7 +137,7 @@ public partial class IfcExporter
     {
         foreach (var (systemId, members) in _rebarSystemMembers.OrderBy(pair => pair.Key))
         {
-            if (!elemById.TryGetValue(systemId, out var system) || string.IsNullOrEmpty(system.Name)) continue;
+            if (!elemById.TryGetValue(systemId, out var system) || string.IsNullOrEmpty(system.Name) || ExportFlagIsNo(system, elemById)) continue;
             string label = $"Structural Area Reinforcement:{system.Name}";
             string globalId = ResolveExactElementGlobalId(system, _usedExportIds, handleBased: CurrentProfile) ?? IfcGuid.FromElementId(system.Id);
             int group = w.Add("IFCGROUP", $"{S(globalId)},{R(ownerHistId)},{S(label)},{S("")},{S(label)}");
