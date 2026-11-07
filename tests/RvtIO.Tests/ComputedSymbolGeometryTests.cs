@@ -68,7 +68,8 @@ public class ComputedSymbolGeometryTests
         // local (1, 0, 0) of the first face is world (10 + 0, 20 - 1, 30): the local x axis runs along world -y
         Assert.Contains(geometry.Faces.SelectMany(face => face.OuterVertices!),
             vertex => vertex[0] == 10 && vertex[1] == 19 && vertex[2] == 30);
-        Assert.Equal([-1, -2, -3, 4, 5, 6], geometry.BoundingBox!);
+        // The placed symbol keeps the tight box of the instance's decoded geometry.
+        Assert.Equal([0, 0, 0, 1, 1, 1], geometry.BoundingBox!);
         // the geometry of the instance itself is kept for the other versions
         Assert.Equal(6, element.Geometry!.Faces.Count);
         // faces placed from a symbol count as filled

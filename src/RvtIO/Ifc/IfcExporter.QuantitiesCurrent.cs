@@ -1135,7 +1135,7 @@ public partial class IfcExporter
         // family width axis.
         bool fromBoxes = false;
         if (height == null && width == null
-            && (element.Geometry?.BoundingBox ?? element.BoundingBox) is { Length: >= 6 } instanceBox
+            && (element.Geometry?.BoundingBox ?? element.DecodedBox) is { Length: >= 6 } instanceBox
             && Math.Abs(instanceBox[5] - instanceBox[2]) * FeetToMetres is > 0 and var boxHeight && double.IsFinite(boxHeight)
             && SymbolBoxCurrent(LinkedFamilyType(element, context.Elements)) is { Length: >= 6 } symbolBox
             && Math.Abs(symbolBox[3] - symbolBox[0]) * FeetToMetres is > 0 and var boxWidth && double.IsFinite(boxWidth))

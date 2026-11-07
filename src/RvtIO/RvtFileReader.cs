@@ -978,6 +978,7 @@ public partial class RvtFileReader
         }
         foreach (var (id, category) in index.HeaderCategories) state.HeaderCategories[id] = category;
         foreach (var (id, option) in index.HeaderDesignOptions) state.HeaderDesignOptions[id] = option;
+        foreach (var (id, box) in index.HeaderBoundingBoxes) state.HeaderBoundingBoxes[id] = box;
         foreach (var (id, classId) in index.RootClasses) state.NativeRootClassNames[id] = schema.Get(classId)!.Name;
         int walked = 0, exact = 0;
         var walkFailures = new Dictionary<string, int>();

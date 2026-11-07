@@ -95,7 +95,7 @@ public partial class IfcExporter
         IReadOnlyDictionary<int, Element>? elementsById = null)
     {
         if (elementsById != null && WallSideTestPointCurrent(instance, elementsById) is { } wallPoint) return wallPoint;
-        if ((instance.Geometry?.BoundingBox ?? instance.BoundingBox) is not { Length: >= 6 } box) return null;
+        if ((instance.Geometry?.BoundingBox ?? instance.DecodedBox) is not { Length: >= 6 } box) return null;
         double[] center = [(box[0] + box[3]) / 2, (box[1] + box[4]) / 2, (box[2] + box[5]) / 2];
         // The associated level, found as the storey resolution does.
         foreach (int parameterId in new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063 })
