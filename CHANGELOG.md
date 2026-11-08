@@ -6,7 +6,6 @@ API between minor releases.
 
 ## [Unreleased]
 
-- Current profile: recalculates the attached BaseQuantities (Height, Width, Depth) of hosted door and window openings from the model-frame extents of the decoded cut loop when the opening's representation is rewritten, keeping quantities aligned with the final cut geometry (Closes #6).
 - Synthesizes the ROOM_LEVEL_ID parameter (-1006916) and fallback ROOM_UPPER_LEVEL (-1006922) for room elements (OST_Rooms) in schema-read models (Revit 2023 and later) from LEVEL_PARAM (-1001952) or SCHEDULE_LEVEL_PARAM (-1002062) when no element references are present, restoring parameter parity with legacy-read models for API and JSON export consumers (Closes #141).
 
 - Current profile: stair runs and landings without ELEM_TYPE_PARAM resolve type-level Manufacturer in Pset_ManufacturerTypeInformation from their stair component type ahead of reference element type (Closes #75).

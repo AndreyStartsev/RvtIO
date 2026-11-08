@@ -309,9 +309,8 @@ public partial class IfcExporter
             projected[i][0] * projected[(i + 1) % projected.Count][1] - projected[(i + 1) % projected.Count][0] * projected[i][1]);
         if (area == 0 || !double.IsFinite(area)) { failure = "degenerate-loop"; return false; }
 
-        var modelLoop = cut.Vertices.Select(ToModel).ToList();
-        var (loopHeight, loopWidth) = CutLoopHeightWidthCurrent(modelLoop);
         var wallLocalLoop = cut.Vertices.Select(v => wallPlacement.ToLocal(ToModel(v))).ToList();
+        var (loopHeight, loopWidth) = CutLoopHeightWidthCurrent(wallLocalLoop);
 
         // the loop in the frame of the wall: Width along the wall, Height vertical (null for a loop without that extent)
         double? Extent(int axis)

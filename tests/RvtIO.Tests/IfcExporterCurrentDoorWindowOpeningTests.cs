@@ -220,12 +220,15 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     }
 
     [Theory]
-    // Legacy: the loop measured in the model frame: X along the placement for 0 degrees, and the horizontal projections when turned.
-    [InlineData(0, 0.8, 2.1)]
-    [InlineData(37, 0.639, 0.481)]
-    public void BaseQuantities_Legacy_NamesTheSidesOfTheLoopByTheFrame(double turnDegrees, double height, double width)
+    // Legacy: the loop measured in the frame of the wall, X along the placement (Height) and the vertical side as Width, in a wall of any
+    // direction: a door or window 0.8 wide and 2.1 high gets Height 0.8 and Width 2.1 (the contract of --ifc-opening-legacy-axes).
+    [InlineData(0, 0.8, 2.1, "IFCDOOR")]
+    [InlineData(37, 0.8, 2.1, "IFCDOOR")]
+    [InlineData(37, 0.8, 2.1, "IFCWINDOW")]
+    [InlineData(90, 0.8, 2.1, "IFCWINDOW")]
+    public void BaseQuantities_Legacy_NamesTheSidesOfTheLoopByTheFrame(double turnDegrees, double height, double width, string fillerType)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, "IFCDOOR");
+        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, fillerType);
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);
