@@ -47,7 +47,7 @@ Re-run the audit when changing dependencies.
 ## Build settings
 
 `Directory.Build.props` sets `LangVersion` 14.0, `Nullable` enable, `ImplicitUsings` enable, `Deterministic` true,
-`EmbedUntrackedSources` true, `PublishRepositoryUrl` true, `VersionPrefix` 0.2.0, snapshot symbol packages (`snupkg`),
+`EmbedUntrackedSources` true, `PublishRepositoryUrl` true, `VersionPrefix` 0.3.0, snapshot symbol packages (`snupkg`),
 and `ContinuousIntegrationBuild` true when `CI`, `GITHUB_ACTIONS` or `TF_BUILD` is set. `Microsoft.SourceLink.GitHub`
 is a build-time dependency only (`PrivateAssets` all). `tests/Directory.Build.props` imports it and turns
 `GenerateDocumentationFile` off. The library, the CLI and the tests target `net8.0` and `net10.0`.

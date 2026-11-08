@@ -152,4 +152,4 @@ internal static class ElementHeaderCategory
 }
 
 /// <summary>The outline verdict of an element's header records: a stored box, or the absence of one.</summary>
-public sealed record ElementHeaderBox(bool Present, double[]? Box);
+internal sealed record ElementHeaderBox(bool Present, double[]? Box);

@@ -10,7 +10,7 @@ projects through `InternalsVisibleTo`.
 |---|---|
 | `RvtDocument` | Opens a file (`Open`) and gives the elements, project information, file metadata and category lookups. |
 | `RvtFileReader` | Lower level read (`Read`) that returns the `RevitFileInfo` behind a document. |
-| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. |
+| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition streams read and the streams cut by a limit. |
 | `ExportReport`, `SkipLog` | The machine-readable report of a run (`ToJson`) and the elements an export left out; see [the export report](export-report.md). |
 | `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes of the command line tool, the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
@@ -23,6 +23,8 @@ projects through `InternalsVisibleTo`.
 `GeoFace`, `GeoEdge`, `GeoSolid`, `GeoBrepSolid`, `GeoOpening`, `GeoInstance`, `LocationCurve`, `DimensionData`,
 `InstanceTransform`) are the data a read returns. `ParameterListConverter` is the `System.Text.Json` converter that writes
 the parameter lists of a `RevitFileInfo`.
+
+`Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 
 ## Built-in identifiers
 
