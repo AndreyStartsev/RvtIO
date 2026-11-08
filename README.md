@@ -88,7 +88,7 @@ Use `--ifc-revit-parameter-groups` for one property set per parameter group. A f
 | 2 | The input cannot be read: it is missing, empty, not a compound file, or cut or damaged. One line on standard error, no stack trace. |
 | 3 | A stream exceeded a limit of the reader and the read was cut. Nothing is exported unless `--allow-partial` is given. |
 | 4 | The file is readable but a decoder failed on its content. |
-| 5 | `downgrade --check` refused the request: the source is newer than release 2026, the profile is not older than the source, the saving release of a file does not match its class table, or a class name occurs twice in a table. One line on standard error. |
+| 5 | `downgrade --check` refused the request, for example because the source is newer than release 2026, the profile is not older than the source, the saving release of a file does not match its class table, or a class name occurs twice in a table. One line on standard error. |
 
 `--report project.report.json` writes a machine-readable report: the fraction of each partition stream and of the element table that decoded, the streams cut by a limit, the elements the export left out with their class and reason, and the exported fraction. `--raise-limits` raises the limits for a very large model. A complete export without these options behaves as before. The report format and the limits are described in [the export report](docs/export-report.md).
 
