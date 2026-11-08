@@ -220,12 +220,15 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     }
 
     [Theory]
-    // Legacy: the loop measured in the frame of the wall, X along the placement (Height) and the vertical side as Width.
-    [InlineData(0, 0.8, 2.1)]
-    [InlineData(37, 0.8, 2.1)]
-    public void BaseQuantities_Legacy_NamesTheSidesOfTheLoopByTheFrame(double turnDegrees, double height, double width)
+    // Legacy: the loop measured in the frame of the wall, X along the placement (Height) and the vertical side as Width, in a wall of any
+    // direction: a door or window 0.8 wide and 2.1 high gets Height 0.8 and Width 2.1 (the contract of --ifc-opening-legacy-axes).
+    [InlineData(0, 0.8, 2.1, "IFCDOOR")]
+    [InlineData(37, 0.8, 2.1, "IFCDOOR")]
+    [InlineData(37, 0.8, 2.1, "IFCWINDOW")]
+    [InlineData(90, 0.8, 2.1, "IFCWINDOW")]
+    public void BaseQuantities_Legacy_NamesTheSidesOfTheLoopByTheFrame(double turnDegrees, double height, double width, string fillerType)
     {
-        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, "IFCDOOR");
+        var (depth, h, w) = QuantitiesAfterTheRewrite(true, turnDegrees, fillerType);
 
         Assert.Equal(0.202, depth, 3);
         Assert.Equal(height, h, 3);
@@ -264,9 +267,9 @@ public class IfcExporterCurrentDoorWindowOpeningTests
     /// <summary>Both passes in the order of the export: the quantity pass writes the nominal size of the door (0.885 by 2.135) on the
     /// opening that was written as a generic box (6 by 0.202 by 3), then the opening pass rebuilds it from the cut loop (0.8 by 2.1) or,
     /// with no decoded cut, leaves it.</summary>
-    private static (double Height, double Width) QuantitiesOfTheOpeningAfterBothPasses(bool decodedCut, double nominalHeight = 2.135, double nominalWidth = 0.885)
+    private static (double Height, double Width) QuantitiesOfTheOpeningAfterBothPasses(bool decodedCut, double nominalHeight = 2.135, double nominalWidth = 0.885, string fillerType = "IFCDOOR")
     {
-        var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607]);
+        var (f, opening, elements, products) = Scene([-1.5748031496062993, -2.9564656610201734, 0, 1.5748031496062993, 0.4297900262467311, 7.152230971128607], fillerType: fillerType);
         const double FeetPerMetre = 1 / 0.3048;
         Parameter Dimension(int id, double metres) => new()
         {
@@ -299,10 +302,12 @@ public class IfcExporterCurrentDoorWindowOpeningTests
         return (values["Height"], values["Width"]);
     }
 
-    [Fact]
-    public void BothPasses_ADecodedCutLoop_ReplacesTheNominalSizeOfTheDoor()
+    [Theory]
+    [InlineData("IFCDOOR")]
+    [InlineData("IFCWINDOW")]
+    public void BothPasses_ADecodedCutLoop_ReplacesTheNominalSizeOfInstance(string fillerType)
     {
-        var (height, width) = QuantitiesOfTheOpeningAfterBothPasses(decodedCut: true);
+        var (height, width) = QuantitiesOfTheOpeningAfterBothPasses(decodedCut: true, fillerType: fillerType);
 
         Assert.Equal(2.1, height, 3);
         Assert.Equal(0.8, width, 3);
