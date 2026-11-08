@@ -69642,7 +69642,7 @@ public partial class IfcExporter
 
 
     /// <summary>Get door/window height in mm from params, frame extent, or bbox.</summary>
-    private static double GetDoorWindowHeight(Element elem, Element? type)
+    internal static double GetDoorWindowHeight(Element elem, Element? type)
     {
         double? paramFeet = ExactNamedParameterFeetCurrent(elem, type, "Height", true, -1001300, -1010300);
         if (paramFeet != null && paramFeet > 0)
@@ -69657,7 +69657,7 @@ public partial class IfcExporter
     }
 
     /// <summary>Get door/window width in mm from params, frame extent, or bbox.</summary>
-    private static double GetDoorWindowWidth(Element elem, Element? type)
+    internal static double GetDoorWindowWidth(Element elem, Element? type)
     {
         double? paramFeet = ExactNamedParameterFeetCurrent(elem, type, "Width", true, -1001301, -1010301);
         if (paramFeet != null && paramFeet > 0)

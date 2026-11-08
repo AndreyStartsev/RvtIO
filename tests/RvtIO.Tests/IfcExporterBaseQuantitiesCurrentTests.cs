@@ -688,6 +688,65 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void FillerDimensions_HostAxes_RoughDimensionsExceedingNominal_KeepsNominalDimensions()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
+        elements[30].Parameters.Add(Dimension(-1001304, 7.333));
+        elements[90].Parameters.Add(Dimension(-1001305, 2.5));
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7 * 0.3048), ("Width", 2 * 0.3048));
+    }
+
+    [Fact]
+    public void FillerDimensions_HostAxes_PanelDimensionsOfADoorWithoutACurtainWallHost_AreRead()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
+        elements[90].Parameters = [Dimension(-1010301, 2), TypeReference(30)];
+        elements[30].Parameters = [Dimension(-1010300, 7), Dimension(-1010301, 3)];
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7 * 0.3048), ("Width", 2 * 0.3048));
+    }
+
+    [Fact]
+    public void FillerDimensions_HostAxes_RoughDimensionsSmallerThanNominal_KeepsNominalDimensions()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
+        elements[30].Parameters.Add(Dimension(-1001304, 6.8));
+        elements[90].Parameters.Add(Dimension(-1001305, 1.8));
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7 * 0.3048), ("Width", 2 * 0.3048));
+    }
+
+    [Fact]
+    public void GetDoorWindowHeightAndWidth_RoughExceedingNominal_KeepsNominal()
+    {
+        var type = new Element
+        {
+            Id = 30,
+            Parameters =
+            [
+                Dimension(-1001300, 7.0),
+                Dimension(-1001304, 7.333),
+                Dimension(-1001301, 3.0),
+                Dimension(-1001305, 3.25),
+            ]
+        };
+        var elem = new Element { Id = 90 };
+
+        double h = IfcExporter.GetDoorWindowHeight(elem, type);
+        double w = IfcExporter.GetDoorWindowWidth(elem, type);
+
+        Assert.Equal(7.0 * 0.3048 * 1000, h, 3);
+        Assert.Equal(3.0 * 0.3048 * 1000, w, 3);
+    }
+
+    [Fact]
     public void FillerDimensions_Legacy_OpeningKeepsTheMeasureOfItsBody()
     {
         var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
