@@ -6,6 +6,11 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Default output, current IFC profile: of the beams that share one mapped body, only the first one has extrusion data. Every later beam of the shared body now has only NetVolume and NetSurfaceArea in its BaseQuantities (before: Length, CrossSectionArea, OuterSurfaceArea, GrossSurfaceArea and GrossVolume as well), and such a later beam gets `Pset_BeamCommon.Slope`, the angle in degrees of its drive curve to the horizontal.
+- Default output, current IFC profile: `Pset_BeamCommon.Span` of a beam without a stored length is the length of its drive curve.
+
 ## [0.3.0] - 2026-11-08
 
 ### Breaking changes

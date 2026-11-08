@@ -89,6 +89,40 @@ public partial class IfcExporter
         return added;
     }
 
+    /// <summary>Pset_BeamCommon.Slope of the later beams of a shared body (they have no extrusion data): the angle of the drive curve in
+    /// degrees. The first beam of a body, which has extrusion data, has none. Returns the number of properties added.</summary>
+    private static int AddBeamSlopesCurrent(
+        StepWriter w, IReadOnlyDictionary<int, double> slopes, Dictionary<(string PropertyName, string ValueExpr), int> pool)
+    {
+        if (slopes.Count == 0) return 0;
+        var psetIndexById = new Dictionary<int, int>();
+        var psetByObject = new Dictionary<int, int>();
+        int count = w.EntityCount;
+        for (int i = 0; i < count; i++)
+        {
+            var (id, type, args) = w.EntityAt(i);
+            if (type == "IFCPROPERTYSET" && PropertySetName.Match(args) is { Success: true } name
+                && StepWriter.Unescape(name.Groups[1].Value) == "Pset_BeamCommon")
+                psetIndexById[id] = i;
+            else if (type == "IFCRELDEFINESBYPROPERTIES" && SingleObjectPropertyRelation.Match(args) is { Success: true } relation
+                && int.Parse(relation.Groups[1].ValueSpan, CultureInfo.InvariantCulture) is int objectId && slopes.ContainsKey(objectId)
+                && int.Parse(relation.Groups[2].ValueSpan, CultureInfo.InvariantCulture) is int psetId && psetIndexById.ContainsKey(psetId))
+                psetByObject[objectId] = psetId;
+        }
+        int added = 0;
+        foreach (var (entityId, degrees) in slopes)
+        {
+            if (!psetByObject.TryGetValue(entityId, out int psetId)) continue;
+            int index = psetIndexById[psetId];
+            string psetArgs = w.EntityAt(index).Args;
+            if (!psetArgs.EndsWith(')')) continue;
+            int propertyId = GetOrAddPropertySingleValue(w, pool, "Slope", $"IFCPLANEANGLEMEASURE({D17(degrees)})");
+            w.ReplaceArgs(index, $"{psetArgs[..^1]},#{propertyId.ToString(CultureInfo.InvariantCulture)})");
+            added++;
+        }
+        return added;
+    }
+
     /// <summary>Every solid of the instance is a vertical extrusion for the body export. An instance of three solids, one of
     /// which fails, is exported as three B-Reps, none as an extrusion, so one failing solid takes the extrusion of the others.</summary>
     internal static bool HasVerticalExtrusionCurrent(GeometryData geometry, out string detail)

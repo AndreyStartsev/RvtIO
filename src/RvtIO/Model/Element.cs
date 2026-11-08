@@ -49,6 +49,10 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal (double X, double Y, double Z)? CurveDriverLineDirection { get; set; }
 
+        /// <summary>Length of the straight drive curve (CurveDriver.m_pCrv GLine: the end-parameter span times the stored direction vector), feet.</summary>
+        [JsonIgnore]
+        internal double? CurveDriverLineLength { get; set; }
+
         /// <summary>StructuralUserData.m_copingDistance as stored (-1 when the member has no coped end).</summary>
         [JsonIgnore]
         internal double? FramingCopingDistance { get; set; }

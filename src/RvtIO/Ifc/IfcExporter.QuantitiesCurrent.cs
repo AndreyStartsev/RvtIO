@@ -145,6 +145,10 @@ public partial class IfcExporter
         public HashSet<int> OpeningsWithFormerDepthClearance { get; init; } = new();
         /// <summary>Parent container entity of each aggregated child (IfcRelAggregates).</summary>
         public Dictionary<int, int> ParentByChild { get; } = new();
+        /// <summary>The representation maps that the Body of an earlier beam already uses.</summary>
+        public HashSet<int> BeamRepresentationMaps { get; } = new();
+        /// <summary>The later beams of a shared body, with the slope of their drive curve in degrees.</summary>
+        public Dictionary<int, double> BeamSlopes { get; } = new();
     }
 
     private static bool TryParseStepReal(string token, out double value) =>
@@ -250,6 +254,33 @@ public partial class IfcExporter
                 || !TryEntityId(items[^1], out int itemId) || !indexById.TryGetValue(itemId, out int itemIndex))
                 return null;
             return ReadExtrusionItemCurrent(w, indexById, itemIndex, lastOfSeveral, isCuttingItem);
+        }
+        return null;
+    }
+
+    /// <summary>The representation map that the lone mapped item of the Body of a product uses; null for any other body.</summary>
+    private static int? BodyRepresentationMapCurrent(StepWriter w, Dictionary<int, int> indexById, string representationArgument)
+    {
+        if (!TryEntityId(representationArgument, out int shapeId) || !indexById.TryGetValue(shapeId, out int shapeIndex)
+            || w.EntityAt(shapeIndex).Type != "IFCPRODUCTDEFINITIONSHAPE")
+            return null;
+        var shapeArguments = SplitStepArguments(w.EntityAt(shapeIndex).Args);
+        if (shapeArguments.Length != 3 || shapeArguments[2].Length < 3) return null;
+        foreach (string representationToken in SplitStepArguments(shapeArguments[2][1..^1]))
+        {
+            if (!TryEntityId(representationToken, out int representationId) || !indexById.TryGetValue(representationId, out int representationIndex))
+                continue;
+            var representation = w.EntityAt(representationIndex);
+            var representationArguments = SplitStepArguments(representation.Args);
+            if (representation.Type != "IFCSHAPEREPRESENTATION" || representationArguments.Length != 4
+                || representationArguments[1] != "'Body'" || representationArguments[3].Length < 3)
+                continue;
+            var items = SplitStepArguments(representationArguments[3][1..^1]);
+            if (items.Length != 1 || !TryEntityId(items[0], out int itemId) || !indexById.TryGetValue(itemId, out int itemIndex)
+                || w.EntityAt(itemIndex).Type != "IFCMAPPEDITEM")
+                return null;
+            var mapped = SplitStepArguments(w.EntityAt(itemIndex).Args);
+            return mapped.Length >= 1 && TryEntityId(mapped[0], out int mapId) ? mapId : null;
         }
         return null;
     }
@@ -713,7 +744,8 @@ public partial class IfcExporter
     internal int ApplyCurrentBaseQuantities(
         StepWriter w, IReadOnlyDictionary<int, Element> elementsById, IReadOnlyDictionary<int, int> productElementIdByEntity,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products, int ownerHistId,
-        IReadOnlyDictionary<int, double>? storeyHeights = null)
+        IReadOnlyDictionary<int, double>? storeyHeights = null,
+        Dictionary<(string PropertyName, string ValueExpr), int>? propertyValuePool = null)
     {
         int entityCount = w.EntityCount;
         var indexById = new Dictionary<int, int>(entityCount);
@@ -791,6 +823,7 @@ public partial class IfcExporter
                 $"{S(IfcGuid.FromMd5($"IfcRelDefinesByProperties:BaseQuantities:{globalId}"))},{R(ownerHistId)},'','',{StepWriter.List(R(productId))},{R(setId)}");
             sets++;
         }
+        if (propertyValuePool != null) AddBeamSlopesCurrent(w, context.BeamSlopes, propertyValuePool);
         return sets;
     }
 
@@ -829,7 +862,7 @@ public partial class IfcExporter
             "IFCSLAB" => SlabQuantitiesCurrent(context, element, body, arguments),
             "IFCCOVERING" => CoveringQuantitiesCurrent(element),
             "IFCCOLUMN" => ColumnQuantitiesCurrent(element, body),
-            "IFCBEAM" => BeamQuantitiesCurrent(element, body),
+            "IFCBEAM" => BeamQuantitiesCurrent(context, productId, element, body, arguments[6]),
             "IFCSTAIRFLIGHT" => StairFlightQuantitiesCurrent(element, arguments),
             "IFCRAILING" => RailingQuantitiesCurrent(context, element),
             _ => none,
@@ -1402,12 +1435,15 @@ public partial class IfcExporter
 
     /// <summary>The Beam description (common structural quantities and NetSurfaceArea): the calculators read the
     /// extrusion data of a prism body, in consistent units.</summary>
-    private List<QuantityValue> BeamQuantitiesCurrent(Element element, ProfileExtrusion? body)
+    private List<QuantityValue> BeamQuantitiesCurrent(QuantityContextCurrent context, int productId, Element element, ProfileExtrusion? body, string representation)
     {
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
         var totals = SolidTotalsCurrent(shells);
-        if (ExtrusionDataCurrent(body, shells) is { } extrusion)
+        // The body export keeps its extrusion data for the first beam of a shared representation map only; every later one reuses the
+        // mapped body and has the Net quantities alone.
+        bool reusesBody = BodyRepresentationMapCurrent(context.W, context.IndexById, representation) is int mapId && !context.BeamRepresentationMaps.Add(mapId);
+        if (!reusesBody && ExtrusionDataCurrent(body, shells) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area, perimeter = extrusion.Perimeter;
             AddIfPositive(result, QuantityKind.Length, "Length", length);
@@ -1417,7 +1453,12 @@ public partial class IfcExporter
             AddIfPositive(result, QuantityKind.Volume, "GrossVolume", area * length);
         }
         else
+        {
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? totals?.Area / 2);
+            // The first beam of a body that is no extrusion also has a Slope, but a first beam whose extrusion is not found here can be one
+            // that has extrusion data (and no Slope) for the expected output, so only the later beams are told apart.
+            if (reusesBody && ResolveBeamSlopeDegreesCurrent(element) is double slope) context.BeamSlopes[productId] = slope;
+        }
         var beamNet = NodeSolidTotalsCurrent(element.Geometry) ?? totals;
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", ComputedHostVolumeCurrent(element) ?? beamNet?.Volume);
         AddIfPositive(result, QuantityKind.Area, "NetSurfaceArea", beamNet?.Area);

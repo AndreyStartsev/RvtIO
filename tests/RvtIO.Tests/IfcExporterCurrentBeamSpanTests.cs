@@ -47,6 +47,15 @@ public class IfcExporterCurrentBeamSpanTests
     }
 
     [Fact]
+    public void BeamWithoutAStoredLength_SpansItsDriveCurve()
+    {
+        var beam = new Element { Id = 1, CurveDriverLineLength = 10.0 };
+        Assert.Equal(3048.0, IfcExporter.ResolveBeamSpanMillimetresCurrent(beam, null)!.Value, 9);
+        beam.Parameters.Add(Length(20.0));
+        Assert.Equal(6096.0, IfcExporter.ResolveBeamSpanMillimetresCurrent(beam, null)!.Value, 9);
+    }
+
+    [Fact]
     public void NoLengthParameter_HasNoSpan() =>
         Assert.Null(IfcExporter.ResolveBeamSpanMillimetresCurrent(new Element { Id = 1 }, new Element { Id = 2 }));
 }

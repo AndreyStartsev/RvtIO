@@ -6521,7 +6521,7 @@ public partial class IfcExporter
             // A room is not in the product table: its space entity belongs to it.
             var quantityElementByEntity = new Dictionary<int, int>(productElementIdByEntity);
             foreach (var (roomId, spaceEntityId) in spaceEntityIdByRoomId) quantityElementByEntity.TryAdd(spaceEntityId, roomId);
-            int quantitySets = ApplyCurrentBaseQuantities(w, elemById, quantityElementByEntity, exportedIfcElements, ownerHistId, StoreyHeightsCurrent());
+            int quantitySets = ApplyCurrentBaseQuantities(w, elemById, quantityElementByEntity, exportedIfcElements, ownerHistId, StoreyHeightsCurrent(), propertySingleValueIds);
             _diag?.WriteLine($"The current profile BaseQuantities sets: {quantitySets}");
         }
         if (CurrentProfile)
