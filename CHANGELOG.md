@@ -7,6 +7,7 @@ API between minor releases.
 ## [Unreleased]
 
 - IFC export, current profile: ducts, pipes, conduits and cable trays of files with their own class schema (Revit 2021 and 2023 and later) take their length from the straight drive curve of the element, as those of a Revit 2022 file do, so each one carries the Length property of `Pset_FlowSegmentDuctSegment` and `Pset_FlowSegmentPipeSegment` (the curve length in millimetres) and the parameters derived from the curve (surface area, elevations, slope) that the reader had left unset in those files. A driver that is an arc or a spline, or that holds no straight curve, gives no length, as before.
+- IFC export, current profile: the ducts, pipes, conduits, cable trays and pipe insulation of a Revit 2021 file are named after the English name of their system family, as those of a later file are (`Pipe Types:{type}:{id}`, `Rectangular Duct:{type}:{id}`, `Cable Tray with Fittings:{type}:{id}`, `Pipe Insulation:{type}:{id}`) instead of after the `OST_` category name. The names of the other system families of a Revit 2021 file are unchanged, and a file of Revit 2020 or earlier keeps its category names.
 
 ## [0.3.0] - 2026-11-08
 

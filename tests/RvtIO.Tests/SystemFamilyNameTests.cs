@@ -96,6 +96,26 @@ public class SystemFamilyNameTests
     public void Load_UnknownLocaleOrVersionGivesNoNames(string? version, string? locale) =>
         Assert.Null(RevitSystemFamilyNames.Load(version, locale));
 
+    // The release before the embedded names has the English names of the MEP curve families and nothing else.
+    [Theory]
+    [InlineData("PipeTypes", "Pipe Types")] [InlineData("RectangularDuct", "Rectangular Duct")] [InlineData("RoundDuct", "Round Duct")]
+    [InlineData("PipeInsulation", "Pipe Insulation")] [InlineData("CableTrayWithFittings", "Cable Tray with Fittings")]
+    [InlineData("BasicWall", null)] [InlineData("Floor", null)] [InlineData("AssembledStair", null)]
+    public void LoadMepCurveFamilies_GivesTheMepCurveFamilyNamesOfRevit2021Only(string kind, string? expected)
+    {
+        var names = RevitSystemFamilyNames.LoadMepCurveFamilies("2021", "ENU")!;
+        Assert.Equal(expected, names.Get(Enum.Parse<SystemFamilyKind>(kind)));
+        Assert.Null(names.StairOccurrenceName);
+        Assert.Null(names.Get(RevitUiText.LevelFamily));
+        Assert.Null(names.Get(RevitUiText.SupplyAir));
+    }
+
+    [Theory]
+    [InlineData("2020", "ENU")] [InlineData("2022", "ENU")] [InlineData("2021", "RUS")] [InlineData("2021", "DEU")] [InlineData("2021", null)]
+    [InlineData(null, "ENU")] [InlineData("beta", "ENU")]
+    public void LoadMepCurveFamilies_OtherVersionOrLocaleGivesNoNames(string? version, string? locale) =>
+        Assert.Null(RevitSystemFamilyNames.LoadMepCurveFamilies(version, locale));
+
     // The embedded names apply to every version from 2022 on.
     [Theory]
     [InlineData("2022")] [InlineData("2023")] [InlineData("2026")]

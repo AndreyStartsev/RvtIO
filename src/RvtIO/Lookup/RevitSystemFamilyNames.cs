@@ -130,6 +130,31 @@ internal sealed class RevitSystemFamilyNames
         return new RevitSystemFamilyNames(names, string.IsNullOrWhiteSpace(stairName) ? null : stairName) { _texts = texts };
     }
 
+    /// <summary>The English names of the MEP curve families (ducts, pipes, conduits, cable trays, pipe insulation) for a file of the release
+    /// before the embedded names (Revit 2021), whatever language the file was saved in; null for any other file. No other kind or text
+    /// is in it: only the type roots of the MEP curves read this table.</summary>
+    internal static RevitSystemFamilyNames? LoadMepCurveFamilies(string? revitVersion, string? locale)
+    {
+        if (!int.TryParse(revitVersion, out int version) || version != RevitUiNameTable.BundleVersion - 1
+            || locale == null || !Cultures.TryGetValue(locale, out string? culture) || culture != "en-US") return null;
+        var names = new Dictionary<SystemFamilyKind, string>();
+        foreach (var kind in MepCurveFamilies)
+        {
+            string? name = RevitUiNameTable.Get(culture, kind.ToString());
+            if (kind == SystemFamilyKind.PipeInsulation) name = name?.Split('\n')[0].Trim();
+            if (!string.IsNullOrWhiteSpace(name)) names[kind] = name;
+        }
+        return new RevitSystemFamilyNames(names);
+    }
+
+    private static readonly SystemFamilyKind[] MepCurveFamilies =
+    [
+        SystemFamilyKind.RoundDuct, SystemFamilyKind.OvalDuct, SystemFamilyKind.RectangularDuct, SystemFamilyKind.FlexDuctRound,
+        SystemFamilyKind.FlexDuctRectangular, SystemFamilyKind.ConduitWithFittings, SystemFamilyKind.ConduitWithoutFittings,
+        SystemFamilyKind.PipeTypes, SystemFamilyKind.FlexPipeRound, SystemFamilyKind.PipeInsulation,
+        SystemFamilyKind.CableTrayWithFittings, SystemFamilyKind.CableTrayWithoutFittings,
+    ];
+
     internal static RevitSystemFamilyNames ForTests(IReadOnlyDictionary<SystemFamilyKind, string> names,
         string? stairOccurrenceName = null, IReadOnlyDictionary<RevitUiText, string>? texts = null) =>
         new(names, stairOccurrenceName) { _texts = texts ?? new Dictionary<RevitUiText, string>() };
