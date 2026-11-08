@@ -131,8 +131,9 @@ internal sealed class RevitSystemFamilyNames
     }
 
     /// <summary>The English names of the MEP curve families (ducts, pipes, conduits, cable trays, pipe insulation) for a file of the release
-    /// before the embedded names (Revit 2021), whatever language the file was saved in; null for any other file. No other kind or text
-    /// is in it: only the type roots of the MEP curves read this table.</summary>
+    /// before the embedded names (Revit 2021) when the requested locale is English (the current IFC profile requests it, whatever language
+    /// the file was saved in); null for any other file or locale. No other kind or text is in it: only the type roots of the MEP curves
+    /// read this table.</summary>
     internal static RevitSystemFamilyNames? LoadMepCurveFamilies(string? revitVersion, string? locale)
     {
         if (!int.TryParse(revitVersion, out int version) || version != RevitUiNameTable.BundleVersion - 1
