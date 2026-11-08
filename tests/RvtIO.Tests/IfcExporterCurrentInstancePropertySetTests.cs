@@ -107,6 +107,64 @@ public class IfcExporterCurrentInstancePropertySetTests
         Assert.Equal("IFCLABEL('')", sets.Single(set => set.Name == "Pset_ManufacturerTypeInformation").Properties["Manufacturer"]);
     }
 
+    [Fact]
+    public void Manufacturer_OfAStairFlight_ComesFromItsStairComponentType_WhenElemTypeParamIsAbsent()
+    {
+        const int runsCategory = -2000919;
+        var runType = new Element
+        {
+            Id = 300,
+            CategoryId = runsCategory,
+            Name = "Monolithic Run Type",
+            ValidatedStairComponentTypeName = "Monolithic Run Type",
+            References = [AllModelManufacturerParamId],
+        };
+        runType.Parameters.Add(Text(AllModelManufacturerParamId, "StairMaster"));
+
+        var run = IfcExporterStairOccurrenceCommonPropertySetTests.Product(200, runType.Id, runsCategory, "OST_StairsRuns", null);
+
+        var sets = SetsOf(Export(IfcProfile.Current, runType, run), "IFCSTAIRFLIGHT");
+        Assert.Equal("IFCLABEL('StairMaster')", sets.Single(set => set.Name == "Pset_ManufacturerTypeInformation").Properties["Manufacturer"]);
+    }
+
+    [Fact]
+    public void Manufacturer_OfAStairLanding_ComesFromItsStairComponentType_WhenElemTypeParamIsAbsent()
+    {
+        const int landingsCategory = -2000920;
+        var landingType = new Element
+        {
+            Id = 301,
+            CategoryId = landingsCategory,
+            Name = "Monolithic Landing Type",
+            ValidatedStairComponentTypeName = "Monolithic Landing Type",
+            References = [AllModelManufacturerParamId],
+        };
+        landingType.Parameters.Add(Text(AllModelManufacturerParamId, "LandingMaster"));
+
+        var landing = IfcExporterStairOccurrenceCommonPropertySetTests.Product(201, landingType.Id, landingsCategory, "OST_StairsLandings", null);
+
+        var sets = SetsOf(Export(IfcProfile.Current, landingType, landing), "IFCSLAB");
+        Assert.Equal("IFCLABEL('LandingMaster')", sets.Single(set => set.Name == "Pset_ManufacturerTypeInformation").Properties["Manufacturer"]);
+    }
+
+    [Fact]
+    public void Manufacturer_OfAStairFlight_WithoutManufacturerParameter_EmitsNoManufacturerSet()
+    {
+        const int runsCategory = -2000919;
+        var runType = new Element
+        {
+            Id = 300,
+            CategoryId = runsCategory,
+            Name = "Monolithic Run Type",
+            ValidatedStairComponentTypeName = "Monolithic Run Type",
+        };
+
+        var run = IfcExporterStairOccurrenceCommonPropertySetTests.Product(200, runType.Id, runsCategory, "OST_StairsRuns", null);
+
+        var sets = SetsOf(Export(IfcProfile.Current, runType, run), "IFCSTAIRFLIGHT");
+        Assert.DoesNotContain(sets, set => set.Name == "Pset_ManufacturerTypeInformation");
+    }
+
     [Theory]
     [InlineData(IfcProfile.Current, "IFCBOOLEAN(.T.)")]
     [InlineData(IfcProfile.Legacy, "IFCBOOLEAN(.F.)")]
