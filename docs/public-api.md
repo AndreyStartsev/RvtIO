@@ -13,7 +13,7 @@ projects through `InternalsVisibleTo`.
 | `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition streams read and the streams cut by a limit. |
 | `ExportReport`, `SkipLog` | The machine-readable report of a run (`ToJson`) and the elements an export left out; see [the export report](export-report.md). |
-| `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes of the command line tool, the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
+| `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes 0 to 4 of the command line tool (code 5 is returned only by `downgrade --check`), the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
 | `FilteredElementCollector` | Query over the elements of a document (`OfCategory`, `WhereElementIsNotElementType`, `Where`, ...). |
 
 ## Model
