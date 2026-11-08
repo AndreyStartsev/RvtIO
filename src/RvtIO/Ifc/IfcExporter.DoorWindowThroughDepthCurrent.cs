@@ -5,11 +5,12 @@ namespace RvtIO.Ifc;
 public partial class IfcExporter
 {
     /// <summary>
-    /// The Depth of the opening of a door or window in a straight wall is the total layer width of the wall: the opening reaches from
-    /// one face to the other, whatever box the family cutter has. For an opening whose box was not rebuilt from a cut loop and is
-    /// an axis-aligned rectangular prism in the frame of the wall, extruded along the wall or vertically, the side across the wall is
-    /// set to the wall width and centred on the axis of the wall. Returns the depth, or null when the opening is left as it was (it
-    /// is no such prism, or it already is that deep and centred).
+    /// The Depth of the opening of a door or window in a straight wall whose family cuts with a profile (the symbol stores cut loops)
+    /// is the total layer width of the wall: the opening reaches from one face to the other, whatever box the family cutter has. The
+    /// caller does not ask for a family without cut loops: it cuts with a void body of its own, whose depth is what Revit cuts. For an
+    /// opening whose box was not rebuilt from a cut loop and is an axis-aligned rectangular prism in the frame of the wall, extruded
+    /// along the wall or vertically, the side across the wall is set to the wall width and centred on the axis of the wall. Returns
+    /// the depth, or null when the opening is left as it was (it is no such prism, or it already is that deep and centred).
     /// </summary>
     private static double? TryThroughDepthCurrent(StepWriter w, Dictionary<int, int> indexById, IReadOnlyDictionary<int, Element> elementsById,
         Element wall, string[] wallAttributes, string[] openingAttributes, GlobalsCurrent globals, List<int> detached)

@@ -5,19 +5,21 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>The opening of a door or window in a straight wall reaches through the whole wall (the total layer width of the wall)
-/// also where it is not rebuilt from a cut loop and keeps the box of the family cutter.</summary>
+/// <summary>The opening of a door or window in a straight wall whose family cuts with a profile (the symbol stores cut loops) reaches
+/// through the whole wall (the total layer width of the wall) also where it is not rebuilt from a cut loop and keeps the box of the
+/// family cutter. A family without cut loops is cut by a void body of its own and keeps the depth of that box.</summary>
 public class IfcExporterCurrentDoorWindowThroughDepthTests
 {
-    private const int WallElement = 30, DoorElement = 31;
+    private const int WallElement = 30, DoorElement = 31, SymbolElement = 32;
     private const double WallWidth = 0.202;
 
     private static double Number(string text) => double.Parse(text, CultureInfo.InvariantCulture);
 
     /// <summary>A wall along +X, 0.202 thick, with a door whose cutter box is 0.9 along the wall, <paramref name="across"/> across it
-    /// (its centre <paramref name="offset"/> from the axis) and 2.1 high; BaseQuantities Depth is <paramref name="across"/>.</summary>
+    /// (its centre <paramref name="offset"/> from the axis) and 2.1 high; BaseQuantities Depth is <paramref name="across"/>. The symbol
+    /// of the door stores <paramref name="cutLoops"/> cut loops (none for a symbol that is not resolved).</summary>
     private static (IfcExporterCurrentWallExtrusionTests.Fixture F, int Opening, int Solid, int Depth, Dictionary<int, Element> Elements, Dictionary<int, int> Products)
-        Scene(double across, double offset, bool extrudedAcross = false)
+        Scene(double across, double offset, bool extrudedAcross = false, int? cutLoops = 1)
     {
         var f = new IfcExporterCurrentWallExtrusionTests.Fixture();
         int wall = f.StandardCaseWall(0, 0, 0, 1, 0, 3, WallWidth, 2.7);
@@ -53,8 +55,9 @@ public class IfcExporterCurrentDoorWindowThroughDepthTests
         {
             [WallElement] = new() { Id = WallElement, Location = new LocationCurve { CurveType = "Line", StartPoint = [-1.5, 0, 0], EndPoint = [1.5, 0, 0] } },
             // (no cut loop of its own and none on the symbol: the box of the cutter is what the opening keeps)
-            [DoorElement] = new() { Id = DoorElement, TypeId = 1 },
+            [DoorElement] = new() { Id = DoorElement, TypeId = 1, Transform = new InstanceTransform { SymbolId = SymbolElement } },
         };
+        if (cutLoops is { } count) elements[SymbolElement] = new() { Id = SymbolElement, SerializedCutLoopCount = count };
         return (f, opening, solid, depth, elements, new Dictionary<int, int> { [wall] = WallElement, [door] = DoorElement });
     }
 
@@ -88,6 +91,27 @@ public class IfcExporterCurrentDoorWindowThroughDepthTests
         // the height and the placement are as they were
         Assert.Equal(2.1, Number(f.Attributes(solid)[3]), 12);
         Assert.Equal(offset, f.Numbers(f.Attributes(int.Parse(f.Attributes(int.Parse(f.Attributes(opening)[5][1..]))[1][1..]))[0])[1], 12);
+    }
+
+    [Theory]
+    [InlineData(0.5, 0, 0)]        // a deeper box than the wall: the void body of the family reaches beyond it
+    [InlineData(0.07, 0, 0)]       // a shallower one
+    [InlineData(0.202, 0.03, 0)]   // as deep as the wall but off its axis
+    [InlineData(0.5, -0.1, null)]  // a symbol that is not resolved does not say that the family cuts with a profile
+    public void CutterBox_OfAFamilyWithoutCutLoops_IsLeftAsItWas(double across, double offset, int? cutLoops)
+    {
+        var (f, _, solid, depth, elements, products) = Scene(across, offset, cutLoops: cutLoops);
+        string solidBefore = f.Find(solid).Args, depthBefore = f.Find(depth).Args;
+        int count = f.W.EntityCount;
+        var diagnostics = new StringWriter();
+
+        Assert.Equal(0, new IfcExporter { DiagnosticOutput = diagnostics }.ApplyCurrentDoorWindowOpenings(f.W, elements, products));
+
+        Assert.Equal(solidBefore, f.Find(solid).Args);
+        Assert.Equal(depthBefore, f.Find(depth).Args);
+        Assert.Equal(across, Number(f.Attributes(depth)[3]), 12);
+        Assert.Equal(count, f.W.EntityCount);
+        Assert.Contains("0 of the others given the depth of the wall", diagnostics.ToString());
     }
 
     [Fact]

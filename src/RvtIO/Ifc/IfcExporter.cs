@@ -67373,9 +67373,11 @@ public partial class IfcExporter
                     if (referencedAt < 0 || !graph[reference.Id].Any(candidate => candidate.Index == connector.Index)) continue;
                     var referenced = graph[reference.Id][referencedAt];
                     // A connector without a direction of its own (a fitting) takes the opposite of the connector it references, when that one belongs to a
-                    // system (the stored direction of an electrical connector, whose calculation has no system, is not exported).
+                    // system (the stored direction of an electrical connector, whose calculation has no system, is not exported). A connector that
+                    // belongs to the same system as the connector it references has its own calculation, and its direction 0 is a bidirectional port.
                     int direction = connector.Direction;
-                    if (direction is not (DirectionIn or DirectionOut) && referenced.System > 0 && referenced.Direction is DirectionIn or DirectionOut)
+                    if (direction is not (DirectionIn or DirectionOut) && referenced.System > 0 && connector.System != referenced.System
+                        && referenced.Direction is DirectionIn or DirectionOut)
                         direction = DirectionIn + DirectionOut - referenced.Direction;
                     if (direction == DirectionOut) Pair(reference.Id, hostId, connector.Index, false, referenced.System, connector.System);
                     else Pair(hostId, reference.Id, connector.Index, direction is not DirectionIn, connector.System, referenced.System);

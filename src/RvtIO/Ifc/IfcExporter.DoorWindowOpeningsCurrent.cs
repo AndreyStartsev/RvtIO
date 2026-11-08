@@ -117,8 +117,10 @@ public partial class IfcExporter
             if (!TryDoorWindowOpeningCurrent(w, indexById, elementsById, hosted, wall, wallAttributes, out var built, out string failure))
             {
                 Skip(failure);
-                // (the box of the opening stays, but a door or window opening reaches through the whole wall)
-                if (TryThroughDepthCurrent(w, indexById, elementsById, wall, wallAttributes, openingAttributes, globals, detached) is { } throughDepth)
+                // (the box of the opening stays, but a door or window that Revit cuts with a profile of its family reaches through the whole
+                // wall; one without a cut profile is cut by a void body of its own, whose depth can exceed the wall and is kept as it is)
+                if (LinkedFamilyType(hosted, elementsById)?.SerializedCutLoopCount is > 0
+                    && TryThroughDepthCurrent(w, indexById, elementsById, wall, wallAttributes, openingAttributes, globals, detached) is { } throughDepth)
                 {
                     RewriteLengthQuantities(openingId, (qName, _) => qName == "Depth" ? throughDepth : null);
                     deepened++;

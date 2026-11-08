@@ -307,6 +307,39 @@ public class IfcExporterMepSystemTests
     }
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Ports_AConnectorOfTheSystemOfTheConnectorItReferencesWithoutADirectionStaysBidirectional(int referencedDirection)
+    {
+        // The pipe's connector 0 has a direction and the fitting's connector 1 references it, but the fitting's connector belongs to the same
+        // system and stores direction 0: the reference output keeps both ports bidirectional.
+        var pipe = ConnectorHost(10, (0, referencedDirection, 50, [(12, 1, 1)]), (1, 0, 50, []));
+        var fitting = ConnectorHost(12, (1, 0, 50, [(10, 0, 1)]));
+        var (entities, systems) = WritePorts(new() { [10] = pipe, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.All(ports, args => Assert.EndsWith(".SOURCEANDSINK.", args));
+        Assert.Contains(ports, args => args.Contains("'Port_12_1'"));
+        Assert.DoesNotContain(ports, args => args.Contains("'InPort_") || args.Contains("'OutPort_"));
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Contains(5, systems[50]);
+    }
+
+    [Fact]
+    public void Ports_AConnectorOfAnotherSystemThanTheConnectorItReferencesTakesTheOppositeDirection()
+    {
+        // Same as above, but the fitting's connector stores another system (an unrelated value is common in files whose connectors share
+        // no calculation): its direction is not its own and it takes the opposite of the referenced connector.
+        var pipe = ConnectorHost(10, (0, 2, 50, [(12, 1, 1)]), (1, 0, 50, []));
+        var fitting = ConnectorHost(12, (1, 0, 51, [(10, 0, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = pipe, [12] = fitting },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Contains(ports, args => args.Contains("'InPort_12_1'") && args.EndsWith(".SINK."));
+        Assert.Contains(ports, args => args.Contains("'OutPort_10_1'") && args.EndsWith(".SOURCE."));
+    }
+
+    [Theory]
     [InlineData(2)]
     [InlineData(1)]
     public void Ports_AFittingJoinsTheSystemOfTheConnectorItReferencesNotOfTheOneWithItsOwnNumber(int referencedDirection)

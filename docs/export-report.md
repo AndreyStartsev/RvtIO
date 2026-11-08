@@ -20,6 +20,7 @@ Without the new options the output (IFC, JSON, standard error text) and the exit
 | 2 | input error | The input cannot be read: the file does not exist or cannot be opened, is empty, is not a compound file, or is cut or damaged so that a stream ends before its declared length. One line on standard error, no stack trace, nothing exported. |
 | 3 | limit exceeded | A stream exceeded a limit of the reader and the read was cut. Nothing is exported unless `--allow-partial` is given. A stream longer than the platform allows in one array cannot be read at all: that case exits with 3 even with `--allow-partial`. |
 | 4 | decode error | The compound file is readable but a decoder failed on its content (damaged or unsupported data). One line on standard error; the report holds the exception with its stack trace. |
+| 5 | refused | `downgrade --check` refused the request (for example a source newer than release 2026, a profile not older than the source, a saving release that does not match the class table, or an ambiguous class name). One line on standard error. |
 
 A crash that is none of these (a defect in the exporter after the read) still ends the process with the runtime's unhandled exception code.
 
