@@ -6504,6 +6504,8 @@ public partial class IfcExporter
         {
             int slopes = ApplySlopePropertySetsCurrent(w, elemById, exportedIfcElements, propertySingleValueIds);
             _diag?.WriteLine($"The current profile Slope properties: {slopes}");
+            int beamSlopes = ApplyBeamSlopePropertySetsCurrent(w, elemById, exportedIfcElements, propertySingleValueIds);
+            _diag?.WriteLine($"The current profile beam Slope properties: {beamSlopes}");
         }
         if (CurrentProfile && Environment.GetEnvironmentVariable("RVTIO_PSET_DIAG") is { Length: > 0 } thermalDiag)
             WriteThermalDiagCurrent(thermalDiag, elemById);
@@ -6521,7 +6523,7 @@ public partial class IfcExporter
             // A room is not in the product table: its space entity belongs to it.
             var quantityElementByEntity = new Dictionary<int, int>(productElementIdByEntity);
             foreach (var (roomId, spaceEntityId) in spaceEntityIdByRoomId) quantityElementByEntity.TryAdd(spaceEntityId, roomId);
-            int quantitySets = ApplyCurrentBaseQuantities(w, elemById, quantityElementByEntity, exportedIfcElements, ownerHistId, StoreyHeightsCurrent(), propertySingleValueIds);
+            int quantitySets = ApplyCurrentBaseQuantities(w, elemById, quantityElementByEntity, exportedIfcElements, ownerHistId, StoreyHeightsCurrent());
             _diag?.WriteLine($"The current profile BaseQuantities sets: {quantitySets}");
         }
         if (CurrentProfile)

@@ -88,10 +88,16 @@ public class IfcExporterBeamSharedBodyTests
             .Where(e => e.Type == "IFCPROPERTYSINGLEVALUE" && e.Args.StartsWith("'Slope'", StringComparison.Ordinal))
             .Select(e => double.Parse(e.Args.Split("IFCPLANEANGLEMEASURE(")[1].Split(')')[0], CultureInfo.InvariantCulture)).ToList();
 
-    private static void Apply(StepWriter w, int owner, int first, int second, Func<int, Element> beam, bool withPool = false) =>
+    private static void Apply(StepWriter w, int owner, int first, int second, Func<int, Element> beam) =>
         new IfcExporter().ApplyCurrentBaseQuantities(
             w, new Dictionary<int, Element> { [16] = beam(16), [17] = beam(17) }, new Dictionary<int, int> { [first] = 16, [second] = 17 },
-            new Dictionary<int, (int, int, string)>(), owner, propertyValuePool: withPool ? new() : null);
+            new Dictionary<int, (int, int, string)>(), owner);
+
+    private static int ApplySlopes(StepWriter w, int first, int second, Func<int, Element> beam) =>
+        IfcExporter.ApplyBeamSlopePropertySetsCurrent(
+            w, new Dictionary<int, Element> { [16] = beam(16), [17] = beam(17) },
+            new Dictionary<int, (int entityId, int placementId, string ifcType)> { [16] = (first, 0, "IFCBEAM"), [17] = (second, 0, "IFCBEAM") },
+            new Dictionary<(string PropertyName, string ValueExpr), int>());
 
     private static Element BoxBeam(int id) => new() { Id = id, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
 
@@ -112,6 +118,8 @@ public class IfcExporterBeamSharedBodyTests
         Assert.Equal(1, names.Count(name => name == "OuterSurfaceArea"));
         Assert.Equal(2, names.Count(name => name == "NetVolume"));
         Assert.Equal(2, names.Count(name => name == "NetSurfaceArea"));
+        // Known limit: the later beam keeps its CrossSectionArea (the expected output has none for it in most files).
+        Assert.Equal(2, names.Count(name => name == "CrossSectionArea"));
     }
 
     [Fact]
@@ -126,8 +134,11 @@ public class IfcExporterBeamSharedBodyTests
         Assert.Equal(2, QuantityNames(w).Count(name => name == "GrossVolume"));
     }
 
+    private static Element DriveBeam(int id) =>
+        new() { Id = id, CategoryId = -2001320, Geometry = Box(1, 2, 5), CurveDriverLineLength = 10, CurveDriverLineZ = (3, -2) };
+
     [Fact]
-    public void Slope_IsWrittenForTheLaterBeamOnly_AsTheAngleOfItsDriveCurve()
+    public void Slope_IsWrittenForTheLaterBeamOnly_AsTheAngleOfItsDriveCurve_WithoutTheQuantities()
     {
         var (w, owner, placement) = NewWriter();
         int map = AddMap(w);
@@ -136,12 +147,40 @@ public class IfcExporterBeamSharedBodyTests
         AddBeamCommonPropertySet(w, owner, first, FirstGuid);
         AddBeamCommonPropertySet(w, owner, second, SecondGuid);
 
-        Apply(w, owner, first, second, id => new Element
-        {
-            Id = id, CategoryId = -2001320, Geometry = Box(1, 2, 5), CurveDriverLineLength = 10, CurveDriverLineZ = (3, -2),
-        }, withPool: true);
+        Assert.Equal(1, ApplySlopes(w, first, second, DriveBeam));
 
         Assert.Equal(30.0, Assert.Single(SlopesWritten(w)), 9);
+        Assert.Empty(QuantityNames(w));
+    }
+
+    [Fact]
+    public void Slope_IsNotWritten_ForALaterBeamWithoutADriveCurve()
+    {
+        var (w, owner, placement) = NewWriter();
+        int map = AddMap(w);
+        int first = AddMappedBeam(w, owner, placement, FirstGuid, map);
+        int second = AddMappedBeam(w, owner, placement, SecondGuid, map);
+        AddBeamCommonPropertySet(w, owner, first, FirstGuid);
+        AddBeamCommonPropertySet(w, owner, second, SecondGuid);
+
+        Assert.Equal(0, ApplySlopes(w, first, second, BoxBeam));
+
+        Assert.Empty(SlopesWritten(w));
+    }
+
+    [Fact]
+    public void Slope_IsNotWritten_ForTheFirstBeamOfABodyThatIsNoExtrusion_OrForBeamsOfDifferentBodies()
+    {
+        var (w, owner, placement) = NewWriter();
+        // The map of the first beam holds a B-Rep, no extrusion: it has no Slope all the same.
+        int first = AddMappedBeam(w, owner, placement, FirstGuid, AddMap(w));
+        int second = AddMappedBeam(w, owner, placement, SecondGuid, AddMap(w));
+        AddBeamCommonPropertySet(w, owner, first, FirstGuid);
+        AddBeamCommonPropertySet(w, owner, second, SecondGuid);
+
+        Assert.Equal(0, ApplySlopes(w, first, second, DriveBeam));
+
+        Assert.Empty(SlopesWritten(w));
     }
 
     [Theory]

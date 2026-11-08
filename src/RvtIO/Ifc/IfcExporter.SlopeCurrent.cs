@@ -90,7 +90,37 @@ public partial class IfcExporter
     }
 
     /// <summary>Pset_BeamCommon.Slope of the later beams of a shared body (they have no extrusion data): the angle of the drive curve in
-    /// degrees. The first beam of a body, which has extrusion data, has none. Returns the number of properties added.</summary>
+    /// degrees. It does not depend on the BaseQuantities option; the first/later split is the one of the beam quantities (the beams in order
+    /// of their entities, by the representation map of the Body). The first beam of a body has none, whether or not its body is an
+    /// extrusion, and a beam without a straight drive curve has none. Returns the number of properties added.</summary>
+    internal static int ApplyBeamSlopePropertySetsCurrent(
+        StepWriter w, IReadOnlyDictionary<int, Element> elementsById,
+        IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products,
+        Dictionary<(string PropertyName, string ValueExpr), int> pool)
+    {
+        var elementIdByEntity = new Dictionary<int, int>();
+        foreach (var (elementId, product) in products)
+            if (product.ifcType == "IFCBEAM") elementIdByEntity[product.entityId] = elementId;
+        if (elementIdByEntity.Count == 0) return 0;
+
+        int count = w.EntityCount;
+        var indexById = new Dictionary<int, int>(count);
+        for (int i = 0; i < count; i++) indexById[w.EntityAt(i).Id] = i;
+        var maps = new HashSet<int>();
+        var slopes = new Dictionary<int, double>();
+        for (int i = 0; i < count; i++)
+        {
+            var (id, type, args) = w.EntityAt(i);
+            if (type != "IFCBEAM" || !elementIdByEntity.TryGetValue(id, out int beamElementId)
+                || !elementsById.TryGetValue(beamElementId, out Element? beam))
+                continue;
+            var arguments = SplitStepArguments(args);
+            if (arguments.Length < 8 || BodyRepresentationMapCurrent(w, indexById, arguments[6]) is not int mapId || maps.Add(mapId)) continue;
+            if (ResolveBeamSlopeDegreesCurrent(beam) is double slope) slopes[id] = slope;
+        }
+        return AddBeamSlopesCurrent(w, slopes, pool);
+    }
+
     private static int AddBeamSlopesCurrent(
         StepWriter w, IReadOnlyDictionary<int, double> slopes, Dictionary<(string PropertyName, string ValueExpr), int> pool)
     {

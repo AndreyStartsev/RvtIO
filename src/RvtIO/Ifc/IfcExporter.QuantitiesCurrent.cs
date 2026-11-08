@@ -147,8 +147,6 @@ public partial class IfcExporter
         public Dictionary<int, int> ParentByChild { get; } = new();
         /// <summary>The representation maps that the Body of an earlier beam already uses.</summary>
         public HashSet<int> BeamRepresentationMaps { get; } = new();
-        /// <summary>The later beams of a shared body, with the slope of their drive curve in degrees.</summary>
-        public Dictionary<int, double> BeamSlopes { get; } = new();
     }
 
     private static bool TryParseStepReal(string token, out double value) =>
@@ -744,8 +742,7 @@ public partial class IfcExporter
     internal int ApplyCurrentBaseQuantities(
         StepWriter w, IReadOnlyDictionary<int, Element> elementsById, IReadOnlyDictionary<int, int> productElementIdByEntity,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products, int ownerHistId,
-        IReadOnlyDictionary<int, double>? storeyHeights = null,
-        Dictionary<(string PropertyName, string ValueExpr), int>? propertyValuePool = null)
+        IReadOnlyDictionary<int, double>? storeyHeights = null)
     {
         int entityCount = w.EntityCount;
         var indexById = new Dictionary<int, int>(entityCount);
@@ -823,7 +820,6 @@ public partial class IfcExporter
                 $"{S(IfcGuid.FromMd5($"IfcRelDefinesByProperties:BaseQuantities:{globalId}"))},{R(ownerHistId)},'','',{StepWriter.List(R(productId))},{R(setId)}");
             sets++;
         }
-        if (propertyValuePool != null) AddBeamSlopesCurrent(w, context.BeamSlopes, propertyValuePool);
         return sets;
     }
 
@@ -862,7 +858,7 @@ public partial class IfcExporter
             "IFCSLAB" => SlabQuantitiesCurrent(context, element, body, arguments),
             "IFCCOVERING" => CoveringQuantitiesCurrent(element),
             "IFCCOLUMN" => ColumnQuantitiesCurrent(element, body),
-            "IFCBEAM" => BeamQuantitiesCurrent(context, productId, element, body, arguments[6]),
+            "IFCBEAM" => BeamQuantitiesCurrent(context, element, body, arguments[6]),
             "IFCSTAIRFLIGHT" => StairFlightQuantitiesCurrent(element, arguments),
             "IFCRAILING" => RailingQuantitiesCurrent(context, element),
             _ => none,
@@ -1435,7 +1431,7 @@ public partial class IfcExporter
 
     /// <summary>The Beam description (common structural quantities and NetSurfaceArea): the calculators read the
     /// extrusion data of a prism body, in consistent units.</summary>
-    private List<QuantityValue> BeamQuantitiesCurrent(QuantityContextCurrent context, int productId, Element element, ProfileExtrusion? body, string representation)
+    private List<QuantityValue> BeamQuantitiesCurrent(QuantityContextCurrent context, Element element, ProfileExtrusion? body, string representation)
     {
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
@@ -1454,10 +1450,9 @@ public partial class IfcExporter
         }
         else
         {
+            // A later beam keeps this CrossSectionArea although the expected output has none for it in most files: no feature that tells
+            // those files apart is known.
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? totals?.Area / 2);
-            // The first beam of a body that is no extrusion also has a Slope, but a first beam whose extrusion is not found here can be one
-            // that has extrusion data (and no Slope) for the expected output, so only the later beams are told apart.
-            if (reusesBody && ResolveBeamSlopeDegreesCurrent(element) is double slope) context.BeamSlopes[productId] = slope;
         }
         var beamNet = NodeSolidTotalsCurrent(element.Geometry) ?? totals;
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", ComputedHostVolumeCurrent(element) ?? beamNet?.Volume);
