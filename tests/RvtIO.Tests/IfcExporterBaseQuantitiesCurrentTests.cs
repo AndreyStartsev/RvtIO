@@ -688,7 +688,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void FillerDimensions_HostAxes_RoughDimensionsExceedingNominal_UseRoughDimensions()
+    public void FillerDimensions_HostAxes_RoughDimensionsExceedingNominal_KeepsNominalDimensions()
     {
         var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
         elements[30].Parameters.Add(Dimension(-1001304, 7.333));
@@ -696,7 +696,19 @@ public class IfcExporterBaseQuantitiesCurrentTests
 
         Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
 
-        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7.333 * 0.3048), ("Width", 2.5 * 0.3048));
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7 * 0.3048), ("Width", 2 * 0.3048));
+    }
+
+    [Fact]
+    public void FillerDimensions_HostAxes_PanelDimensionsOfADoorWithoutACurtainWallHost_AreRead()
+    {
+        var (w, owner, _, elements, elementByEntity) = DoorInGenericOpening("(1.,0.,0.)");
+        elements[90].Parameters = [Dimension(-1010301, 2), TypeReference(30)];
+        elements[30].Parameters = [Dimension(-1010300, 7), Dimension(-1010301, 3)];
+
+        Apply(w, owner, elements, elementByEntity, exporter: HostAxes);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH").Take(3).ToList(), ("Depth", 0.202), ("Height", 7 * 0.3048), ("Width", 2 * 0.3048));
     }
 
     [Fact]
@@ -712,7 +724,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void GetDoorWindowHeightAndWidth_RoughExceedingNominal_ChoosesRough()
+    public void GetDoorWindowHeightAndWidth_RoughExceedingNominal_KeepsNominal()
     {
         var type = new Element
         {
@@ -730,8 +742,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
         double h = IfcExporter.GetDoorWindowHeight(elem, type);
         double w = IfcExporter.GetDoorWindowWidth(elem, type);
 
-        Assert.Equal(7.333 * 0.3048 * 1000, h, 3);
-        Assert.Equal(3.25 * 0.3048 * 1000, w, 3);
+        Assert.Equal(7.0 * 0.3048 * 1000, h, 3);
+        Assert.Equal(3.0 * 0.3048 * 1000, w, 3);
     }
 
     [Fact]
