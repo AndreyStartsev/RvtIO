@@ -7,6 +7,9 @@ API between minor releases.
 ## [Unreleased]
 
 - Current profile: door and window OverallHeight, OverallWidth, and BaseQuantities Height and Width prioritize rough dimensions (Rough Height / Rough Width) over nominal dimensions when rough dimensions exceed nominal dimensions, matching the opening frame; for curtain wall doors, frame extents take precedence over infill panel leaf dimensions (Closes #84).
+- Synthesizes the ROOM_LEVEL_ID parameter (-1006916) and fallback ROOM_UPPER_LEVEL (-1006922) for room elements (OST_Rooms) in schema-read models (Revit 2023 and later) from LEVEL_PARAM (-1001952) or SCHEDULE_LEVEL_PARAM (-1002062) when no element references are present, restoring parameter parity with legacy-read models for API and JSON export consumers (Closes #141).
+
+- Current profile: stair runs and landings without ELEM_TYPE_PARAM resolve type-level Manufacturer in Pset_ManufacturerTypeInformation from their stair component type ahead of reference element type (Closes #75).
 
 - Decode statistics in the export report now record the element table (Global/ElemTable), streams in the Global and Formats storages, and Global/History, and streams with members rebuilt by structural recovery mark the report status as partial; a stream that holds bytes but not one gzip member (its header is gone) counts as one failed member, so the read is partial and not complete, also for the partition streams (Closes #60).
 - Documentation: clarifies in `docs/export-report.md` that `export.exported` in the export report counts Revit elements rather than exported product entities (a roof element writing both IfcRoof and IfcSlab counts once) (Closes #62).

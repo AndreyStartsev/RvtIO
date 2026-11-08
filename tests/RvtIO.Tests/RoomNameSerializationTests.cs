@@ -243,4 +243,58 @@ public class RoomNameSerializationTests
             writer.Write(id); writer.Write((uint)value.Length); writer.Write(Encoding.Unicode.GetBytes(value));
         }
     }
+
+    [Fact]
+    public void ApplyRoomParams_SynthesizesRoomLevelIdFromLevelParamWhenReferencesNull()
+    {
+        var room = new Element
+        {
+            Id = 100,
+            CategoryId = -2000160,
+            References = null,
+            Parameters =
+            [
+                BipHelpers.MakeBipParam(-1001952, "LEVEL_PARAM", StorageType.ElementId, 555)
+            ]
+        };
+        var info = new RevitFileInfo { Elements = [room] };
+        ElementBuilder.ApplyRoomParams(info);
+
+        var levelParam = room.Parameters.FirstOrDefault(p => p.Id == -1006916);
+        Assert.NotNull(levelParam);
+        Assert.Equal("ROOM_LEVEL_ID", levelParam.Definition.Name);
+        Assert.Equal(555, levelParam.Value);
+        Assert.Equal(StorageType.ElementId, levelParam.StorageType);
+
+        var upperLevelParam = room.Parameters.FirstOrDefault(p => p.Id == -1006922);
+        Assert.NotNull(upperLevelParam);
+        Assert.Equal("ROOM_UPPER_LEVEL", upperLevelParam.Definition.Name);
+        Assert.Equal(555, upperLevelParam.Value);
+    }
+
+    [Fact]
+    public void ApplyRoomParams_PreservesExistingUpperLevelWhenSynthesizingLevelId()
+    {
+        var room = new Element
+        {
+            Id = 100,
+            CategoryId = -2000160,
+            References = null,
+            Parameters =
+            [
+                BipHelpers.MakeBipParam(-1001952, "LEVEL_PARAM", StorageType.ElementId, 555),
+                BipHelpers.MakeBipParam(-1006922, "ROOM_UPPER_LEVEL", StorageType.ElementId, 777)
+            ]
+        };
+        var info = new RevitFileInfo { Elements = [room] };
+        ElementBuilder.ApplyRoomParams(info);
+
+        var levelParam = room.Parameters.FirstOrDefault(p => p.Id == -1006916);
+        Assert.NotNull(levelParam);
+        Assert.Equal(555, levelParam.Value);
+
+        var upperLevelParam = room.Parameters.FirstOrDefault(p => p.Id == -1006922);
+        Assert.NotNull(upperLevelParam);
+        Assert.Equal(777, upperLevelParam.Value);
+    }
 }
