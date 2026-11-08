@@ -4824,7 +4824,7 @@ public partial class IfcExporter
             }
 
             if (CurrentProfile && ExportsIfcTagAttribute(ifcType) && mainLoopWallOpeningPropertySetHost == null)
-                ExportInstancePropertySetsCurrent(w, elem, referenceElementType, ifcType, elemEntityId,
+                ExportInstancePropertySetsCurrent(w, elem, stairComponentType ?? referenceElementType, ifcType, elemEntityId,
                     ownerHistId, propertySingleValueIds,
                     ifcType == "IFCFLOWSEGMENT" ? MepCurveType(elem, elemById) : null);
 
