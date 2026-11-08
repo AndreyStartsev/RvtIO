@@ -2657,6 +2657,8 @@ internal static partial class ElementBuilder
                     if (levelId < 0 && re.CategoryId == -2000240) levelId = r;
                     if (phase < 0 && re.CategoryId == -2000112) phase = r;
                 }
+            if (levelId <= 0 && e.Parameters.FirstOrDefault(p => p.Id is -1001952 or -1002062 && p.Value is int id && id > 0)?.Value is int paramLevelId)
+                levelId = paramLevelId;
             if (levelId > 0)
             {
                 Add(-1006916, "ROOM_LEVEL_ID", StorageType.ElementId, levelId);
