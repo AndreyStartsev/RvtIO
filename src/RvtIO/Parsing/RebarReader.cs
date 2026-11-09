@@ -110,6 +110,11 @@ internal static partial class RebarReader
         return field.Name is "m_includedBars" or "m_includedUncutBars" or "m_doubles" ? WideBlockWalker.AllItemsKeyPrefix + key : key;
     }
 
+    /// <summary>True for the schema of Revit 2020 and 2021, whose RebarSystemLayer has no m_uncutCurves: the bars of a system are the held
+    /// instances of its RebarSystemGStep, not curves of the layers.</summary>
+    internal static bool HeldLayout(FileSchema schema) =>
+        schema.ByName("RebarSystemLayer") is { } layer && layer.Fields.All(f => f.Name != "m_uncutCurves");
+
     internal static ReinforcementData Read(
         IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted)
     {
@@ -136,6 +141,8 @@ internal static partial class RebarReader
         var shapeDefinitions = new Dictionary<int, ShapeDefinition>();
         var hookKinds = new Dictionary<int, HookKind>();
         var pending = new Dictionary<uint, PendingBar>();
+        var held = new Dictionary<(uint System, int Layer, int Index), PendingBar>();
+        bool heldLayout = HeldLayout(schema);
         double rounding = 0;
         WideElementRecords.BuildIndex(streams, schema, wanted, (id, data, offset, size, cls) =>
         {
@@ -180,15 +187,27 @@ internal static partial class RebarReader
                 if (ReadRebar(walker, walk, byQueue) is { } bars) result.TryAdd(id, bars);
                 else if (ReadPending(walker, walk, byQueue) is { } shapeDriven) pending.TryAdd(id, shapeDriven);
             }
-            else if (cls == system) { if (ReadLayers(walker, walk, byQueue) is { } found) layers.TryAdd(id, found); }
+            else if (cls == system)
+            {
+                if (ReadLayers(walker, walk, byQueue) is { } found) layers.TryAdd(id, found);
+                // a system behind an empty extensible storage entity stays unread, as in ReadLayers
+                if (heldLayout && walk.EmptyEntityAt < 0)
+                    foreach (var ((layer, index), bar) in ReadHeld(walk.Captures)) held.TryAdd((id, layer, index), bar);
+            }
             else if (ReadMember(walker, walk, byQueue) is { } member) members.TryAdd(id, member);
         });
+        RebarBars? Solve(PendingBar bar) =>
+            diameters.TryGetValue(bar.BarTypeId, out var barDiameters) && barKinds.TryGetValue(bar.BarTypeId, out var kind)
+            && shapeDefinitions.TryGetValue(bar.ShapeId, out var definition) ? SolveShapeDriven(bar, definition, hookKinds, kind, barDiameters.Model) : null;
         foreach (var (id, bar) in pending)
-            if (diameters.TryGetValue(bar.BarTypeId, out var barDiameters) && barKinds.TryGetValue(bar.BarTypeId, out var kind)
-                && shapeDefinitions.TryGetValue(bar.ShapeId, out var definition) && SolveShapeDriven(bar, definition, hookKinds, kind, barDiameters.Model) is { } solved)
-                result.TryAdd(id, solved);
+            if (Solve(bar) is { } solved) result.TryAdd(id, solved);
         foreach (var (id, (systemId, layerIndex, index, inAssembly)) in members)
         {
+            if (held.TryGetValue(((uint)systemId, layerIndex, index), out var heldBar))
+            {
+                if (Solve(heldBar) is { } solvedHeld) result.TryAdd(id, solvedHeld with { SystemId = systemId, ShapeName = null, InAssembly = inAssembly });
+                continue;
+            }
             if (!layers.TryGetValue((uint)systemId, out var found) || layerIndex < 0 || layerIndex >= found.Count) continue;
             var layer = found[layerIndex];
             // the cut instances of the layer are the ones exported; the uncut instances are those of a layer nothing cut
