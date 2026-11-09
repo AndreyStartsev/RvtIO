@@ -1832,13 +1832,6 @@ public partial class IfcExporter
             int elemPlacementId = 0;
             if (bbox == null || bbox.Length < 6)
             {
-                // A roof that holds a curtain system is written as the parent of its children, in a file with decoded geometry or not.
-                if (ifcType == "IFCROOF" && roofContainerChildren.ContainsKey(elem.Id))
-                {
-                    pendingCurtainParents[elem.Id] = (elem, elemStoreyId, false);
-                    noGeom++;
-                    continue;
-                }
                 // The geometry of a 64-bit-id file is not decoded: the product is written without a
                 // representation.
                 if (info.GeometryUndecoded)
@@ -1850,7 +1843,8 @@ public partial class IfcExporter
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                     goto productWithoutGeometry;
                 }
-                if (ifcType == "IFCCURTAINWALL" && exactCurtainChildren.ContainsKey(elem.Id))
+                if (ifcType == "IFCCURTAINWALL" && exactCurtainChildren.ContainsKey(elem.Id)
+                    || ifcType == "IFCROOF" && roofContainerChildren.ContainsKey(elem.Id))
                     pendingCurtainParents[elem.Id] = (elem, elemStoreyId, false);
                 noGeom++;
                 continue;
@@ -4905,17 +4899,34 @@ public partial class IfcExporter
             SkipLog?.Remove(gridId);
         }
 
+        int[] ExportedChildEntityIds(IEnumerable<int> ids) => ids
+            .Where(id => exportedIfcElements.TryGetValue(id, out var child)
+                && child.ifcType is "IFCPLATE" or "IFCMEMBER" or "IFCDOOR" or "IFCWINDOW"
+                    or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCCURTAINWALL")
+            .Select(id => exportedIfcElements[id].entityId).Order().ToArray();
+
+        // A bodiless roof of a file with undecoded geometry is written as a product like any other (as before); it only gains the aggregate of its
+        // exported curtain children, which then leave the storey. A roof none of whose children is exported stays as it was.
+        if (info.GeometryUndecoded)
+            foreach (var (roofId, roofChildren) in roofContainerChildren.OrderBy(pair => pair.Key))
+            {
+                if (!exportedIfcElements.TryGetValue(roofId, out var roofEntry) || roofEntry.ifcType != "IFCROOF"
+                    || ExportedChildEntityIds(roofChildren) is not { Length: > 0 } roofChildEntityIds)
+                    continue;
+                w.Add("IFCRELAGGREGATES",
+                    $"{S(ResolveExactElementGlobalId(elemById[roofId], _usedExportIds, CurtainWallRelAggregates, CurrentProfile) ?? IfcGuid.FromName($"curtain-aggregate:{roofId}"))},{R(ownerHistId)},$,$,"
+                    + $"{R(roofEntry.entityId)},{StepWriter.List(roofChildEntityIds.Select(R))}");
+                var roofChildSet = roofChildEntityIds.ToHashSet();
+                foreach (var contents in storeyContents.Values) contents.RemoveAll(roofChildSet.Contains);
+            }
+
         // Resolve decomposition AFTER normal product emission.
         foreach (var pending in pendingCurtainParents.Values.OrderBy(item => item.Element.Id))
         {
             var parent = pending.Element;
             if (exportedIfcElements.ContainsKey(parent.Id)) continue;
             bool roofContainer = parent.CategoryId == -2000035;
-            var childEntityIds = (roofContainer ? roofContainerChildren[parent.Id] : exactCurtainChildren[parent.Id])
-                .Where(id => exportedIfcElements.TryGetValue(id, out var child)
-                    && child.ifcType is "IFCPLATE" or "IFCMEMBER" or "IFCDOOR" or "IFCWINDOW"
-                        or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCCURTAINWALL")
-                .Select(id => exportedIfcElements[id].entityId).Order().ToArray();
+            var childEntityIds = ExportedChildEntityIds(roofContainer ? roofContainerChildren[parent.Id] : exactCurtainChildren[parent.Id]);
             if (childEntityIds.Length == 0) continue;
 
             int placement = w.Add("IFCLOCALPLACEMENT", $"{R(bldgLocalPlacementId)},{R(axisId)}");
