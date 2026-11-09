@@ -67405,6 +67405,46 @@ public partial class IfcExporter
             members.UnionWith(entityIds);
         }
 
+        // A fitting passes the flow on. A connector of a fitting that has no system of its own takes the opposite of the direction of the connector
+        // it references, and so does the other connector of a fitting with two connectors, until nothing changes; the connectors that
+        // belong to a system and store a direction are where it starts.
+        var flowOf = new Dictionary<(int Host, int Index), int>();
+        var passedOn = new HashSet<(int Host, int Index)>();
+        foreach (var (hostId, connectors) in graph)
+            foreach (var connector in connectors)
+                if (connector.Direction is DirectionIn or DirectionOut && connector.System > 0) flowOf[(hostId, connector.Index)] = connector.Direction;
+        // A connector that is paired with a connector of a system that stores the direction 0 is paired with a bidirectional calculation of its own and stays bidirectional.
+        bool TakesFlow(int hostId, int index) => products[hostId].ifcType == "IFCFLOWFITTING" && !flowOf.ContainsKey((hostId, index))
+            && graph[hostId].First(connector => connector.Index == index) is { System: 0 } own
+            && !own.Refs.Any(reference => reference.Id != hostId && graph.TryGetValue(reference.Id, out var other)
+                && other.FirstOrDefault(candidate => candidate.Index == reference.Index) is { System: > 0, Direction: 0 });
+        for (bool changed = true; changed;)
+        {
+            changed = false;
+            foreach (var (hostId, connectors) in graph)
+            {
+                foreach (var connector in connectors)
+                    foreach (var reference in connector.Refs.Where(reference => reference.Id != hostId && graph.TryGetValue(reference.Id, out var other)
+                        && other.Any(candidate => candidate.Index == reference.Index)))
+                    {
+                        if (flowOf.TryGetValue((hostId, connector.Index), out int own) && TakesFlow(reference.Id, reference.Index))
+                            { flowOf[(reference.Id, reference.Index)] = DirectionIn + DirectionOut - own; passedOn.Add((reference.Id, reference.Index)); }
+                        else if (flowOf.TryGetValue((reference.Id, reference.Index), out int referenced) && TakesFlow(hostId, connector.Index))
+                            { flowOf[(hostId, connector.Index)] = DirectionIn + DirectionOut - referenced; passedOn.Add((hostId, connector.Index)); }
+                        else continue;
+                        changed = true;
+                    }
+                if (connectors.Count == 2)
+                    for (int side = 0; side < 2; side++)
+                        if (flowOf.TryGetValue((hostId, connectors[side].Index), out int known) && TakesFlow(hostId, connectors[1 - side].Index))
+                        {
+                            flowOf[(hostId, connectors[1 - side].Index)] = DirectionIn + DirectionOut - known;
+                            passedOn.Add((hostId, connectors[1 - side].Index));
+                            changed = true;
+                        }
+            }
+        }
+
         void Standalone(int hostId, int index, int direction, int system)
         {
             string flow = direction is not (DirectionIn or DirectionOut) ? "SOURCEANDSINK" : direction == DirectionOut ? "SINK" : "SOURCE";
@@ -67503,6 +67543,8 @@ public partial class IfcExporter
                     if (direction is not (DirectionIn or DirectionOut) && referenced.System > 0 && connector.System != referenced.System
                         && referenced.Direction is DirectionIn or DirectionOut)
                         direction = DirectionIn + DirectionOut - referenced.Direction;
+                    if (direction is not (DirectionIn or DirectionOut) && flowOf.TryGetValue((hostId, connector.Index), out int passed)) direction = passed;
+                    else if (direction is not (DirectionIn or DirectionOut) && passedOn.Contains((reference.Id, reference.Index))) direction = DirectionIn + DirectionOut - flowOf[(reference.Id, reference.Index)];
                     if (direction == DirectionOut) Pair(reference.Id, hostId, connector.Index, false, referenced.System, connector.System);
                     else Pair(hostId, reference.Id, connector.Index, direction is not DirectionIn, connector.System, referenced.System);
                 }
