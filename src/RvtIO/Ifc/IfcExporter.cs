@@ -66036,7 +66036,7 @@ public partial class IfcExporter
             _mainLoopReferenceOmittedCount++;
         }
         if (framing && CurrentProfile
-            && ResolveBeamSpanMillimetresCurrent(elem, elementsById.GetValueOrDefault(elem.FamilyTypeId)) is double braceSpan)
+            && ResolveBeamSpanMillimetresCurrent(elem, elementsById.GetValueOrDefault(elem.FamilyTypeId), driveCurveFirst: true) is double braceSpan)
             valueIds.Add(GetOrAddPropertySingleValue(
                 w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(braceSpan)})"));
         if (elem.CategoryId == CurtainWallMullionCategoryId && !CurrentProfile)

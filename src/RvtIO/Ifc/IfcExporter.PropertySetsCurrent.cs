@@ -330,8 +330,11 @@ public partial class IfcExporter
     /// occurrence, then from its type, before any computed span is consulted: a beam carries the stored length, while
     /// its extrusion can be shorter. A length the parser derived itself (marked approximate)
     /// is not a stored one.</summary>
-    internal static double? ResolveBeamSpanMillimetresCurrent(Element beam, Element? type)
+    internal static double? ResolveBeamSpanMillimetresCurrent(Element beam, Element? type, bool driveCurveFirst = false)
     {
+        // The stored length of a brace is rounded; the drive curve is exact.
+        if (driveCurveFirst && beam.CurveDriverLineLength is double exactFeet && double.IsFinite(exactFeet) && exactFeet > 0)
+            return exactFeet * 304.8;
         foreach (Element? owner in new[] { beam, type })
             if (owner?.Parameters.FirstOrDefault(parameter => parameter.Id == InstanceLengthParamId) is
                 { IsApproximate: false, Value: double lengthFeet } && double.IsFinite(lengthFeet) && lengthFeet > 0)
