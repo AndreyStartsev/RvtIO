@@ -1186,15 +1186,23 @@ public partial class IfcExporter
     {
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
-        double? length = ExactParameterFeetCurrent(element, null, CurveElemLengthParamId) * FeetToMetres
-            ?? (InCurtainWallCurrent(context, productId) && HasInPlaneSlantedMullionEndCurrent(element)
-            ? MullionAxisExtentMetresCurrent(element)
-            : InstanceFrameExtentMetresCurrent(element, 2));
-        AddIfPositive(result, QuantityKind.Length, "Length", length ?? ExtrusionDataCurrent(body, shells)?.Depth);
+        // A brace of a file whose geometry is decoded was a beam before it became a member: it keeps the Length and the
+        // CrossSectionArea of the beam rule (the member rule reads half the surface area as the section).
+        bool beamRule = element.CategoryId == StructuralFramingCategoryId && !_geometryUndecoded;
+        if (beamRule)
+            result.AddRange(BeamQuantitiesCurrent(element, body).Where(quantity => quantity.Name is "Length" or "CrossSectionArea"));
+        else
+        {
+            double? length = ExactParameterFeetCurrent(element, null, CurveElemLengthParamId) * FeetToMetres
+                ?? (InCurtainWallCurrent(context, productId) && HasInPlaneSlantedMullionEndCurrent(element)
+                ? MullionAxisExtentMetresCurrent(element)
+                : InstanceFrameExtentMetresCurrent(element, 2));
+            AddIfPositive(result, QuantityKind.Length, "Length", length ?? ExtrusionDataCurrent(body, shells)?.Depth);
+        }
         if (SolidTotalsCurrent(shells) is { } totals)
         {
             var net = NodeSolidTotalsCurrent(element.Geometry) ?? totals;
-            AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", totals.Area / 2);
+            if (!beamRule) AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", totals.Area / 2);
             AddIfPositive(result, QuantityKind.Volume, "NetVolume", net.Volume);
             AddIfPositive(result, QuantityKind.Area, "NetSurfaceArea", net.Area);
         }

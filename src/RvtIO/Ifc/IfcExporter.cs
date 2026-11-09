@@ -1715,8 +1715,8 @@ public partial class IfcExporter
                 ifcType = elem.NativeStructuralType switch
                 {
                     2 => "IFCMEMBER",
-                    // A non-structural framing element is a proxy.
-                    0 => "IFCBUILDINGELEMENTPROXY",
+                    // A non-structural framing element is a proxy; measured on one Revit 2021 file only, so the current profile only.
+                    0 when CurrentProfile => "IFCBUILDINGELEMENTPROXY",
                     _ => ifcType,
                 };
             // A wall foundation (ContFooting) is an IfcFooting; the other foundations of

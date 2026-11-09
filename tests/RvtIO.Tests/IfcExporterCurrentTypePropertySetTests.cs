@@ -72,6 +72,26 @@ public class IfcExporterCurrentTypePropertySetTests
     }
 
     [Fact]
+    public void NonStructuralFramingType_IsAProxyTypeWithTheProxyCommonSet_OnlyInTheCurrentProfile()
+    {
+        var framing = Product(100, -2001320, 500, 500);
+        framing.NativeStructuralType = 0;
+        var framingType = Type(500, "Strut 40", "Strut family");
+        framingType.CategoryId = -2001320;
+
+        string current = Export(IfcProfile.Current, framingType, framing);
+        Assert.Contains("=IFCBUILDINGELEMENTPROXY(", current);
+        Assert.DoesNotContain("=IFCBEAM(", current);
+        Assert.DoesNotContain("=IFCBEAMTYPE(", current);
+        Assert.Contains("Pset_BuildingElementProxyCommon", TypeSets(current, "IFCBUILDINGELEMENTPROXYTYPE").Select(set => set.Name));
+
+        // measured on one Revit 2021 file only: the legacy profile keeps the beam
+        string legacy = Export(IfcProfile.Legacy, framingType, framing);
+        Assert.Contains("=IFCBEAM(", legacy);
+        Assert.DoesNotContain("=IFCBUILDINGELEMENTPROXY(", legacy);
+    }
+
+    [Fact]
     public void DoorStyle_ReceivesDistributionFlowElementCommonLikeTheDoorDescriptions()
     {
         var type = Type(500, "800 x 2100", "Single-Flush");

@@ -258,13 +258,15 @@ public class IfcExporterMemberPlateCommonPropertySetTests
 
     private static Dictionary<string, string> BraceProperties(
         IfcProfile profile, int? structuralType, double? driveLengthFt, out string ifc,
-        int categoryId = StructuralFramingCategoryId, string category = "OST_StructuralFraming")
+        int categoryId = StructuralFramingCategoryId, string category = "OST_StructuralFraming",
+        Action<Element>? configure = null)
     {
         var element = LinearElement(
             id: 350, typeId: 351, name: "BraceType_HSS", categoryId: categoryId,
             category: category, centreX: 0, curveElemLengthFt: null);
         element.NativeStructuralType = structuralType;
         element.CurveDriverLineLength = driveLengthFt;
+        configure?.Invoke(element);
         var info = new RevitFileInfo();
         info.Elements.Add(element);
         string path = TempIfcPath("brace-member");
@@ -318,6 +320,47 @@ public class IfcExporterMemberPlateCommonPropertySetTests
         Assert.DoesNotContain("=IFCMEMBER(", ifc);
         Assert.DoesNotContain("Pset_BeamCommon", ifc);
         Assert.DoesNotContain("Pset_MemberCommon", ifc);
+    }
+
+    [Fact]
+    public void Brace_WithLoadBearingParameterFalse_WritesFalse()
+    {
+        var props = BraceProperties(IfcProfile.Current, structuralType: 2, driveLengthFt: 10.0, out _,
+            configure: brace => brace.Parameters.Add(new Parameter
+            {
+                Id = 7050,
+                Definition = new Definition { Id = 7050, Name = "Load Bearing" },
+                StorageType = StorageType.Integer,
+                Value = 0,
+            }));
+
+        Assert.Equal("IFCBOOLEAN(.F.)", props["LoadBearing"]);
+    }
+
+    [Fact]
+    public void Brace_WithoutADriveCurve_SpansItsStoredInstanceLength()
+    {
+        var props = BraceProperties(IfcProfile.Current, structuralType: 2, driveLengthFt: null, out _,
+            configure: brace => brace.Parameters.Add(new Parameter
+            {
+                Id = -1001375, // INSTANCE_LENGTH_PARAM
+                StorageType = StorageType.Double,
+                Value = 4.0,
+            }));
+
+        var span = Regex.Match(props["Span"], @"^IFCPOSITIVELENGTHMEASURE\(([^)]+)\)$");
+        Assert.Equal(4.0 * 304.8, double.Parse(span.Groups[1].Value, CultureInfo.InvariantCulture), precision: 6);
+    }
+
+    [Fact]
+    public void NonStructuralFraming_IsAProxyWithTheProxyCommonSet_OnlyInTheCurrentProfile()
+    {
+        BraceProperties(IfcProfile.Current, structuralType: 0, driveLengthFt: 10.0, out string current);
+        Assert.Contains("'Pset_BuildingElementProxyCommon'", current);
+
+        BraceProperties(IfcProfile.Legacy, structuralType: 0, driveLengthFt: 10.0, out string legacy);
+        SoleEntityId(legacy, "IFCBEAM");
+        Assert.DoesNotContain("IFCBUILDINGELEMENTPROXY", legacy);
     }
 
     [Fact]
