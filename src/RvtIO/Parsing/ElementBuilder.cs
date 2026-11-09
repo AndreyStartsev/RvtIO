@@ -1691,6 +1691,32 @@ internal static partial class ElementBuilder
         return typeName == null || family == null ? null : family + " : " + typeName;
     }
 
+    /// <summary>
+    /// The base equipment of an electrical circuit. The circuit's own connector manager lists its connectors, each with a
+    /// number (m_nIndex) and references; the connector that holds the reference of connection type 4 with an index of 50000
+    /// or more to an element other than the circuit is the one of the panel. The base equipment is the first reference
+    /// to another element of the connector that sits at array position equal to that number. The number equals the
+    /// position unless a connector was removed; then the first reference of the connector at that position names a load, not the panel.
+    /// The rule was measured on the circuits of seven files of Revit 2021 to 2025 (see the changelog). Null when there is no panel
+    /// connector, no connector at that position or no other element in it.
+    /// </summary>
+    private static int? CircuitBaseEquipmentId(int circuitId, TfBlockDeserializer.NativeParams np)
+    {
+        for (int k = 0; np.Fields.ContainsKey($"771#{k}:m_nIndex"); k++)
+            for (int i = 0, count = np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs#"); i < count; i++)
+                if (np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:type") == 4
+                    && np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:index") >= 50000
+                    && np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:id") is var panelId && panelId > 0 && panelId != circuitId)
+                {
+                    int position = np.Fields[$"771#{k}:m_nIndex"];
+                    for (int j = 0, refs = np.Fields.GetValueOrDefault($"771#{position}:m_arrRefs#"); j < refs; j++)
+                        if (np.Fields.GetValueOrDefault($"771#{position}:m_arrRefs@{j}:id") is var id && id > 0 && id != circuitId)
+                            return id;
+                    return null;
+                }
+        return null;
+    }
+
     /// <summary>MEP system membership of ducts (3148) and pipes (3210).</summary>
     internal static void ApplyMepSystemParams(RevitFileInfo info, ParsingState state, Lookup.RevitSystemFamilyNames? names)
     {
@@ -1703,10 +1729,18 @@ internal static partial class ElementBuilder
                     SetParam(e, -1140325, "RBS_SYSTEM_CLASSIFICATION_PARAM", StorageType.String, text);
                 continue;
             }
+            if (np.Fields.TryGetValue("4215:m_bDefault", out int zoneDefault))
+            {
+                e.SerializedZoneIsDefault = zoneDefault != 0;
+                continue;
+            }
+            if (np.Fields.TryGetValue("3471:m_zoneElementId", out int spaceZone) && spaceZone > 0)
+                e.SerializedSpaceZoneId = spaceZone;
             if (np.StringFields.TryGetValue("3170:m_strName", out string? ownName))
             {
                 SetParam(e, -1140324, "RBS_SYSTEM_NAME_PARAM", StorageType.String, ownName);
                 e.SerializedMepSystem = (ownName, np.Fields.GetValueOrDefault("3170:m_typeId"));
+                if (e.CategoryId == -2008037 || e.RootClassName == "RbsElectricalSystem") e.SerializedCircuitBaseEquipmentId = CircuitBaseEquipmentId(e.Id, np);
                 continue;
             }
             if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var curveClass)) continue;
