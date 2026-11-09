@@ -6,7 +6,7 @@ API between minor releases.
 
 ## [Unreleased]
 
-- Current profile: a column (structural or architectural) whose base level is a Level that is not a project storey is contained in the highest storey at or below that level, and in the building when no storey is that low, instead of the storey chosen by the bottom of its body.
+- Default output, current IFC profile: a column whose base level is a Level that is not a project storey is contained in the highest storey at or below that level, and in the building when no storey is that low, instead of the storey chosen by the bottom of its body. Measured on structural columns of one project; the building container of a column below the lowest storey is not checked against Revit.
 
 ## [0.3.0] - 2026-11-08
 
