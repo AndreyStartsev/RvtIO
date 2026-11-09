@@ -132,8 +132,8 @@ internal sealed class RevitSystemFamilyNames
 
     /// <summary>The English names of the families of the releases before the embedded names (Revit 2020 and 2021). The MEP curve families
     /// (ducts, pipes, conduits, cable trays, pipe insulation; 2021 only) are named when <paramref name="locale"/>, the locale in effect (the
-    /// requested one, else the one the file was saved in), is English. Curtain Wall, the stair families (both releases) and the stair occurrence
-    /// name are named only when <paramref name="requestedLocale"/>, the locale a profile asks for whatever language the file was saved in, is
+    /// requested one, else the one the file was saved in), is English. Curtain Wall, the stair families, the slab families (Floor, Foundation Slab,
+    /// Pad; both releases) and the stair occurrence name are named only when <paramref name="requestedLocale"/>, the locale a profile asks for whatever language the file was saved in, is
     /// English, so a reader without a requested locale (the legacy profile) is unchanged. Null when nothing is named; no other kind or text is
     /// in it: only the type roots of those families and the stairs read this table.</summary>
     internal static RevitSystemFamilyNames? LoadPreviousReleaseFamilies(string? revitVersion, string? locale, string? requestedLocale)
@@ -145,7 +145,7 @@ internal sealed class RevitSystemFamilyNames
             AddNames(names, MepCurveFamilies, mepCulture!);
         if (IsEnglish(requestedLocale, out string? culture))
         {
-            AddNames(names, CurtainAndStairFamilies, culture!);
+            AddNames(names, CurtainStairAndSlabFamilies, culture!);
             stairName = RevitUiNameTable.Get(culture!, StairNameKey);
         }
         return names.Count == 0 ? null : new RevitSystemFamilyNames(names, string.IsNullOrWhiteSpace(stairName) ? null : stairName);
@@ -167,9 +167,10 @@ internal sealed class RevitSystemFamilyNames
         }
     }
 
-    private static readonly SystemFamilyKind[] CurtainAndStairFamilies =
+    private static readonly SystemFamilyKind[] CurtainStairAndSlabFamilies =
     [
         SystemFamilyKind.CurtainWall, SystemFamilyKind.AssembledStair, SystemFamilyKind.CastInPlaceStair, SystemFamilyKind.PrecastStair,
+        SystemFamilyKind.Floor, SystemFamilyKind.FoundationSlab, SystemFamilyKind.Pad,
     ];
 
     private static readonly SystemFamilyKind[] MepCurveFamilies =
