@@ -1711,8 +1711,14 @@ public partial class IfcExporter
                     ?? (elem.CategoryId == null && elem.Transform != null && elem.TypeId > 0
                         ? "IFCBUILDINGELEMENTPROXY"
                         : null);
-            if (info.GeometryUndecoded && ifcType == "IFCBEAM" && elem.NativeStructuralType == 2)
-                ifcType = "IFCMEMBER";
+            if (ifcType == "IFCBEAM")
+                ifcType = elem.NativeStructuralType switch
+                {
+                    2 => "IFCMEMBER",
+                    // A non-structural framing element is a proxy; measured on one Revit 2021 file only, so the current profile only.
+                    0 when CurrentProfile => "IFCBUILDINGELEMENTPROXY",
+                    _ => ifcType,
+                };
             // A wall foundation (ContFooting) is an IfcFooting; the other foundations of
             // OST_StructuralFoundation stay slabs.
             if (CurrentProfile && ifcType == "IFCSLAB" && elem.RootClassName == "ContFooting")
@@ -1802,7 +1808,7 @@ public partial class IfcExporter
                     isEmittedAggregateParent: _emittedAggregateParentElementIds.Contains(elem.Id)))
             { Skip(elem, "product-without-body"); continue; }
 
-            int elemStoreyId = ResolveStorey(elem, storeyIds, defaultStoreyId, elemById);
+            int elemStoreyId = ResolveStorey(elem, storeyIds, defaultStoreyId, elemById, buildingId);
             if (Environment.GetEnvironmentVariable("RVTIO_STOREY_DIAG") is { Length: > 0 } storeyDiag)
                 File.AppendAllText(storeyDiag, string.Join(';', elem.Id, ifcType, elem.CategoryId, elem.SuperInstanceId, elem.NativeMasterSymbolId,
                     (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } diagBox ? diagBox[2].ToString("R", CultureInfo.InvariantCulture) : "-",
@@ -64315,19 +64321,11 @@ public partial class IfcExporter
             ParameterNameEquals(parameter, propertyName)
             || ParameterNameEquals(parameter, propertyName + "[Type]"));
 
-    /// <summary>The exact QTO property entity is reused.</summary>
-    private static void ExportBeamCommonPropertySet(
-        StepWriter w, Element elem, int elemEntityId, int ownerHistId,
-        int referenceValueId,
-        Dictionary<(string PropertyName, string ValueExpr), int> valuePool,
-        bool? isExternal = null, double? spanMillimetres = null)
+    /// <summary>LoadBearing of a framing occurrence: its own parameter, otherwise .T. for structural framing.</summary>
+    private static void AddStructuralFramingLoadBearing(
+        StepWriter w, Element elem, List<int> valueIds,
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool)
     {
-        var valueIds = new List<int> { referenceValueId };
-        if (spanMillimetres is double span)
-            valueIds.Add(GetOrAddPropertySingleValue(w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(span)})"));
-        if (isExternal is bool beamExternal)
-            valueIds.Add(GetOrAddPropertySingleValue(
-                w, valuePool, "IsExternal", beamExternal ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
         ExactIsExternalParameterResult loadBearing =
             ResolveExactOccurrenceBooleanParameter(elem, "LoadBearing");
         if (loadBearing.State == ExactIsExternalParameterState.Value)
@@ -64344,6 +64342,22 @@ public partial class IfcExporter
             valueIds.Add(GetOrAddPropertySingleValue(
                 w, valuePool, "LoadBearing", "IFCBOOLEAN(.T.)"));
         }
+    }
+
+    /// <summary>The exact QTO property entity is reused.</summary>
+    private static void ExportBeamCommonPropertySet(
+        StepWriter w, Element elem, int elemEntityId, int ownerHistId,
+        int referenceValueId,
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool,
+        bool? isExternal = null, double? spanMillimetres = null)
+    {
+        var valueIds = new List<int> { referenceValueId };
+        if (spanMillimetres is double span)
+            valueIds.Add(GetOrAddPropertySingleValue(w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(span)})"));
+        if (isExternal is bool beamExternal)
+            valueIds.Add(GetOrAddPropertySingleValue(
+                w, valuePool, "IsExternal", beamExternal ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
+        AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool);
 
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"beam-common-pset:{elem.Id}"))},{R(ownerHistId)},{S("Pset_BeamCommon")},$,{StepWriter.List(valueIds.Select(R))}");
@@ -65998,7 +66012,8 @@ public partial class IfcExporter
 
     /// <summary>
     /// Emits Pset_MemberCommon for one IFCMEMBER product: IsExternal, Reference, and - for curtain
-    /// wall mullions only - Span.
+    /// wall mullions only - Span. A structural framing member (a brace) also carries LoadBearing and,
+    /// in the current profile, the Span of a beam.
     /// </summary>
     private void ExportMemberCommonPropertySet(
         StepWriter w, Element elem, int elemEntityId, int ownerHistId,
@@ -66014,6 +66029,9 @@ public partial class IfcExporter
                 w, valuePool, "IsExternal",
                 isExternal ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"),
         };
+        bool framing = elem.CategoryId == StructuralFramingCategoryId;
+        if (framing)
+            AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool);
         if (referenceValue != null)
         {
             valueIds.Add(GetOrAddPropertySingleValue(
@@ -66023,6 +66041,10 @@ public partial class IfcExporter
         {
             _mainLoopReferenceOmittedCount++;
         }
+        if (framing && CurrentProfile
+            && ResolveBeamSpanMillimetresCurrent(elem, elementsById.GetValueOrDefault(elem.FamilyTypeId), driveCurveFirst: true) is double braceSpan)
+            valueIds.Add(GetOrAddPropertySingleValue(
+                w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(braceSpan)})"));
         if (elem.CategoryId == CurtainWallMullionCategoryId && !CurrentProfile)
         {
             Element? elementType = elem.FamilyTypeId > 0
@@ -69471,7 +69493,7 @@ public partial class IfcExporter
     /// stored level reference.
     /// </summary>
     private int ResolveStorey(Element elem, Dictionary<int, int> storeyIds, int defaultStoreyId,
-        IReadOnlyDictionary<int, Element> elemById)
+        IReadOnlyDictionary<int, Element> elemById, int buildingId)
     {
         // The current profile reads STAIRS_BASE_LEVEL_PARAM, which is StairsElement.m_baseLevelId.
         if (CurrentProfile && elem.CategoryId == -2000120 && elem.SerializedStairBaseLevelId is int stairBaseLevelId
@@ -69491,6 +69513,33 @@ public partial class IfcExporter
             if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId
                 && storeyIds.TryGetValue(levelId, out int storeyId))
                 return storeyId;
+
+        // A column whose base level is a Level that is not a project storey stands in the highest storey at or
+        // below that level, and in the building where no storey is that low.
+        if (CurrentProfile && elem.CategoryId is -2001330 or -2000100
+            && parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == -1001350)?.Value is int columnBaseLevelId
+            && elemById.TryGetValue(columnBaseLevelId, out var columnBaseLevel) && columnBaseLevel.CategoryId == -2000240)
+        {
+            if (storeyIds.TryGetValue(columnBaseLevelId, out int baseStoreyId)) return baseStoreyId;
+            const double Tolerance = 1e-6;
+            double baseElevation = GetElevation(columnBaseLevel);
+            int chosen = buildingId;
+            double chosenElevation = double.NegativeInfinity;
+            int chosenLevelId = 0;
+            foreach (var (levelId, storeyId) in storeyIds)
+                if (elemById.TryGetValue(levelId, out var level))
+                {
+                    double elevation = GetElevation(level);
+                    if (elevation <= baseElevation + Tolerance
+                        && (elevation > chosenElevation || elevation == chosenElevation && levelId > chosenLevelId))
+                    {
+                        chosen = storeyId;
+                        chosenElevation = elevation;
+                        chosenLevelId = levelId;
+                    }
+                }
+            return chosen;
+        }
 
         if (CurrentProfile)
         {

@@ -196,6 +196,83 @@ public partial class IfcExporter
         return best;
     }
 
+    /// <summary>An exact end face: a planar face that carries the area of the Revit face (<see cref="GeoFace.QuadratureArea"/>).</summary>
+    private static bool IsExactCap(GeoFace face) => face.PlaneSurface && face.QuadratureArea != null && face.OuterVertices is { Count: >= 3 };
+
+    /// <summary>Volume (m3) and surface area (m2) of the measured node whose faces are all exact end faces: a round solid lists its two
+    /// planar end faces under the node that holds its integrals, while its curved side is listed as a tessellated node without integrals
+    /// (which leaves <see cref="NodeSolidTotalsCurrent"/> unknown and only the open shell of the side to measure). Null unless exactly one
+    /// node holds nothing but exact end faces (end faces in two nodes may each measure the whole solid) and it has a positive volume.</summary>
+    internal static (double Volume, double Area)? CapNodeTotalsCurrent(GeometryData? geometry)
+    {
+        if (geometry?.NodeMeasures is not { Count: > 0 } measures || geometry.Faces.Count == 0) return null;
+        var capNodes = geometry.Faces.GroupBy(face => face.GeometryNode).Where(group => group.All(IsExactCap)).Select(group => group.Key).ToList();
+        if (capNodes is not [var node] || measures.FirstOrDefault(measure => measure.Node == node) is not { Volume: > 0 } taken) return null;
+        return (taken.Volume * CubicFeetToCubicMetres, taken.Area * SquareFeetToSquareMetres);
+    }
+
+    /// <summary>Relative difference of the exact area of an end face from the area of its circle that a round column may show. Measured on
+    /// the 270 end faces of the round columns of one sample: 1.4e-4 for most, 3.7e-3 at most (the file holds the exact area of some faces with a
+    /// quadrature error). A regular polygon of 32 corners already differs by 6.4e-3 (24: 1.1e-2, 16: 2.5e-2, 12: 4.5e-2),
+    /// so 5e-3 passes the measured faces and refuses the polygons.</summary>
+    private const double RoundCapAreaTolerance = 5e-3;
+
+    /// <summary>The vertical circular cylinder of a round solid, in feet: the distance of its two exact end faces and the radius of their
+    /// circle. The end faces are the only exact planar faces, without holes, with at least eight corners, horizontal, the corners of each
+    /// lie on a circle, both circles are the same one, the exact area of each is that of its circle to within
+    /// <see cref="RoundCapAreaTolerance"/> (a polygon is no circle), no other face is a vertical plane surface of the file (a facet of a
+    /// polygonal prism), and every other face has its corners on the side of that cylinder between the end faces (so no other solid is part of the geometry). The areas of the two end faces need not agree with each other.
+    /// The distances are compared to a millionth of the radius, or to eight units in the last place of a 32-bit coordinate of the
+    /// largest magnitude where that is more (mesh vertices are read as 32-bit numbers; the end faces of the sample are exact doubles
+    /// up to 150 feet from the origin). Null for any other solid.</summary>
+    internal static (double Depth, double Radius)? RoundCylinderCurrent(GeometryData? geometry)
+    {
+        if (geometry?.Faces is not { Count: > 0 } faces) return null;
+        var caps = faces.Where(IsExactCap).ToList();
+        if (caps.Count != 2 || caps.Any(cap => cap.InnerVertices is { Count: > 0 } || cap.OuterVertices!.Count < 8)) return null;
+        float largest = (float)faces.SelectMany(face => face.OuterVertices ?? []).SelectMany(corner => corner).Select(Math.Abs).DefaultIfEmpty(0).Max();
+        double slack = 8 * (MathF.BitIncrement(largest) - largest);
+        if (CircleOfCorners(caps[0].OuterVertices!, slack) is not { } first || CircleOfCorners(caps[1].OuterVertices!, slack) is not { } second) return null;
+        double tolerance = Math.Max(1e-6 * first.R, slack);
+        if (Math.Abs(first.R - second.R) > tolerance || Math.Abs(first.X - second.X) > tolerance || Math.Abs(first.Y - second.Y) > tolerance) return null;
+        double circleArea = Math.PI * first.R * first.R;
+        if (caps.Any(cap => Math.Abs(cap.QuadratureArea!.Value / circleArea - 1) > RoundCapAreaTolerance)) return null;
+        double z0 = caps[0].OuterVertices![0][2], z1 = caps[1].OuterVertices![0][2];
+        if (caps.Any(cap => cap.OuterVertices!.Any(corner => Math.Abs(corner[2] - cap.OuterVertices![0][2]) > tolerance))) return null;
+        double low = Math.Min(z0, z1), high = Math.Max(z0, z1);
+        if (high - low < 1e-9) return null;
+        // A side facet that lies on a plane surface of the file belongs to a polygonal prism, not to a cylinder: the only planar faces
+        // besides the end faces are copies of them, which are horizontal.
+        if (faces.Any(face => face.PlaneSurface && !IsExactCap(face) && face.OuterVertices is { Count: > 0 } ring && ring.Any(corner => Math.Abs(corner[2] - ring[0][2]) > tolerance))) return null;
+        foreach (var face in faces)
+            foreach (var corner in face.OuterVertices ?? [])
+                if (Math.Abs(Math.Sqrt((corner[0] - first.X) * (corner[0] - first.X) + (corner[1] - first.Y) * (corner[1] - first.Y)) - first.R) > tolerance
+                    || corner[2] < low - tolerance || corner[2] > high + tolerance)
+                    return null;
+        return (high - low, first.R);
+    }
+
+    /// <summary>The vertical circular prism of a round solid: a <see cref="RoundCylinderCurrent"/> that the extrusion calculation accepts
+    /// (two parallel end faces of the same exact area). Null for any other solid.</summary>
+    internal static (double Depth, double Radius)? RoundPrismCurrent(GeometryData? geometry) =>
+        RoundCylinderCurrent(geometry) is { } cylinder && WallExtrusion.TryFindVerticalExtrusion(geometry!.Faces, out _, exactCylinders: true) ? cylinder : null;
+
+    /// <summary>The circle in the XY plane through three corners of a ring, null unless every corner lies on it (to within a millionth of
+    /// the radius, or <paramref name="slack"/> where that is more).</summary>
+    private static (double X, double Y, double R)? CircleOfCorners(IReadOnlyList<double[]> ring, double slack)
+    {
+        var a = ring[0];
+        var b = ring[ring.Count / 3];
+        var c = ring[2 * ring.Count / 3];
+        double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+        if (Math.Abs(d) < 1e-12) return null;
+        double a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+        double x = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
+        double y = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+        double radius = Math.Sqrt((a[0] - x) * (a[0] - x) + (a[1] - y) * (a[1] - y));
+        return ring.All(p => Math.Abs(Math.Sqrt((p[0] - x) * (p[0] - x) + (p[1] - y) * (p[1] - y)) - radius) <= Math.Max(1e-6 * radius, slack)) ? (x, y, radius) : null;
+    }
+
     /// <summary>Mean height of a face and the height range of a set of faces, in feet. The windings of decoded faces do not say
     /// which side is outside, so "top" and "bottom" are told by the height of a face against the middle of the range.</summary>
     private static double MeanHeightCurrent(GeoFace face) => face.OuterVertices!.Average(point => point[2]);

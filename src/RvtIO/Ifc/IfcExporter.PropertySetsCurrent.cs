@@ -41,7 +41,7 @@ public partial class IfcExporter
     internal static bool TypeReceivesPropertySetsCurrent(string typeClass, string instanceIfcType, Element typeElem) =>
         typeClass switch
         {
-            "IFCMEMBERTYPE" => typeElem.CategoryId == CurtainWallMullionCategoryId,
+            "IFCMEMBERTYPE" => typeElem.CategoryId is CurtainWallMullionCategoryId or StructuralFramingCategoryId,
             "IFCBEAMTYPE" or "IFCBUILDINGELEMENTPROXYTYPE" or "IFCCOLUMNTYPE" or "IFCCOVERINGTYPE"
                 or "IFCCURTAINWALLTYPE" or "IFCDOORSTYLE" or "IFCPLATETYPE" or "IFCRAILINGTYPE"
                 or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCWALLTYPE" or "IFCWINDOWSTYLE"
@@ -211,7 +211,8 @@ public partial class IfcExporter
                 Add("Pset_LightFixtureTypeCommon", 1, TotalWattage());
                 break;
             case "IFCMEMBERTYPE":
-                Add("Pset_MemberCommon", 1, Identifier(), IsExternal(), FireRating());
+                Add("Pset_MemberCommon", 1, Identifier(), IsExternal(),
+                    typeElem.CategoryId == StructuralFramingCategoryId ? LoadBearing() : null, FireRating());
                 break;
             case "IFCPLATETYPE":
                 Add("Pset_PlateCommon", 1, Identifier(), IsExternal(), FireRating());
@@ -329,8 +330,11 @@ public partial class IfcExporter
     /// occurrence, then from its type, before any computed span is consulted: a beam carries the stored length, while
     /// its extrusion can be shorter. A length the parser derived itself (marked approximate)
     /// is not a stored one.</summary>
-    internal static double? ResolveBeamSpanMillimetresCurrent(Element beam, Element? type)
+    internal static double? ResolveBeamSpanMillimetresCurrent(Element beam, Element? type, bool driveCurveFirst = false)
     {
+        // The stored length of a brace is rounded; the drive curve is exact.
+        if (driveCurveFirst && beam.CurveDriverLineLength is double exactFeet && double.IsFinite(exactFeet) && exactFeet > 0)
+            return exactFeet * 304.8;
         foreach (Element? owner in new[] { beam, type })
             if (owner?.Parameters.FirstOrDefault(parameter => parameter.Id == InstanceLengthParamId) is
                 { IsApproximate: false, Value: double lengthFeet } && double.IsFinite(lengthFeet) && lengthFeet > 0)
