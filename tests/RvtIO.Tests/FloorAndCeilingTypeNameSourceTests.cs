@@ -247,6 +247,38 @@ public class ElementBuilderFloorTypeNameSourceTests
         Assert.False(instance.ValidatedFloorTypeReferenceIsBlocked);
     }
 
+    [Theory]
+    [InlineData(1, 1915, true, "Own type name")]
+    [InlineData(2, 1915, true, "Terminal string")]
+    [InlineData(1, 646, true, "Terminal string")]
+    [InlineData(1, 1915, false, "Terminal string")]
+    public void FloorReferenceValidation_ValidatedHostTypeNameComesBeforeTerminalString(
+        int hostBlockCount, ushort hostClassId, bool decodedLayers, string expected)
+    {
+        var type = Floor(200, 0, "Existing floor type name");
+        var instance = Floor(300, type.Id, "Existing instance name");
+        var elements = new List<Element> { type, instance };
+
+        ElementBuilder.ApplyValidatedFloorTypeReferenceNames(
+            elements, elements.ToDictionary(element => element.Id),
+            new Dictionary<uint, (int BlockCount, string? TerminalName)>
+            {
+                // the block of a type with text parameters ends in the last of them
+                [(uint)type.Id] = (1, "Terminal string"),
+            },
+            new Dictionary<uint, TfBlockDeserializer.NativeParams>
+            {
+                [(uint)instance.Id] = FloorNativeParams(type.Id),
+            },
+            new Dictionary<uint, (int BlockCount, ushort ClassId, RawCompoundStructureLayer[]? Layers, string? TypeName)>
+            {
+                [(uint)type.Id] = (hostBlockCount, hostClassId, decodedLayers ? [new RawCompoundStructureLayer(0, 0, 0, 1, 0, 0, 0)] : null, "Own type name"),
+            });
+
+        Assert.Equal(expected, instance.ValidatedFloorTypeReferenceName);
+        Assert.False(instance.ValidatedFloorTypeReferenceIsExplicit);
+    }
+
     [Fact]
     public void FloorReferenceValidation_UnreproducibleExplicitParameterBlocksTerminalFallback()
     {

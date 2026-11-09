@@ -4317,7 +4317,8 @@ internal static partial class ElementBuilder
         IReadOnlyList<Element> elements,
         IReadOnlyDictionary<int, Element> elementsById,
         IReadOnlyDictionary<uint, (int BlockCount, string? TerminalName)> source,
-        IReadOnlyDictionary<uint, TfBlockDeserializer.NativeParams> nativeParams)
+        IReadOnlyDictionary<uint, TfBlockDeserializer.NativeParams> nativeParams,
+        IReadOnlyDictionary<uint, (int BlockCount, ushort ClassId, RawCompoundStructureLayer[]? Layers, string? TypeName)>? hostTypes = null)
     {
         const int FloorsCategoryId = -2000032;
         foreach (Element element in elements)
@@ -4354,6 +4355,16 @@ internal static partial class ElementBuilder
             {
                 instance.ValidatedFloorTypeReferenceName = explicitReference.Value;
                 instance.ValidatedFloorTypeReferenceIsExplicit = true;
+                continue;
+            }
+
+            // The own SymbolInfo name of a validated HostObjAttr type comes before the terminal string of its block: a type
+            // that carries text parameters after its name ends in one of them.
+            if (hostTypes?.TryGetValue((uint)typeElement.Id, out var hostType) == true
+                && hostType is { BlockCount: 1, ClassId: 1915, Layers: not null }
+                && !string.IsNullOrWhiteSpace(hostType.TypeName))
+            {
+                instance.ValidatedFloorTypeReferenceName = hostType.TypeName;
                 continue;
             }
 
@@ -6317,7 +6328,7 @@ internal static partial class ElementBuilder
         {
             ApplyValidatedFloorTypeReferenceNames(
                 rvtInfo.Elements, elemByIdLookup,
-                state.FloorTypeNameSource, state.NativeParams);
+                state.FloorTypeNameSource, state.NativeParams, state.HostTypeCompoundStructures);
             ApplyValidatedCeilingTypeReferenceNames(
                 rvtInfo.Elements,
                 state.CeilingTypeNameSource,
