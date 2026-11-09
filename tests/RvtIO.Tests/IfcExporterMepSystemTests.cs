@@ -311,10 +311,57 @@ public class IfcExporterMepSystemTests
         Assert.Null(ReadCircuit(CircuitRecord(50, 50)).SerializedCircuitBaseEquipmentId);
     }
 
+    // A connector was removed from the circuit: the connector numbers run 0, 2, 3, so the panel connector (number 2) sits at array
+    // position 1 and the connector at array position 2 is the load with number 3.
+    private static TfBlockDeserializer.NativeParams CircuitRecordWithARemovedConnector(int circuitId, int panelId, int panelConnectorNumber)
+    {
+        var native = CircuitRecord(circuitId, panelId);
+        native.Fields["771#1:m_nIndex"] = panelConnectorNumber;
+        Connector(native, 2, 3);
+        native.Fields["771#2:m_arrRefs#"] = 2;
+        native.Fields["771#2:m_arrRefs@0:id"] = 700;
+        native.Fields["771#2:m_arrRefs@0:index"] = 1;
+        native.Fields["771#2:m_arrRefs@0:type"] = 1;
+        native.Fields["771#2:m_arrRefs@1:id"] = 701;
+        native.Fields["771#2:m_arrRefs@1:index"] = 1;
+        native.Fields["771#2:m_arrRefs@1:type"] = 1;
+        return native;
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_ConnectorNumberNotEqualToItsPositionTakesTheFirstReferenceOfTheConnectorAtThatPosition()
+    {
+        // Two candidates: the panel (reference at index 50001) and the first load of the connector at array position 2.
+        Assert.Equal(700, ReadCircuit(CircuitRecordWithARemovedConnector(50, 581483, panelConnectorNumber: 2)).SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_NoConnectorAtThePositionOfThePanelConnectorNumberGivesNoBaseEquipment()
+    {
+        Assert.Null(ReadCircuit(CircuitRecordWithARemovedConnector(50, 581483, panelConnectorNumber: 3)).SerializedCircuitBaseEquipmentId);
+        // The connector at that position holds only the circuit itself.
+        var onlyItself = CircuitRecordWithARemovedConnector(50, 581483, panelConnectorNumber: 2);
+        onlyItself.Fields["771#2:m_arrRefs#"] = 1;
+        onlyItself.Fields["771#2:m_arrRefs@0:id"] = 50;
+        Assert.Null(ReadCircuit(onlyItself).SerializedCircuitBaseEquipmentId);
+    }
+
     [Fact]
     public void ApplyMepSystemParams_OnlyAnElectricalCircuitReadsBaseEquipment()
     {
         Assert.Null(ReadCircuit(CircuitRecord(50, 581483), category: -2008013).SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_ACircuitWithoutAReadCategoryIsRecognisedByItsClass()
+    {
+        // A circuit with no loads can have a stored category that is not read; its class still says it is a circuit.
+        var native = CircuitRecord(50, 581483);
+        var circuit = new Element { Id = 50, NativeRootClassName = "RbsElectricalSystem" };
+        var state = new ParsingState();
+        state.NativeParams[50] = native;
+        ElementBuilder.ApplyMepSystemParams(new RevitFileInfo { Elements = [circuit] }, state, null);
+        Assert.Equal(581483, circuit.SerializedCircuitBaseEquipmentId);
     }
 
     [Fact]
@@ -344,8 +391,48 @@ public class IfcExporterMepSystemTests
         var members = new SortedDictionary<int, SortedSet<int>>();
         // The panel of the first circuit is not an exported product.
         IfcExporter.AddCircuitBaseEquipment(elements, new Dictionary<int, (int, int, string)> { [999] = (7, 8, "IFCBUILDINGELEMENTPROXY") }, members);
-        Assert.Equal(0, members.Count);
+        Assert.Empty(members);
         Assert.Empty(WriteSystems(elements, members, out _));
+    }
+
+    private static string ExportText(IfcProfile profile, params Element[] elements)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-circuit-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            new IfcExporter { Profile = profile }.Export(new RevitFileInfo { Elements = [.. elements] }, path);
+            return File.ReadAllText(path);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(IfcProfile.Current, true)]
+    [InlineData(IfcProfile.Legacy, false)]
+    public void ElectricalCircuit_IsWrittenAsAnIfcSystemOnlyInTheCurrentProfile(IfcProfile profile, bool written)
+    {
+        var panel = IfcExporterBeamCommonPropertySetTests.Product(581483, 600, -2001040, "OST_ElectricalEquipment", "Panel");
+        panel.SerializedExportId = Guid.NewGuid();
+        var circuit = new Element
+        {
+            Id = 50, Name = "", CategoryId = ElectricalCircuitCategory, Category = "OST_ElectricalCircuit", SerializedExportId = Guid.NewGuid(),
+            SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483,
+        };
+        string ifc = ExportText(profile, panel, circuit);
+        Assert.Contains("=IFCBUILDINGELEMENTPROXY(", ifc);
+        if (written)
+        {
+            Assert.Contains("=IFCSYSTEM(", ifc);
+            Assert.Contains("=IFCRELASSIGNSTOGROUP(", ifc);
+        }
+        else
+        {
+            Assert.DoesNotContain("=IFCSYSTEM(", ifc);
+            Assert.DoesNotContain("=IFCRELASSIGNSTOGROUP(", ifc);
+        }
     }
 
     [Fact]

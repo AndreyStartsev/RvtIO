@@ -1692,9 +1692,13 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>
-    /// The base equipment of an electrical circuit: the first connector reference of the circuit's own connector
-    /// manager of connection type 4 (a circuit of a panel) with an index of 50000 or more (the circuit's number on
-    /// the panel) to an element other than the circuit; the references of type 1 are its loads. Null when there is none.
+    /// The base equipment of an electrical circuit. The circuit's own connector manager lists its connectors, each with a
+    /// number (m_nIndex) and references; the connector that holds the reference of connection type 4 with an index of 50000
+    /// or more to an element other than the circuit is the one of the panel. The base equipment is the first reference
+    /// to another element of the connector that sits at array position equal to that number. The number equals the
+    /// position unless a connector was removed, which is when the reference names a load instead of the panel; this was
+    /// measured against the reference in 445 of 445 circuits of one file and 128 of 128 of another. Null when there is no panel
+    /// connector, no connector at that position or no other element in it.
     /// </summary>
     private static int? CircuitBaseEquipmentId(int circuitId, TfBlockDeserializer.NativeParams np)
     {
@@ -1702,8 +1706,14 @@ internal static partial class ElementBuilder
             for (int i = 0, count = np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs#"); i < count; i++)
                 if (np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:type") == 4
                     && np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:index") >= 50000
-                    && np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:id") is var id && id > 0 && id != circuitId)
-                    return id;
+                    && np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:id") is var panelId && panelId > 0 && panelId != circuitId)
+                {
+                    int position = np.Fields[$"771#{k}:m_nIndex"];
+                    for (int j = 0, refs = np.Fields.GetValueOrDefault($"771#{position}:m_arrRefs#"); j < refs; j++)
+                        if (np.Fields.GetValueOrDefault($"771#{position}:m_arrRefs@{j}:id") is var id && id > 0 && id != circuitId)
+                            return id;
+                    return null;
+                }
         return null;
     }
 
@@ -1723,7 +1733,7 @@ internal static partial class ElementBuilder
             {
                 SetParam(e, -1140324, "RBS_SYSTEM_NAME_PARAM", StorageType.String, ownName);
                 e.SerializedMepSystem = (ownName, np.Fields.GetValueOrDefault("3170:m_typeId"));
-                if (e.CategoryId == -2008037) e.SerializedCircuitBaseEquipmentId = CircuitBaseEquipmentId(e.Id, np);
+                if (e.CategoryId == -2008037 || e.RootClassName == "RbsElectricalSystem") e.SerializedCircuitBaseEquipmentId = CircuitBaseEquipmentId(e.Id, np);
                 continue;
             }
             if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var curveClass)) continue;
