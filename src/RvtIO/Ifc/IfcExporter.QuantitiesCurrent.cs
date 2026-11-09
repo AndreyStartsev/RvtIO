@@ -1304,6 +1304,12 @@ public partial class IfcExporter
         var topFace = SoleClosedPrismCurrent(shells, verticalOnly: true);
         var prism = shells.Count == 1 && WallExtrusion.TryFindVerticalExtrusion(shells[0].Faces, out _) ? topFace : null;
         double? profileArea = prism?.ProfileArea * SquareFeetToSquareMetres;
+        // The same extrusion with arcs in its outline (the sides that tessellate them are vertical cylinders), written as an extrusion
+        // (a pile cap of a round plan is a brep and has no extrusion data): its depth times the area of the top surface is GrossVolume.
+        // Shortcut: Perimeter is not written for it, the reference counts the arcs of its outline in two ways (as arcs and as the
+        // corners they round), which no feature of the slab told apart.
+        var arcPrism = prism == null && topFace == null && body != null && shells.Count == 1 && shells[0].Closed
+            && WallExtrusion.TryFindVerticalExtrusion(shells[0].Faces, out _) ? FindPrismCurrent(shells[0], verticalOnly: true, arcSides: true) : null;
         var totals = SolidTotalsCurrent(shells);
         // Revit holds HOST_AREA_COMPUTED, the area of the top surface of the floor solid, for every floor. The parser derives a value
         // from the sketch for some of them, which is the plan area (a sloped floor has a larger top surface), so the upward faces of
@@ -1339,6 +1345,8 @@ public partial class IfcExporter
         AddIfPositive(result, QuantityKind.Area, "NetArea", topArea);
         if (prism != null)
             AddIfPositive(result, QuantityKind.Volume, "GrossVolume", profileArea * prism.Value.Depth * FeetToMetres);
+        else if (arcPrism != null)
+            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", topArea * arcPrism.Value.Depth * FeetToMetres);
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", netVolume);
         // The parameter called "Perimeter" (HOST_PERIMETER_COMPUTED) of the floor comes before the profile; its value is the
         // length of every boundary loop of the floor, the loops of its holes included (the parser's parameter is the outer loop).
