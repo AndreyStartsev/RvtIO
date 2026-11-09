@@ -254,33 +254,6 @@ public partial class IfcExporter
         return null;
     }
 
-    /// <summary>The representation map that the lone mapped item of the Body of a product uses; null for any other body.</summary>
-    private static int? BodyRepresentationMapCurrent(StepWriter w, Dictionary<int, int> indexById, string representationArgument)
-    {
-        if (!TryEntityId(representationArgument, out int shapeId) || !indexById.TryGetValue(shapeId, out int shapeIndex)
-            || w.EntityAt(shapeIndex).Type != "IFCPRODUCTDEFINITIONSHAPE")
-            return null;
-        var shapeArguments = SplitStepArguments(w.EntityAt(shapeIndex).Args);
-        if (shapeArguments.Length != 3 || shapeArguments[2].Length < 3) return null;
-        foreach (string representationToken in SplitStepArguments(shapeArguments[2][1..^1]))
-        {
-            if (!TryEntityId(representationToken, out int representationId) || !indexById.TryGetValue(representationId, out int representationIndex))
-                continue;
-            var representation = w.EntityAt(representationIndex);
-            var representationArguments = SplitStepArguments(representation.Args);
-            if (representation.Type != "IFCSHAPEREPRESENTATION" || representationArguments.Length != 4
-                || representationArguments[1] != "'Body'" || representationArguments[3].Length < 3)
-                continue;
-            var items = SplitStepArguments(representationArguments[3][1..^1]);
-            if (items.Length != 1 || !TryEntityId(items[0], out int itemId) || !indexById.TryGetValue(itemId, out int itemIndex)
-                || w.EntityAt(itemIndex).Type != "IFCMAPPEDITEM")
-                return null;
-            var mapped = SplitStepArguments(w.EntityAt(itemIndex).Args);
-            return mapped.Length >= 1 && TryEntityId(mapped[0], out int mapId) ? mapId : null;
-        }
-        return null;
-    }
-
     private static List<(double X, double Y)>? ReadPolylinePointsCurrent(StepWriter w, Dictionary<int, int> indexById, int curveId)
     {
         if (!indexById.TryGetValue(curveId, out int curveIndex) || w.EntityAt(curveIndex).Type != "IFCPOLYLINE")

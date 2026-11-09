@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Beams of the current profile that share one mapped body: every beam keeps its own full quantity set; every later one also
+/// <summary>Beams of the current profile that share one mapped body: every beam keeps its own full quantity set; every beam also
 /// gets the Slope of its drive curve.</summary>
 public class IfcExporterBeamSharedBodyTests
 {
@@ -132,7 +132,7 @@ public class IfcExporterBeamSharedBodyTests
         new() { Id = id, CategoryId = -2001320, Geometry = Box(1, 2, 5), CurveDriverLineLength = 10, CurveDriverLineZ = (3, -2) };
 
     [Fact]
-    public void Slope_IsWrittenForTheLaterBeamOnly_AsTheAngleOfItsDriveCurve_WithoutTheQuantities()
+    public void Slope_IsWrittenForEveryBeamOfASharedBody_AsTheAngleOfItsDriveCurve_WithoutTheQuantities()
     {
         var (w, owner, placement) = NewWriter();
         int map = AddMap(w);
@@ -141,14 +141,29 @@ public class IfcExporterBeamSharedBodyTests
         AddBeamCommonPropertySet(w, owner, first, FirstGuid);
         AddBeamCommonPropertySet(w, owner, second, SecondGuid);
 
-        Assert.Equal(1, ApplySlopes(w, first, second, DriveBeam));
+        Assert.Equal(2, ApplySlopes(w, first, second, DriveBeam));
 
-        Assert.Equal(30.0, Assert.Single(SlopesWritten(w)), 9);
+        Assert.Equal(30.0, Assert.Single(SlopesWritten(w)), 9); // one pooled property, referenced by both property sets
         Assert.Empty(QuantityNames(w));
     }
 
     [Fact]
-    public void Slope_IsNotWritten_ForALaterBeamWithoutADriveCurve()
+    public void Slope_IsWrittenForBeamsOfDifferentBodies_AndForAHorizontalBeam()
+    {
+        var (w, owner, placement) = NewWriter();
+        int first = AddMappedBeam(w, owner, placement, FirstGuid, AddMap(w));
+        int second = AddMappedBeam(w, owner, placement, SecondGuid, AddMap(w));
+        AddBeamCommonPropertySet(w, owner, first, FirstGuid);
+        AddBeamCommonPropertySet(w, owner, second, SecondGuid);
+
+        Assert.Equal(2, ApplySlopes(w, first, second, id => new Element
+            { Id = id, CategoryId = -2001320, Geometry = Box(1, 2, 5), CurveDriverLineLength = 10, CurveDriverLineZ = (2.0, 2.0) }));
+
+        Assert.Equal(0.0, Assert.Single(SlopesWritten(w)), 9);
+    }
+
+    [Fact]
+    public void Slope_IsNotWritten_ForABeamWithoutADriveCurve()
     {
         var (w, owner, placement) = NewWriter();
         int map = AddMap(w);
@@ -158,21 +173,6 @@ public class IfcExporterBeamSharedBodyTests
         AddBeamCommonPropertySet(w, owner, second, SecondGuid);
 
         Assert.Equal(0, ApplySlopes(w, first, second, BoxBeam));
-
-        Assert.Empty(SlopesWritten(w));
-    }
-
-    [Fact]
-    public void Slope_IsNotWritten_ForTheFirstBeamOfABodyThatIsNoExtrusion_OrForBeamsOfDifferentBodies()
-    {
-        var (w, owner, placement) = NewWriter();
-        // The map of the first beam holds a B-Rep, no extrusion: it has no Slope all the same.
-        int first = AddMappedBeam(w, owner, placement, FirstGuid, AddMap(w));
-        int second = AddMappedBeam(w, owner, placement, SecondGuid, AddMap(w));
-        AddBeamCommonPropertySet(w, owner, first, FirstGuid);
-        AddBeamCommonPropertySet(w, owner, second, SecondGuid);
-
-        Assert.Equal(0, ApplySlopes(w, first, second, DriveBeam));
 
         Assert.Empty(SlopesWritten(w));
     }

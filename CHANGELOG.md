@@ -8,7 +8,7 @@ API between minor releases.
 
 ### Added
 
-- Default output, current IFC profile: a beam that shares its mapped body with an earlier beam gets `Pset_BeamCommon.Slope`, the angle in degrees of its drive curve to the horizontal, whether or not BaseQuantities are exported; its quantities are unchanged. Known limits: the first beam of a body gets no Slope even when its body is no extrusion, and a beam without a straight drive curve gets no Slope.
+- Default output, current IFC profile: every beam with a straight drive curve gets `Pset_BeamCommon.Slope`, the angle in degrees of its drive curve to the horizontal (0 for a horizontal beam, never negative), whether or not BaseQuantities are exported and whatever its body; its quantities are unchanged. A beam without a straight drive curve gets no Slope.
 - Default output, current IFC profile: `Pset_BeamCommon.Span` of a beam without a stored length is the length of its straight drive curve; a beam without one has no Span.
 
 ## [0.3.0] - 2026-11-08
