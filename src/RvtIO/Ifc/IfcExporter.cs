@@ -69498,6 +69498,7 @@ public partial class IfcExporter
             && parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == -1001350)?.Value is int columnBaseLevelId
             && elemById.TryGetValue(columnBaseLevelId, out var columnBaseLevel) && columnBaseLevel.CategoryId == -2000240)
         {
+            if (storeyIds.TryGetValue(columnBaseLevelId, out int baseStoreyId)) return baseStoreyId;
             const double Tolerance = 1e-6;
             double baseElevation = GetElevation(columnBaseLevel);
             int chosen = buildingId;

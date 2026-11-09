@@ -19,9 +19,11 @@ public class IfcExporterColumnContainerTests
         info.Elements.Add(Level(id: 3, name: "Second", elevation: 6, buildingStory: true));
         info.Elements.Add(Level(id: 7, name: "Rough floor", elevation: 3.5, buildingStory: false));
         info.Elements.Add(Level(id: 8, name: "Pit", elevation: -1, buildingStory: false));
+        info.Elements.Add(Level(id: 9, name: "Twin", elevation: 6, buildingStory: true));   // a second storey at the height of "Second"
         info.Elements.Add(Column(id: 100, baseLevelId: 7, bottom: 7));   // level 3.5: First, not the storey of the box bottom
         info.Elements.Add(Column(id: 101, baseLevelId: 8, bottom: 0));   // below every storey: the building
         info.Elements.Add(Column(id: 102, baseLevelId: 3, bottom: 0));   // a project storey: unchanged
+        info.Elements.Add(Column(id: 104, baseLevelId: 3, bottom: 0));   // the storey named by the base level wins over a storey of the same height with a larger id
         info.Elements.Add(Column(id: 103, baseLevelId: 7, bottom: 7, levelParameterId: 3));   // a stored level reference does not override the base level
         string path = TempIfcPath("column-container");
 
@@ -34,6 +36,7 @@ public class IfcExporterColumnContainerTests
             Assert.Equal("IFCBUILDING", ContainerOf(ifc, "101"));
             Assert.Equal("Second", ContainerOf(ifc, "102"));
             Assert.Equal("First", ContainerOf(ifc, "103"));
+            Assert.Equal("Second", ContainerOf(ifc, "104"));
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
