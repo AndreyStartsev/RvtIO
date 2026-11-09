@@ -69676,10 +69676,11 @@ public partial class IfcExporter
             {
                 if (storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
                 if (CurrentProfile && offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
-                    && elemById.TryGetValue(levelId, out var nestedLevel) && nestedLevel.CategoryId == -2000240)
-                    offStoreyLevel = nestedLevel;
+                    && elemById.TryGetValue(levelId, out var baseLevel) && baseLevel.CategoryId == -2000240)
+                    offStoreyLevel = baseLevel;
             }
-        // The base level outranks the element's own level parameters below, whether it is a storey or not.
+        // A base level that is not a storey outranks the element's own level parameters below, as one that is a
+        // storey does. Among the base-level parameters one on a storey still outranks an earlier one that is not.
         if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
 
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
@@ -69775,7 +69776,7 @@ public partial class IfcExporter
         return chosen;
     }
 
-    /// <summary>Duct, pipe and flex-curve categories and their fittings, accessories, terminals and sprinklers, and the electrical, lighting, mechanical and plumbing equipment and fixtures.</summary>
+    /// <summary>Every category of the duct, pipe, cable tray and conduit range (segments, fittings, accessories, insulation, terminals, sprinklers), and the electrical, lighting, mechanical, plumbing and food service equipment and fixtures.</summary>
     private static bool IsBuildingServicesCategory(int? categoryId) =>
         categoryId is <= -2008000 and >= -2008999 or -2001040 or -2001043 or -2001060 or -2001120 or -2001140 or -2001160;
 

@@ -67,8 +67,10 @@ public class IfcExporterBuildingServicesContainerTests
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 
-    [Fact]
-    public void NestedServicesElement_PrefersTheNonStoreyLevelOfItsTopLevelInstanceToItsOwnLevel()
+    [Theory]
+    [InlineData(-1001952)]   // its own level says Second
+    [InlineData(-1002062)]   // its own schedule level says Second
+    public void NestedServicesElement_PrefersTheNonStoreyLevelOfItsTopLevelInstanceToItsOwnLevel(int ownLevelParameter)
     {
         var info = new RevitFileInfo();
         info.Elements.Add(Level(id: 1, name: "Ground", elevation: 0, buildingStory: true));
@@ -78,11 +80,7 @@ public class IfcExporterBuildingServicesContainerTests
         var parent = Fitting(id: 100, levelId: 7, bottom: 7);                                // the top-level instance: First
         parent.Parameters.Add(new Parameter { Id = -1001350, StorageType = StorageType.ElementId, Value = 7 });
         info.Elements.Add(parent);
-        var nested = Fitting(id: 101, levelId: 3, bottom: 7);                                // its own level says Second
-        nested.Parameters.Add(new Parameter { Id = -1002062, StorageType = StorageType.ElementId, Value = 3 });
-        nested.SuperInstanceId = 100;
-        nested.NativeMasterSymbolId = 5;
-        info.Elements.Add(nested);
+        info.Elements.Add(NestedFitting(id: 101, parentId: 100, ownLevelParameter, ownLevelId: 3));
         string path = TempIfcPath("services-container-nested-own-level");
 
         try
@@ -94,6 +92,64 @@ public class IfcExporterBuildingServicesContainerTests
             Assert.Equal("First", ContainerOf(ifc, "101"));
         }
         finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void NestedServicesElement_KeepsTheStoreyOfItsTopLevelInstanceAgainstItsOwnLevel()
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(Level(id: 1, name: "Ground", elevation: 0, buildingStory: true));
+        info.Elements.Add(Level(id: 2, name: "First", elevation: 3, buildingStory: true));
+        info.Elements.Add(Level(id: 3, name: "Second", elevation: 6, buildingStory: true));
+        var parent = Fitting(id: 100, levelId: 2, bottom: 7);                                // the top-level instance: First
+        parent.Parameters.Add(new Parameter { Id = -1001350, StorageType = StorageType.ElementId, Value = 2 });
+        info.Elements.Add(parent);
+        info.Elements.Add(NestedFitting(id: 101, parentId: 100, ownLevelParameter: -1001952, ownLevelId: 3));
+        string path = TempIfcPath("services-container-nested-parent-storey");
+
+        try
+        {
+            new IfcExporter().Export(info, path);
+            string ifc = File.ReadAllText(path);
+
+            Assert.Equal("First", ContainerOf(ifc, "100"));
+            Assert.Equal("First", ContainerOf(ifc, "101"));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void ServicesFamilyInstance_PrefersItsNonStoreyBaseLevelToItsOwnLevel()
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(Level(id: 1, name: "Ground", elevation: 0, buildingStory: true));
+        info.Elements.Add(Level(id: 2, name: "First", elevation: 3, buildingStory: true));
+        info.Elements.Add(Level(id: 3, name: "Second", elevation: 6, buildingStory: true));
+        info.Elements.Add(Level(id: 7, name: "Hung ceiling", elevation: 3.5, buildingStory: false));
+        var instance = Fitting(id: 100, levelId: 3, bottom: 7);                              // not nested; its own level says Second
+        instance.Parameters.Add(new Parameter { Id = -1001350, StorageType = StorageType.ElementId, Value = 7 });
+        instance.NativeMasterSymbolId = 5;
+        info.Elements.Add(instance);
+        string path = TempIfcPath("services-container-own-base-level");
+
+        try
+        {
+            new IfcExporter().Export(info, path);
+
+            Assert.Equal("First", ContainerOf(File.ReadAllText(path), "100"));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    /// <summary>A nested fitting whose only level parameter is the given one.</summary>
+    private static Element NestedFitting(int id, int parentId, int ownLevelParameter, int ownLevelId)
+    {
+        var nested = Fitting(id, levelId: 0, bottom: 7);
+        nested.Parameters = nested.Parameters.Where(parameter => parameter.Id != -1001952).ToList();
+        nested.Parameters.Add(new Parameter { Id = ownLevelParameter, StorageType = StorageType.ElementId, Value = ownLevelId });
+        nested.SuperInstanceId = parentId;
+        nested.NativeMasterSymbolId = 5;
+        return nested;
     }
 
     /// <summary>The name of the storey, or the class of the building, that contains the product with this Tag.</summary>
