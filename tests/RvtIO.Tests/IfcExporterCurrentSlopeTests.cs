@@ -5,8 +5,9 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Slope of the current profile (SlopeCalculator): the first column of each type, whose body the body exporter extrudes
-/// vertically, carries 90 degrees; the other columns of the type reuse the mapped representation and carry none. A member
+/// <summary>Slope of the current profile (SlopeCalculator): the first column of each mapped body, whose body the body exporter extrudes
+/// vertically, carries 90 degrees; the other columns that reuse the mapped representation carry none, a column with a body of its own
+/// carries its own. A member
 /// with solids of its own takes the slope of its largest upward face.</summary>
 public class IfcExporterCurrentSlopeTests
 {
@@ -17,10 +18,119 @@ public class IfcExporterCurrentSlopeTests
     {
         var type = ColumnType(901);
         var other = ColumnType(902);
-        string ifc = Export(IfcProfile.Current, type, other, Column(100, 901, Prism()), Column(90, 901, Prism()), Column(120, 902, Prism()));
+        string ifc = Export(IfcProfile.Current, type, other, Symbol(700), Symbol(701), Column(100, 901, Placed(700)), Column(90, 901, Placed(700)), Column(120, 902, Placed(701)));
         Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 90).GetValueOrDefault("Slope"));
         Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 120).GetValueOrDefault("Slope"));
         Assert.DoesNotContain("Slope", ColumnSet(ifc, 100).Keys);
+    }
+
+    [Fact]
+    public void ColumnsOfOneTypeWithBodiesOfTheirOwn_EachReceiveNinetyDegrees()
+    {
+        string ifc = Export(IfcProfile.Current, ColumnType(901), Column(100, 901, Prism()), Column(90, 901, Prism(height: 3)));
+        Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 90).GetValueOrDefault("Slope"));
+        Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 100).GetValueOrDefault("Slope"));
+    }
+
+    [Fact]
+    public void RoundColumn_WithExactEndFacesOutsideItsShell_IsAVerticalExtrusion()
+    {
+        Assert.True(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(), out _));
+    }
+
+    [Fact]
+    public void RoundColumn_WhoseEndFacesAreNotOneCircleOfOneArea_IsNoVerticalExtrusion()
+    {
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topShortfall: 0.05), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topShift: 0.1), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(stray: 0.05), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topTilt: 0.1), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(height: 0), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(extraSolid: true), out _));
+    }
+
+    [Fact]
+    public void RectangularColumn_WithAnExactEndFaceOutsideItsShell_KeepsTheJudgementOfItsShell()
+    {
+        // the rule of the round column does not reach other geometry: the box without its top face in the shell is no extrusion, whatever
+        // the faces beside the shell say
+        GeometryData box = Prism();
+        box.Faces[1].PlaneSurface = true;
+        box.Faces[1].QuadratureArea = 12;
+        box.BrepSolids = [new GeoBrepSolid { IsClosed = false, FaceIndices = [0, 2, 3, 4, 5] }];
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(box, out _));
+    }
+
+    [Fact]
+    public void RoundColumn_InTheExport_ReceivesNinetyDegrees()
+    {
+        string ifc = Export(IfcProfile.Current, ColumnType(901), Column(100, 901, IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry()));
+        Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 100).GetValueOrDefault("Slope"));
+        ifc = Export(IfcProfile.Current, ColumnType(901), Column(100, 901, IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topShortfall: 0.05)));
+        Assert.DoesNotContain("Slope", ColumnSet(ifc, 100).Keys);
+    }
+
+    [Fact]
+    public void BodyOfAProduct_IsMappedOwnOrUnrecognised()
+    {
+        static (bool Known, int? Map) Read(string representationIdentifier, string representationType, bool withShape = true, bool unknownProduct = false)
+        {
+            var w = new StepWriter();
+            int map = w.Add("IFCREPRESENTATIONMAP", "$,$");
+            int item = w.Add("IFCMAPPEDITEM", $"#{map},$");
+            int representation = w.Add("IFCSHAPEREPRESENTATION", $"$,'{representationIdentifier}','{representationType}',(#{item})");
+            int shape = w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+            int product = w.Add("IFCCOLUMN", $"'g',$,'P',$,$,$,{(withShape ? "#" + shape : "$")},'1'");
+            var indexById = new Dictionary<int, int>();
+            for (int i = 0; i < w.EntityCount; i++) indexById[w.EntityAt(i).Id] = i;
+            bool known = IfcExporter.TryMappedBodySourceCurrent(w, indexById, unknownProduct ? 999 : product, out int? source);
+            return (known, source == map ? -1 : source);
+        }
+
+        Assert.Equal((true, (int?)-1), Read("Body", "MappedRepresentation"));
+        Assert.Equal((true, (int?)null), Read("Body", "SweptSolid"));
+        Assert.Equal((false, (int?)null), Read("Axis", "Curve3D"));
+        Assert.Equal((false, (int?)null), Read("Body", "MappedRepresentation", withShape: false));
+        Assert.Equal((false, (int?)null), Read("Body", "MappedRepresentation", unknownProduct: true));
+    }
+
+    /// <summary>Two columns of one type with the same vertical geometry, the second one with the given product shape (null: none, an
+    /// unrecognised body); returns the number of Slope properties written.</summary>
+    private static int SlopesOfTwoColumns(Func<StepWriter, int> secondShape)
+    {
+        var w = new StepWriter();
+        int owner = w.Add("IFCOWNERHISTORY", "$,$,$,.NOCHANGE.,$,$,$,0");
+        int placement = w.Add("IFCLOCALPLACEMENT", "$,$");
+        int type = w.Add("IFCCOLUMNTYPE", "'RZGD7y6S5209$mGLi_sPl0',#" + owner + ",'T',$,$,$,$,$,$,.COLUMN.");
+        int ownBody = Shape(w, "SweptSolid");
+        var products = new Dictionary<int, (int entityId, int placementId, string ifcType)>();
+        var elements = new Dictionary<int, Element>();
+        var members = new List<int>();
+        foreach (var (elementId, shape) in new[] { (10, ownBody), (20, secondShape(w)) })
+        {
+            int column = w.Add("IFCCOLUMN", $"'RZGD7y6S5209$mGLi_sPl{elementId / 10}',#{owner},'P',$,$,#{placement},{(shape > 0 ? "#" + shape : "$")},'{elementId}'");
+            int property = w.Add("IFCPROPERTYSINGLEVALUE", "'Reference','',IFCIDENTIFIER('x'),$");
+            int pset = w.Add("IFCPROPERTYSET", $"'RZGD7y6S5209$mGLi_sP{elementId}',#{owner},'Pset_ColumnCommon','',(#{property})");
+            w.Add("IFCRELDEFINESBYPROPERTIES", $"'RZGD7y6S5209$mGLi_sQ{elementId}',#{owner},$,$,(#{column}),#{pset}");
+            products[elementId] = (column, placement, "IFCCOLUMN");
+            elements[elementId] = new Element { Id = elementId, CategoryId = -2001330, Geometry = Prism() };
+            members.Add(column);
+        }
+        w.Add("IFCRELDEFINESBYTYPE", $"'RZGD7y6S5209$mGLi_sR0',#{owner},$,$,({string.Join(",", members.Select(id => "#" + id))}),#{type}");
+        return new IfcExporter().ApplySlopePropertySetsCurrent(w, elements, products, new());
+    }
+
+    private static int Shape(StepWriter w, string representationType)
+    {
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"$,'Body','{representationType}',($)");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
+    [Fact]
+    public void SecondColumnOfAType_WithABodyThatIsNotRecognised_ReceivesNoSlope_WithABodyOfItsOwn_ReceivesIt()
+    {
+        Assert.Equal(1, SlopesOfTwoColumns(_ => 0));
+        Assert.Equal(2, SlopesOfTwoColumns(w => Shape(w, "SweptSolid")));
     }
 
     [Fact]
@@ -65,6 +175,16 @@ public class IfcExporterCurrentSlopeTests
         Assert.Null(IfcExporter.LargestUpwardFaceSlopeCurrent(new GeometryData()));
     }
 
+    private static Element Symbol(int id) => new() { Id = id, IsBlockOnly = true, Geometry = Prism() };
+
+    /// <summary>The geometry of an instance that is the geometry of the symbol, placed: the body of the instance is a mapped item.</summary>
+    private static GeometryData Placed(int symbolId)
+    {
+        GeometryData geometry = Prism();
+        geometry.ExactMappedInstances = [new GeoInstance { SymbolId = symbolId, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] }];
+        return geometry;
+    }
+
     private static Element ColumnType(int id) => new() { Id = id, CategoryId = -2001330, Name = "Column type" };
 
     private static Element Column(int id, int typeId, GeometryData geometry) => new()
@@ -85,12 +205,12 @@ public class IfcExporterCurrentSlopeTests
     };
 
     /// <summary>A 4 x 3 x 2 box; a positive <paramref name="topTilt"/> raises the x = 4 edge of the top face.</summary>
-    private static GeometryData Prism(double topTilt = 0, bool planeVectors = false)
+    private static GeometryData Prism(double topTilt = 0, bool planeVectors = false, double height = 2)
     {
         double[][] points =
         [
             [0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0],
-            [0, 0, 2], [4, 0, 2 + topTilt * 2], [4, 3, 2 + topTilt * 2], [0, 3, 2],
+            [0, 0, height], [4, 0, height + topTilt * 2], [4, 3, height + topTilt * 2], [0, 3, height],
         ];
         int[][] faces = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
         var list = faces.Select(indices => new GeoFace { OuterVertices = indices.Select(index => points[index]).ToList() }).ToList();
@@ -109,7 +229,7 @@ public class IfcExporterCurrentSlopeTests
         }
         return new GeometryData
         {
-            BoundingBox = [0, 0, 0, 4, 3, 2 + Math.Max(0, topTilt * 2)],
+            BoundingBox = [0, 0, 0, 4, 3, height + Math.Max(0, topTilt * 2)],
             Faces = list,
             BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = [0, 1, 2, 3, 4, 5] }],
         };
