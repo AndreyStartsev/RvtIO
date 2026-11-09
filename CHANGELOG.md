@@ -11,6 +11,7 @@ API between minor releases.
 - Default output, current IFC profile: every beam with a straight drive curve gets `Pset_BeamCommon.Slope`, the angle in degrees of its drive curve to the horizontal (0 for a horizontal beam, never negative), whether or not BaseQuantities are exported and whatever its body; its quantities are unchanged. A beam without a straight drive curve gets no Slope.
 - Default output, current IFC profile: `Pset_BeamCommon.Span` of a beam without a stored length is the length of its straight drive curve; a beam without one has no Span.
 - Default output, current IFC profile: a round column whose two circular end faces have the same exact area (a vertical prism) gets the extrusion data `Length`, `CrossSectionArea` (the area of its circle), `OuterSurfaceArea` and `GrossVolume` in its BaseQuantities, and its `NetVolume` and, when it has no such data, its `CrossSectionArea` (half the surface) come from the solid the file measures, instead of the open tessellated side of the column.
+- Default output, current IFC profile: `Pset_ColumnCommon.Slope` (90 degrees for a vertical extrusion) is written for every column with a body of its own, not only for the first column of its type; the columns that share a mapped body still carry it on the first one. A round column whose exact end faces lie outside the tessellated shell of its side is judged on all its faces.
 
 ## [0.3.0] - 2026-11-08
 

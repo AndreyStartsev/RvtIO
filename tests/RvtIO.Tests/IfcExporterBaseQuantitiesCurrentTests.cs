@@ -3078,7 +3078,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     /// <summary>A vertical round solid of radius 0.5 and height 10 feet as the decoded geometry holds it: the node with the integrals lists
     /// its two exact end faces (the top one smaller by <paramref name="topShortfall"/>), the tessellated node without integrals lists
     /// the twelve side facets and a copy of the bottom end; the shell of the instance is that open tessellated node.</summary>
-    private static GeometryData RoundColumnGeometry(double topShortfall = 0)
+    internal static GeometryData RoundColumnGeometry(double topShortfall = 0)
     {
         const int sides = 12;
         const double radius = 0.5, height = 10;

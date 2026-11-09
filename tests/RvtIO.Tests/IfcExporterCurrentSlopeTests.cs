@@ -5,8 +5,9 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Slope of the current profile (SlopeCalculator): the first column of each type, whose body the body exporter extrudes
-/// vertically, carries 90 degrees; the other columns of the type reuse the mapped representation and carry none. A member
+/// <summary>Slope of the current profile (SlopeCalculator): the first column of each mapped body, whose body the body exporter extrudes
+/// vertically, carries 90 degrees; the other columns that reuse the mapped representation carry none, a column with a body of its own
+/// carries its own. A member
 /// with solids of its own takes the slope of its largest upward face.</summary>
 public class IfcExporterCurrentSlopeTests
 {
@@ -17,10 +18,25 @@ public class IfcExporterCurrentSlopeTests
     {
         var type = ColumnType(901);
         var other = ColumnType(902);
-        string ifc = Export(IfcProfile.Current, type, other, Column(100, 901, Prism()), Column(90, 901, Prism()), Column(120, 902, Prism()));
+        string ifc = Export(IfcProfile.Current, type, other, Symbol(700), Symbol(701), Column(100, 901, Placed(700)), Column(90, 901, Placed(700)), Column(120, 902, Placed(701)));
         Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 90).GetValueOrDefault("Slope"));
         Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 120).GetValueOrDefault("Slope"));
         Assert.DoesNotContain("Slope", ColumnSet(ifc, 100).Keys);
+    }
+
+    [Fact]
+    public void ColumnsOfOneTypeWithBodiesOfTheirOwn_EachReceiveNinetyDegrees()
+    {
+        string ifc = Export(IfcProfile.Current, ColumnType(901), Column(100, 901, Prism()), Column(90, 901, Prism(height: 3)));
+        Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 90).GetValueOrDefault("Slope"));
+        Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 100).GetValueOrDefault("Slope"));
+    }
+
+    [Fact]
+    public void RoundColumn_WithExactEndFacesOutsideItsShell_IsAVerticalExtrusionWhenTheEndFacesAgree()
+    {
+        Assert.True(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topShortfall: 0.05), out _));
     }
 
     [Fact]
@@ -65,6 +81,16 @@ public class IfcExporterCurrentSlopeTests
         Assert.Null(IfcExporter.LargestUpwardFaceSlopeCurrent(new GeometryData()));
     }
 
+    private static Element Symbol(int id) => new() { Id = id, IsBlockOnly = true, Geometry = Prism() };
+
+    /// <summary>The geometry of an instance that is the geometry of the symbol, placed: the body of the instance is a mapped item.</summary>
+    private static GeometryData Placed(int symbolId)
+    {
+        GeometryData geometry = Prism();
+        geometry.ExactMappedInstances = [new GeoInstance { SymbolId = symbolId, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] }];
+        return geometry;
+    }
+
     private static Element ColumnType(int id) => new() { Id = id, CategoryId = -2001330, Name = "Column type" };
 
     private static Element Column(int id, int typeId, GeometryData geometry) => new()
@@ -85,12 +111,12 @@ public class IfcExporterCurrentSlopeTests
     };
 
     /// <summary>A 4 x 3 x 2 box; a positive <paramref name="topTilt"/> raises the x = 4 edge of the top face.</summary>
-    private static GeometryData Prism(double topTilt = 0, bool planeVectors = false)
+    private static GeometryData Prism(double topTilt = 0, bool planeVectors = false, double height = 2)
     {
         double[][] points =
         [
             [0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0],
-            [0, 0, 2], [4, 0, 2 + topTilt * 2], [4, 3, 2 + topTilt * 2], [0, 3, 2],
+            [0, 0, height], [4, 0, height + topTilt * 2], [4, 3, height + topTilt * 2], [0, 3, height],
         ];
         int[][] faces = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
         var list = faces.Select(indices => new GeoFace { OuterVertices = indices.Select(index => points[index]).ToList() }).ToList();
@@ -109,7 +135,7 @@ public class IfcExporterCurrentSlopeTests
         }
         return new GeometryData
         {
-            BoundingBox = [0, 0, 0, 4, 3, 2 + Math.Max(0, topTilt * 2)],
+            BoundingBox = [0, 0, 0, 4, 3, height + Math.Max(0, topTilt * 2)],
             Faces = list,
             BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = [0, 1, 2, 3, 4, 5] }],
         };

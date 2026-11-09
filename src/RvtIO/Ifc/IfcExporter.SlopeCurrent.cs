@@ -6,9 +6,10 @@ namespace RvtIO.Ifc;
 public partial class IfcExporter
 {
     /// <summary>Pset_ColumnCommon.Slope and Pset_MemberCommon.Slope of the current profile.
-    /// A column receives the extrusion slope of the body export of its type, which runs for the first instance of
-    /// every IfcColumnType only (the other instances reuse the mapped representation and carry no extrusion data):
-    /// asin(|z|) of the extrusion direction, 90 degrees for a vertical extrusion; the Slope sits on the lowest element id of each type.
+    /// A column receives the extrusion slope of the body export of its body, which runs for the first instance of every mapped
+    /// body only (the other instances reuse the mapped representation and carry no extrusion data) and for every instance with a
+    /// body of its own: asin(|z|) of the extrusion direction, 90 degrees for a vertical extrusion; the Slope sits on the lowest
+    /// element id of the members of a type that share a mapped body.
     /// The extrusion is found by <see cref="WallExtrusion.TryFindVerticalExtrusion"/> on a solid of the instance. A
     /// member that holds solids of its own (a railing support: its body is no mapped item) takes the last attempt of
     /// the calculation, the slope of the largest face whose normal has a positive Z. Beams, slanted columns and
@@ -59,16 +60,23 @@ public partial class IfcExporter
 
         var targets = new List<(int EntityId, double Degrees)>();
         string? diagPath = Environment.GetEnvironmentVariable("RVTIO_PSET_DIAG");
+        var indexById = new Dictionary<int, int>();
+        for (int i = 0; i < count; i++) indexById[w.EntityAt(i).Id] = i;
         foreach (var members in typeMembers)
         {
-            if (members.Count == 0) continue;
-            int first = members.MinBy(entityId => elementIdByEntity[entityId]);
-            if (!elementsById.TryGetValue(elementIdByEntity[first], out Element? column) || column.Geometry is not { } geometry)
-                continue;
-            bool vertical = HasVerticalExtrusionCurrent(geometry, out string detail);
-            if (vertical) targets.Add((first, 90.0));
-            if (!string.IsNullOrEmpty(diagPath))
-                File.AppendAllText(diagPath, $"Slope,{column.Id},{members.Count},{vertical},{detail}\n");
+            // The members that share one mapped body are the extrusion of its first member (the lowest element id); a member with a
+            // body of its own is an extrusion of its own.
+            var usedMaps = new HashSet<int>();
+            foreach (int entityId in members.OrderBy(entityId => elementIdByEntity[entityId]))
+            {
+                if (MappedBodySourceCurrent(w, indexById, entityId) is { } map && !usedMaps.Add(map)) continue;
+                if (!elementsById.TryGetValue(elementIdByEntity[entityId], out Element? column) || column.Geometry is not { } geometry)
+                    continue;
+                bool vertical = HasVerticalExtrusionCurrent(geometry, out string detail);
+                if (vertical) targets.Add((entityId, 90.0));
+                if (!string.IsNullOrEmpty(diagPath))
+                    File.AppendAllText(diagPath, $"Slope,{column.Id},{members.Count},{vertical},{detail}\n");
+            }
         }
         foreach (var (elementId, product) in products)
             if (product.ifcType == "IFCMEMBER" && elementsById.TryGetValue(elementId, out Element? member)
@@ -139,6 +147,26 @@ public partial class IfcExporter
         return added;
     }
 
+    /// <summary>The representation map of the Body of a product when it is written as a mapped item, else null.</summary>
+    private static int? MappedBodySourceCurrent(StepWriter w, Dictionary<int, int> indexById, int productEntity)
+    {
+        var product = SplitStepArguments(w.EntityAt(indexById[productEntity]).Args);
+        if (product.Length < 7 || !TryEntityId(product[6], out int shapeId) || !indexById.TryGetValue(shapeId, out int shapeIndex)) return null;
+        var shape = SplitStepArguments(w.EntityAt(shapeIndex).Args);
+        if (shape.Length != 3 || shape[2].Length < 3) return null;
+        foreach (string token in SplitStepArguments(shape[2][1..^1]))
+        {
+            if (!TryEntityId(token, out int representationId) || !indexById.TryGetValue(representationId, out int representationIndex)) continue;
+            var representation = SplitStepArguments(w.EntityAt(representationIndex).Args);
+            if (representation.Length != 4 || representation[1] != "'Body'" || representation[2] != "'MappedRepresentation'" || representation[3].Length < 3) continue;
+            var items = SplitStepArguments(representation[3][1..^1]);
+            if (items.Length == 1 && TryEntityId(items[0], out int itemId) && indexById.TryGetValue(itemId, out int itemIndex)
+                && w.EntityAt(itemIndex).Type == "IFCMAPPEDITEM" && TryEntityId(SplitStepArguments(w.EntityAt(itemIndex).Args)[0], out int map))
+                return map;
+        }
+        return null;
+    }
+
     /// <summary>Every solid of the instance is a vertical extrusion for the body export. An instance of three solids, one of
     /// which fails, is exported as three B-Reps, none as an extrusion, so one failing solid takes the extrusion of the others.</summary>
     internal static bool HasVerticalExtrusionCurrent(GeometryData geometry, out string detail)
@@ -148,6 +176,9 @@ public partial class IfcExporter
         var solids = geometry.BrepSolids is { Count: > 0 } shells
             ? shells.Select(shell => shell.FaceIndices.Where(index => (uint)index < (uint)faces.Count).Select(index => faces[index]).ToList()).ToList()
             : [faces];
+        // A round solid lists its exact end faces outside the tessellated shell of its side: the solid is all the faces then.
+        if (geometry.BrepSolids is [var only] && faces.Where((face, index) => !only.FaceIndices.Contains(index)).Any(IsExactCap))
+            solids = [faces];
         bool all = true;
         var parts = new List<string>();
         foreach (var solid in solids)
