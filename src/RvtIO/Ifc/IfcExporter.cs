@@ -4905,17 +4905,34 @@ public partial class IfcExporter
             SkipLog?.Remove(gridId);
         }
 
+        int[] ExportedChildEntityIds(IEnumerable<int> ids) => ids
+            .Where(id => exportedIfcElements.TryGetValue(id, out var child)
+                && child.ifcType is "IFCPLATE" or "IFCMEMBER" or "IFCDOOR" or "IFCWINDOW"
+                    or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCCURTAINWALL")
+            .Select(id => exportedIfcElements[id].entityId).Order().ToArray();
+
+        // A bodiless roof of a file with undecoded geometry is written as a product like any other (as before); it only gains the aggregate of its
+        // exported curtain children, which then leave the storey. A roof none of whose children is exported stays as it was.
+        if (info.GeometryUndecoded)
+            foreach (var (roofId, roofChildren) in roofContainerChildren.OrderBy(pair => pair.Key))
+            {
+                if (!exportedIfcElements.TryGetValue(roofId, out var roofEntry) || roofEntry.ifcType != "IFCROOF"
+                    || ExportedChildEntityIds(roofChildren) is not { Length: > 0 } roofChildEntityIds)
+                    continue;
+                w.Add("IFCRELAGGREGATES",
+                    $"{S(ResolveExactElementGlobalId(elemById[roofId], _usedExportIds, CurtainWallRelAggregates, CurrentProfile) ?? IfcGuid.FromName($"curtain-aggregate:{roofId}"))},{R(ownerHistId)},$,$,"
+                    + $"{R(roofEntry.entityId)},{StepWriter.List(roofChildEntityIds.Select(R))}");
+                var roofChildSet = roofChildEntityIds.ToHashSet();
+                foreach (var contents in storeyContents.Values) contents.RemoveAll(roofChildSet.Contains);
+            }
+
         // Resolve decomposition AFTER normal product emission.
         foreach (var pending in pendingCurtainParents.Values.OrderBy(item => item.Element.Id))
         {
             var parent = pending.Element;
             if (exportedIfcElements.ContainsKey(parent.Id)) continue;
             bool roofContainer = parent.CategoryId == -2000035;
-            var childEntityIds = (roofContainer ? roofContainerChildren[parent.Id] : exactCurtainChildren[parent.Id])
-                .Where(id => exportedIfcElements.TryGetValue(id, out var child)
-                    && child.ifcType is "IFCPLATE" or "IFCMEMBER" or "IFCDOOR" or "IFCWINDOW"
-                        or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCCURTAINWALL")
-                .Select(id => exportedIfcElements[id].entityId).Order().ToArray();
+            var childEntityIds = ExportedChildEntityIds(roofContainer ? roofContainerChildren[parent.Id] : exactCurtainChildren[parent.Id]);
             if (childEntityIds.Length == 0) continue;
 
             int placement = w.Add("IFCLOCALPLACEMENT", $"{R(bldgLocalPlacementId)},{R(axisId)}");
@@ -67787,11 +67804,15 @@ public partial class IfcExporter
         var result = new Dictionary<int, List<int>>();
         foreach (var child in elements)
         {
-            if (child.Id <= 0 || child.CategoryId is not (-2000170 or -2000171 or -2000014 or -2000023 or -2000011)
-                || child.SerializedCurtainHostId is not > 0
+            if (child.Id <= 0 || child.CategoryId is not (-2000170 or -2000171 or -2000014 or -2000023 or -2000011))
+                continue;
+            // A panel or mullion without a curtain host id points to its curtain wall by the plain host id.
+            int hostId = child.SerializedCurtainHostId is > 0 ? child.SerializedCurtainHostId.Value
+                : child.CategoryId is -2000170 or -2000171 ? child.SerializedHostId ?? 0 : 0;
+            if (hostId <= 0
                 || occurrenceCounts.GetValueOrDefault(child.Id) != 1
-                || !byId.TryGetValue(child.SerializedCurtainHostId.Value, out var parent)
-                || parent.Id != child.SerializedCurtainHostId.Value || parent.Id == child.Id
+                || !byId.TryGetValue(hostId, out var parent)
+                || parent.Id != hostId || parent.Id == child.Id
                 || parent.CategoryId != -2000011 || parent.IsBlockOnly
                 || occurrenceCounts.GetValueOrDefault(parent.Id) != 1
                 || parent.FamilyTypeId <= 0 || !byId.TryGetValue(parent.FamilyTypeId, out var type)
