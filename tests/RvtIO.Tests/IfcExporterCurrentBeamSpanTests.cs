@@ -56,6 +56,17 @@ public class IfcExporterCurrentBeamSpanTests
     }
 
     [Fact]
+    public void DriveCurveFirst_PrefersTheExactCurveOverTheRoundedStoredLength_AndFallsBack()
+    {
+        var brace = new Element { Id = 1, CurveDriverLineLength = 1.4569 };
+        brace.Parameters.Add(Length(1.4567));
+        Assert.Equal(1.4567 * 304.8, IfcExporter.ResolveBeamSpanMillimetresCurrent(brace, null)!.Value, 9);
+        Assert.Equal(1.4569 * 304.8, IfcExporter.ResolveBeamSpanMillimetresCurrent(brace, null, driveCurveFirst: true)!.Value, 9);
+        brace.CurveDriverLineLength = null;
+        Assert.Equal(1.4567 * 304.8, IfcExporter.ResolveBeamSpanMillimetresCurrent(brace, null, driveCurveFirst: true)!.Value, 9);
+    }
+
+    [Fact]
     public void NoLengthParameter_HasNoSpan() =>
         Assert.Null(IfcExporter.ResolveBeamSpanMillimetresCurrent(new Element { Id = 1 }, new Element { Id = 2 }));
 }

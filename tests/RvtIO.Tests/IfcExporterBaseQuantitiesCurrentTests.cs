@@ -2118,7 +2118,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
 
-    private static string ExportBeam(IfcExporter exporter)
+    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false)
     {
         var beam = new Element
         {
@@ -2141,7 +2141,13 @@ public class IfcExporterBaseQuantitiesCurrentTests
                 BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = [0, 1, 2, 3, 4, 5] }],
             },
         };
-        var info = new RevitFileInfo();
+        beam.NativeStructuralType = structuralType;
+        if (driveCurve)
+        {
+            beam.CurveDriverLineLength = 10;
+            beam.CurveDriverLineZ = (0, 5);
+        }
+        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded };
         info.Elements.Add(beam);
         string path = Path.Combine(Path.GetTempPath(), $"revitreader-base-quantities-{Guid.NewGuid():N}.ifc");
         try
@@ -2180,6 +2186,34 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.Equal(10 * 0.3048 * 1000, QuantityIn(ifc, "LENGTH", "Length"), 6);
         Assert.Equal(0.4 * 0.6 * SquareFeet, QuantityIn(ifc, "AREA", "CrossSectionArea"), 9);
         Assert.Equal(0.4 * 0.6 * 10 * CubicFeet, QuantityIn(ifc, "VOLUME", "NetVolume"), 9);
+    }
+
+    [Fact]
+    public void Option_On_BraceOfDecodedFile_IsAMemberWithTheBeamLengthAndCrossSectionAreaAndItsOwnSlope()
+    {
+        string ifc = ExportBeam(new IfcExporter { BaseQuantities = true }, structuralType: 2, driveCurve: true);
+
+        Assert.Contains("=IFCMEMBER(", ifc);
+        Assert.Equal(10 * 0.3048 * 1000, QuantityIn(ifc, "LENGTH", "Length"), 6);
+        Assert.Equal(0.4 * 0.6 * SquareFeet, QuantityIn(ifc, "AREA", "CrossSectionArea"), 9);
+        Assert.Equal(0.4 * 0.6 * 10 * CubicFeet, QuantityIn(ifc, "VOLUME", "NetVolume"), 9);
+        // the rest is the member rule: no beam-only quantities
+        Assert.DoesNotContain("'GrossVolume'", ifc);
+        Assert.DoesNotContain("'OuterSurfaceArea'", ifc);
+        // one Slope, the angle of the drive curve (rise 5 over length 10), in Pset_MemberCommon
+        Assert.Single(Regex.Matches(ifc, "'Slope'"));
+        Assert.Equal(30.0, double.Parse(Regex.Match(ifc, @"'Slope',[^,]*,IFCPLANEANGLEMEASURE\(([^)]+)\)").Groups[1].Value, CultureInfo.InvariantCulture), 9);
+        Assert.DoesNotContain("Pset_BeamCommon", ifc);
+    }
+
+    [Fact]
+    public void Option_On_BraceOfUndecodedFile_KeepsTheMemberRule()
+    {
+        string ifc = ExportBeam(new IfcExporter { BaseQuantities = true }, structuralType: 2, geometryUndecoded: true);
+
+        Assert.Contains("=IFCMEMBER(", ifc);
+        // the member rule reads half the surface area of the solid as the section
+        Assert.NotEqual(0.4 * 0.6 * SquareFeet, QuantityIn(ifc, "AREA", "CrossSectionArea"), 6);
     }
 
     [Theory]
@@ -3071,5 +3105,224 @@ public class IfcExporterBaseQuantitiesCurrentTests
         };
 
         AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
+    }
+
+    // ---- round columns: exact end faces beside a tessellated side ----
+
+    /// <summary>A vertical solid on a regular polygon of <paramref name="sides"/> corners of radius 0.5 and height 10 feet as the decoded
+    /// geometry holds a round one: the node with the integrals lists its two exact end faces (the top one smaller by
+    /// <paramref name="topShortfall"/>, shifted along x by <paramref name="topShift"/>, raised by <paramref name="topTilt"/> times x), the
+    /// tessellated node without integrals lists the side facets and a copy of the bottom end; the shell of the instance is that open
+    /// tessellated node. The exact area of an end face is that of the circle, or of the polygon with <paramref name="polygonArea"/>.
+    /// <paramref name="stray"/> pushes one corner of a side facet off the cylinder, <paramref name="extraSolid"/> adds a second solid node
+    /// without integrals, <paramref name="hole"/> gives the bottom end a hole, <paramref name="splitCapNodes"/> puts the top end in a node of
+    /// its own that measures the whole solid as well. <paramref name="offset"/> moves every vertex (x, y, z) and <paramref name="float32"/>
+    /// rounds every coordinate to a 32-bit number, as mesh vertices are read.</summary>
+    internal static GeometryData RoundColumnGeometry(double topShortfall = 0, double topShift = 0, double topTilt = 0, double height = 10,
+        double stray = 0, bool extraSolid = false, int sides = 12, bool polygonArea = false, bool hole = false, bool splitCapNodes = false,
+        double[]? offset = null, bool float32 = false, bool planarSides = false)
+    {
+        const double radius = 0.5;
+        double[] Corner(int k, double z) => [radius * Math.Cos(2 * Math.PI * k / sides), radius * Math.Sin(2 * Math.PI * k / sides), z];
+        var bottom = Enumerable.Range(0, sides).Select(k => Corner(k, 0)).ToList();
+        var top = Enumerable.Range(0, sides).Select(k => Corner(k, height)).Select(p => new[] { p[0] + topShift, p[1], p[2] + topTilt * p[0] }).ToList();
+        double circle = Math.PI * radius * radius;
+        double capArea = polygonArea ? sides / 2.0 * radius * radius * Math.Sin(2 * Math.PI / sides) : circle;
+        var faces = new List<GeoFace>
+        {
+            new() { GeometryNode = 10, PlaneSurface = true, QuadratureArea = capArea, OuterVertices = bottom, Origin = bottom[0], Normal = [0, 0, -1] },
+            new() { GeometryNode = splitCapNodes ? 11 : 10, PlaneSurface = true, QuadratureArea = capArea - topShortfall, OuterVertices = top, Origin = top[0], Normal = [-topTilt, 0, 1] },
+            new() { GeometryNode = 18, PlaneSurface = true, OuterVertices = bottom, Origin = bottom[0], Normal = [0, 0, -1] },
+        };
+        if (hole) faces[0].InnerVertices = [Enumerable.Range(0, 8).Select(k => new[] { 0.1 * Math.Cos(2 * Math.PI * k / 8), 0.1 * Math.Sin(2 * Math.PI * k / 8), 0.0 }).ToList()];
+        for (int k = 0; k < sides; k++)
+            faces.Add(new() { GeometryNode = 18, PlaneSurface = planarSides, OuterVertices = [Corner(k, 0), Corner(k + 1, 0), Corner(k + 1, height), Corner(k, height)] });
+        if (stray > 0) faces[3].OuterVertices![2] = [(radius + stray) * Math.Cos(2 * Math.PI / sides), (radius + stray) * Math.Sin(2 * Math.PI / sides), height];
+        var solids = new List<GeoBrepSolid> { new() { IsClosed = false, FaceIndices = [.. Enumerable.Range(2, sides + 1)] } };
+        if (extraSolid)
+        {
+            // a closed 1 x 1 x 1 foot box beside the cylinder: no integrals, so only the shells of the instance measure it
+            double[][] p = [[3, 0, 0], [4, 0, 0], [4, 1, 0], [3, 1, 0], [3, 0, 1], [4, 0, 1], [4, 1, 1], [3, 1, 1]];
+            int[][] box = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
+            int first = faces.Count;
+            foreach (var corners in box)
+                faces.Add(new() { GeometryNode = 30, OuterVertices = corners.Select(i => p[i]).ToList() });
+            solids.Add(new GeoBrepSolid { IsClosed = true, FaceIndices = [.. Enumerable.Range(first, box.Length)] });
+        }
+        if (offset != null || float32)
+            foreach (var face in faces)
+            {
+                double[] Move(double[] p) => p.Select((v, axis) => float32 ? (double)(float)(v + (offset?[axis] ?? 0)) : v + (offset?[axis] ?? 0)).ToArray();
+                face.OuterVertices = face.OuterVertices!.Select(Move).ToList();
+                face.Origin = Move(face.Origin!);
+            }
+        var measures = new List<RvtIO.Parsing.MeshNodeMeasure> { new(10, 2 * Math.PI * radius * height + 2 * circle, circle * height) };
+        if (splitCapNodes) measures.Add(new(11, 2 * Math.PI * radius * height + 2 * circle, circle * height));
+        return new GeometryData { Faces = faces, BrepSolids = solids, NodeMeasures = measures };
+    }
+
+    private static StepWriter ColumnWriter(GeometryData geometry)
+    {
+        var (w, owner, placement) = NewWriter();
+        int column = AddProduct(w, "IFCCOLUMN", "RZGD7y6S5209$mGLi_sPlj", owner, placement);
+        Apply(w, owner, new() { [15] = new Element { Id = 15, CategoryId = -2001330, Geometry = geometry } }, new() { [column] = 15 });
+        return w;
+    }
+
+    private static List<(string Name, double Value)> ColumnQuantities(GeometryData geometry)
+    {
+        var w = ColumnWriter(geometry);
+        return new[] { "IFCQUANTITYLENGTH", "IFCQUANTITYAREA", "IFCQUANTITYVOLUME" }.SelectMany(type => Quantities(w, type)).ToList();
+    }
+
+    /// <summary>The column quantities of a geometry equal those of the same geometry without the measures of its nodes (the base: only the shells).</summary>
+    private static void AssertColumnKeepsItsQuantitiesWithoutNodeMeasures(Func<GeometryData> geometry)
+    {
+        var measured = ColumnQuantities(geometry());
+        var withoutMeasures = geometry();
+        withoutMeasures.NodeMeasures = null;
+        var baseline = ColumnQuantities(withoutMeasures);
+        Assert.Equal(baseline.Select(q => q.Name), measured.Select(q => q.Name));
+        for (int i = 0; i < baseline.Count; i++) Assert.Equal(baseline[i].Value, measured[i].Value, 12);
+    }
+
+    [Fact]
+    public void Pass_Column_Round_TakesTheExtrusionDataOfItsCircleAndTheMeasuresOfTheNodeWithTheEndFaces()
+    {
+        double circle = Math.PI * 0.25;
+
+        var w = ColumnWriter(RoundColumnGeometry());
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Length", 10 * 0.3048));
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", circle * SquareFeet),
+            ("OuterSurfaceArea", 10 * 0.3048 * 1000 * Math.PI * 1.0 * 0.3048 * 1000));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", 10 * 0.3048 * 1000 * circle * SquareFeet), ("NetVolume", circle * 10 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_Column_RoundWithEndFacesOfSlightlyDifferentArea_HasNoExtrusionDataAndTakesTheMeasuresOfTheNodeWithTheEndFaces()
+    {
+        double circle = Math.PI * 0.25;
+
+        var w = ColumnWriter(RoundColumnGeometry(topShortfall: 0.003 * Math.PI * 0.25));
+
+        Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
+        // the cross section is half the surface of the solid, the volume the one of the node
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("CrossSectionArea", (2 * Math.PI * 0.5 * 10 + 2 * circle) / 2 * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", circle * 10 * CubicFeet));
+    }
+
+    public static TheoryData<string> NotARoundPrism => new()
+    {
+        "different circles", "end faces 6% apart in area", "corner off the cylinder", "tilted end face", "zero height", "hole in an end face",
+        "4 corners", "5 corners", "6 corners", "7 corners", "8-gon", "12-gon", "16-gon", "40-gon with planar facets",
+    };
+
+    private static GeometryData NotARoundPrismGeometry(string kind) => kind switch
+    {
+        "different circles" => RoundColumnGeometry(topShift: 0.1),
+        "end faces 6% apart in area" => RoundColumnGeometry(topShortfall: 0.05),
+        "corner off the cylinder" => RoundColumnGeometry(stray: 0.05),
+        "tilted end face" => RoundColumnGeometry(topTilt: 0.1),
+        "zero height" => RoundColumnGeometry(height: 0),
+        "hole in an end face" => RoundColumnGeometry(hole: true),
+        // fewer than eight corners on the circle, the exact area that of the circle: the corner count refuses them
+        "4 corners" => RoundColumnGeometry(sides: 4),
+        "5 corners" => RoundColumnGeometry(sides: 5),
+        "6 corners" => RoundColumnGeometry(sides: 6),
+        "7 corners" => RoundColumnGeometry(sides: 7),
+        // regular polygons with their own exact area: the area against the circle refuses them
+        "8-gon" => RoundColumnGeometry(sides: 8, polygonArea: true),
+        "12-gon" => RoundColumnGeometry(sides: 12, polygonArea: true),
+        "16-gon" => RoundColumnGeometry(sides: 16, polygonArea: true),
+        // the exact end area of a regular 40-gon is within the area tolerance of its circle: only the planar facets refuse it
+        "40-gon with planar facets" => RoundColumnGeometry(sides: 40, polygonArea: true, planarSides: true),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    [Theory]
+    [MemberData(nameof(NotARoundPrism))]
+    public void Pass_Column_NotARoundPrism_HasNoExtrusionDataAndTheQuantitiesOfTheBase(string kind)
+    {
+        var w = ColumnWriter(NotARoundPrismGeometry(kind));
+
+        Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
+        Assert.DoesNotContain(Quantities(w, "IFCQUANTITYAREA"), q => q.Name == "OuterSurfaceArea");
+        // the measures of the node stand for the solid of a round column only: the volume of the shells is the one of the base
+        AssertColumnKeepsItsQuantitiesWithoutNodeMeasures(() => NotARoundPrismGeometry(kind));
+    }
+
+    [Fact]
+    public void Pass_Column_MeasuredFlatNodeAndASecondSolidWithoutMeasure_KeepsTheVolumeOfEverySolid()
+    {
+        // the same open shell of the side without the box (its end faces on two different circles make it no cylinder): the box adds its own volume
+        double withoutBox = ColumnQuantities(RoundColumnGeometry(topShift: 0.1)).Single(q => q.Name == "NetVolume").Value;
+
+        var quantities = ColumnQuantities(RoundColumnGeometry(extraSolid: true));
+
+        Assert.DoesNotContain(quantities, q => q.Name == "Length");
+        Assert.Equal(withoutBox + 1 * CubicFeet, quantities.Single(q => q.Name == "NetVolume").Value, 9);
+        AssertColumnKeepsItsQuantitiesWithoutNodeMeasures(() => RoundColumnGeometry(extraSolid: true));
+    }
+
+    [Fact]
+    public void Pass_Column_RectangularWithExactFlatNodes_KeepsTheQuantitiesOfTheBase()
+    {
+        // a 1 x 2 x 10 foot box: its two exact end faces under the measured node, its four sides under a node without integrals
+        static GeometryData Box()
+        {
+            double[][] p = [[0, 0, 0], [1, 0, 0], [1, 2, 0], [0, 2, 0], [0, 0, 10], [1, 0, 10], [1, 2, 10], [0, 2, 10]];
+            int[][] corners = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
+            var faces = corners.Select((c, i) => new GeoFace
+            {
+                GeometryNode = i < 2 ? 10 : 18, PlaneSurface = true, QuadratureArea = i < 2 ? 2 : null,
+                OuterVertices = c.Select(k => p[k]).ToList(), Origin = p[c[0]], Normal = i == 0 ? [0, 0, -1] : i == 1 ? [0, 0, 1] : [0, 0, 0],
+            }).ToList();
+            return new GeometryData
+            {
+                Faces = faces,
+                BrepSolids = [new GeoBrepSolid { IsClosed = false, FaceIndices = [2, 3, 4, 5] }],
+                NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(10, 2 * 2 + 2 * 3 * 10, 2 * 10)],
+            };
+        }
+
+        AssertColumnKeepsItsQuantitiesWithoutNodeMeasures(Box);
+    }
+
+    [Fact]
+    public void Pass_Column_Round_FarFromTheOriginWithVerticesOf32BitNumbers_StaysACylinder()
+    {
+        var w = ColumnWriter(RoundColumnGeometry(offset: [75.3, -60.7, 50], float32: true));
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Length", 10 * 0.3048));
+        // the radius is the one fitted to the rounded corners: the circle area agrees to a millionth, not to the last digit
+        double gross = 10 * 0.3048 * 1000 * Math.PI * 0.25 * SquareFeet;
+        Assert.InRange(Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "GrossVolume").Value, gross * (1 - 1e-4), gross * (1 + 1e-4));
+        Assert.Equal(Math.PI * 0.25 * 10 * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "NetVolume").Value, 9);
+    }
+
+    [Fact]
+    public void Pass_Column_Round_WithItsEndFacesInTwoMeasuredNodes_DoesNotCountTheSolidTwice()
+    {
+        var w = ColumnWriter(RoundColumnGeometry(splitCapNodes: true));
+
+        // two nodes could each measure the whole solid: neither is taken, the volume is the one of the shells of the base
+        Assert.Single(Quantities(w, "IFCQUANTITYLENGTH"));
+        AssertColumnKeepsItsQuantitiesWithoutNodeMeasures(() => RoundColumnGeometry(splitCapNodes: true));
+    }
+
+    [Fact]
+    public void Pass_Column_WithTheExtrusionOfItsBody_TakesTheVolumeOfTheNodeWithTheEndFacesBeforeTheOpenShell()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddFramedExtrusionBody(w, 1, 1, 2.0, axis: "(0.,0.,1.)", refDirection: "(1.,0.,0.)");
+        int column = AddProduct(w, "IFCCOLUMN", "RZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+
+        Apply(w, owner, new() { [15] = new Element { Id = 15, CategoryId = -2001330, Geometry = RoundColumnGeometry() } }, new() { [column] = 15 });
+
+        // the extrusion data are the ones of the body; the volume of a cylinder comes from the measured node, not from the open shell of its side
+        Assert.Equal(2.0, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Length").Value, 9);
+        Assert.Equal(Math.PI * 0.25 * 10 * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "NetVolume").Value, 9);
     }
 }
