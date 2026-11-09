@@ -1142,6 +1142,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
         // the circumference of the outer circle only, and the diameter
         Assert.Equal(2 * Math.PI * 0.4, lengths.Single(q => q.Name == "Perimeter").Value, 9);
         Assert.Equal(0.8, lengths.Single(q => q.Name == "Width").Value, 9);
+        // the body is read, so the slab gets GrossVolume too: the area of its top surface times the depth of the extrusion
+        Assert.Equal(Math.PI * 9 / 2 * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "GrossVolume").Value, 9);
     }
 
     [Fact]

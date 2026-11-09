@@ -1360,7 +1360,7 @@ public partial class IfcExporter
         // length of every boundary loop of the floor, the loops of its holes included (the parser's parameter is the outer loop).
         double? perimeter = (ExactParameterFeetCurrent(element, null, HostPerimeterComputedParameterId) ?? (prism ?? topFace)?.OuterPerimeter) is { } outerPerimeter
             ? (outerPerimeter + ((prism ?? topFace)?.InnerPerimeter ?? 0)) * FeetToMetres : null;
-        // A round tube profile (a hollow pile) has no chords to count: the reference gives the circumference of its outer circle, not of the bore.
+        // A round tube profile (a hollow pile) has no chords to count: its perimeter is the circumference of the outer circle, not of the bore.
         if (perimeter == null && body is { Polygon: null, Rectangle: false, InnerPerimeter: > 0 } tube) perimeter = tube.OuterPerimeter;
         AddIfPositive(result, QuantityKind.Length, "Perimeter", perimeter);
         // A roof takes the larger side of its body. A foundation (a structural foundation, or a slab of the base slab type) takes the first side of its profile: the body of a pile

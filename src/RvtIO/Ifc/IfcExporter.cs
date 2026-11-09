@@ -7219,15 +7219,20 @@ public partial class IfcExporter
         if (element.ValidatedFloorTypeReferenceIsBlocked)
             return null;
 
-        if (element.ValidatedFloorTypeReferenceName == null)
+        if (FloorTypeReferenceName(element, currentProfile) is not { } floorReference)
             return baselineReferenceValue;
 
         // A direct parameter can create the main product property.
         if (baselineReferenceValue == null
             && !element.ValidatedFloorTypeReferenceIsExplicit)
             return null;
-        return element.ValidatedFloorTypeReferenceName;
+        return floorReference;
     }
+
+    /// <summary>The validated floor type Reference: the current profile prefers the own name of the type to the last string of its block, which a
+    /// type with text parameters ends in one of; the legacy profile keeps the last string.</summary>
+    internal static string? FloorTypeReferenceName(Element floor, bool currentProfile) =>
+        currentProfile ? floor.ValidatedFloorOwnTypeName ?? floor.ValidatedFloorTypeReferenceName : floor.ValidatedFloorTypeReferenceName;
 
     /// <summary>A door/window product fills exactly one opening, so that opening is bare.</summary>
     internal static Element? ResolveHostedOpeningPropertySetReferenceElement(
@@ -11103,7 +11108,7 @@ public partial class IfcExporter
             int openingId = CreateOpeningElement(w, openingGlobalId, ownerHistId, openingName,
                 profile.TagId, propertySetReferenceElement, elemById,
                 openingPlacementId, shapeId,
-                propertySingleValueIds, slab.ValidatedFloorTypeReferenceName,
+                propertySingleValueIds, FloorTypeReferenceName(slab, CurrentProfile),
                 slab.ValidatedFloorTypeReferenceIsBlocked,
                 useSlabQuantityTakeOffReference
                     ? slabQuantityTakeOffReferenceValueId
@@ -68067,7 +68072,7 @@ public partial class IfcExporter
         if (ifcType == "IFCCURTAINWALL")
             return ResolveValidatedWallTypeName(element, elementsById.GetValueOrDefault(element.FamilyTypeId));
         if (ifcType == "IFCSLAB" && element.CategoryId == -2000032)
-            return Own(element.ValidatedFloorTypeReferenceName, element.ValidatedFloorTypeReferenceIsExplicit,
+            return Own(FloorTypeReferenceName(element, currentProfile), element.ValidatedFloorTypeReferenceIsExplicit,
                 element.ValidatedFloorTypeReferenceIsBlocked);
         if (ifcType == "IFCCOVERING" && element.CategoryId == -2000038)
             return Own(element.ValidatedCeilingTypeReferenceName, element.ValidatedCeilingTypeReferenceIsExplicit,
