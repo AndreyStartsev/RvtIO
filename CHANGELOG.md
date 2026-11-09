@@ -6,6 +6,8 @@ API between minor releases.
 
 ## [Unreleased]
 
+- Current profile: a column (structural or architectural) whose base level is a Level that is not a project storey is contained in the highest storey at or below that level, and in the building when no storey is that low, instead of the storey chosen by the bottom of its body.
+
 ## [0.3.0] - 2026-11-08
 
 ### Breaking changes
