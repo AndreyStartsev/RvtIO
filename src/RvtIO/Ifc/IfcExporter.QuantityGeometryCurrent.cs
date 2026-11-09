@@ -151,12 +151,22 @@ public partial class IfcExporter
 
     /// <summary>The prism of a shell: two planar faces of equal net area (within 1e-4 ft2) facing each other on
     /// different planes, with every other face parallel to their common normal. Null for any other shape, a curved face
-    /// included.</summary>
-    internal static ShellPrism? FindPrismCurrent(ShellInfo shell, bool verticalOnly = false)
+    /// included.
+    /// With <paramref name="arcSides"/> the vertical cylinders that tessellate the arcs of the outline are allowed as sides and left
+    /// out of the search (the perimeters stay those of the chords), and a shell with any other curved face is no prism.</summary>
+    internal static ShellPrism? FindPrismCurrent(ShellInfo shell, bool verticalOnly = false, bool arcSides = false)
     {
         var faces = shell.Faces;
+        if (faces.Count < 4) return null;
+        if (arcSides)
+        {
+            var cylinders = faces.Where(face => face.CurvedSurface).ToList();
+            if (cylinders.Any(face => face.AnalyticCylinderAxis is not { Length: >= 3 } axis || Math.Abs(Math.Abs(axis[2]) - 1) > 1e-9
+                || !(face.AnalyticCylinderRadius > 0))) return null;
+            faces = faces.Where(face => !face.CurvedSurface).ToList();
+        }
         int count = faces.Count;
-        if (count < 4 || faces.Any(face => face.CurvedSurface)) return null;
+        if (count < 2 || faces.Any(face => face.CurvedSurface)) return null;
         var normals = new double[count][];
         var areas = new double[count];
         for (int i = 0; i < count; i++)
