@@ -1736,9 +1736,11 @@ public partial class IfcExporter
             if (CurrentProfile && elem.CategoryId == -2009000 && elem.TypeId > 0
                 && ifcType == "IFCBUILDINGELEMENTPROXY")
                 ifcType = "IFCREINFORCINGMESH";
-            // A roof soffit is a covering with no predefined type.
+            // A roof soffit is a covering with no predefined type, a gutter a flow segment.
             if (CurrentProfile && elem.CategoryId == RoofSoffitCategoryId && ifcType == "IFCBUILDINGELEMENTPROXY")
                 ifcType = "IFCCOVERING";
+            if (CurrentProfile && elem.CategoryId == GutterCategoryId && ifcType == "IFCBUILDINGELEMENTPROXY")
+                ifcType = "IFCFLOWSEGMENT";
             // The current profile writes a wall's openings only
             // beside a wall exported as an extrusion with an axis; the openings of a plain IfcWall
             // are cut into its Brep.
@@ -64556,6 +64558,9 @@ public partial class IfcExporter
     /// </summary>
     internal const int InstanceAsTypeSubElementIndex = 2048;
 
+    /// <summary>Sub-element of the ExportId that names the type of a gutter.</summary>
+    internal const int GutterTypeSubElementIndex = 1;
+
     /// <summary>
     /// The door sub-element rule: the sub-element of the symbol that names its door or window
     /// style.
@@ -65627,6 +65632,7 @@ public partial class IfcExporter
     private const int FloorCategoryId = -2000032;
     private const int RoofCategoryId = -2000035;
     private const int RoofSoffitCategoryId = -2001393;
+    private const int GutterCategoryId = -2001391;
     private const int CurtainSystemCategoryId = -2000090;
     private const int MassExteriorWallCategoryId = -2003413;
     private const int MassInteriorWallCategoryId = -2003412;
@@ -67641,6 +67647,7 @@ public partial class IfcExporter
                 ("IFCFURNISHINGELEMENT", -2001100) => "IFCSYSTEMFURNITUREELEMENTTYPE", // OST_FurnitureSystems
                 ("IFCFLOWSEGMENT", -2008000) => "IFCDUCTSEGMENTTYPE", // OST_DuctCurves
                 ("IFCFLOWSEGMENT", -2008044 or -2008050) => "IFCPIPESEGMENTTYPE", // OST_PipeCurves, OST_FlexPipeCurves
+                ("IFCFLOWSEGMENT", GutterCategoryId) when currentProfile => "IFCPIPESEGMENTTYPE",
                 ("IFCFLOWSEGMENT", -2008130) => "IFCCABLECARRIERSEGMENTTYPE", // OST_CableTray
                 ("IFCFLOWFITTING", -2008049) => "IFCPIPEFITTINGTYPE", // OST_PipeFitting
                 ("IFCFLOWFITTING", -2008126 or -2008128) => "IFCCABLECARRIERFITTINGTYPE", // OST_CableTrayFitting, OST_ConduitFitting
@@ -67698,6 +67705,8 @@ public partial class IfcExporter
             if (currentProfile && originalSymbolId == 0 && product.ifcType is "IFCBEAM" or "IFCCOLUMN" or "IFCBUILDINGELEMENTPROXY" or "IFCFURNISHINGELEMENT"
                 && UsesInstanceGeometryOfTypeCurrent(instElem, canonicalType))
                 ownerId = instElem.Id;
+            // Each gutter has a type of its own.
+            if (typeClass == "IFCPIPESEGMENTTYPE" && instElem.CategoryId == GutterCategoryId) ownerId = instElem.Id;
             if (TypeKeyDiagnostics(product.ifcType))
                 DiagnosticSink.WriteLine($"TKD {product.ifcType} element={elementId} type={typeElemId} symbol={originalSymbolId} own={ownerId}"
                     + $" instance[{DescribeStoredGeometry(instElem)}] symbol[{DescribeStoredGeometry(originalSymbolId > 0 ? elemById[originalSymbolId] : null)}]"
@@ -67763,10 +67772,13 @@ public partial class IfcExporter
             var typeElem = elemById[typeElemId];
             // The current profile makes a window style from the original family symbol
             // (createWindowStyle), and tags it by it.
-            string tagArg = S((typeClass == "IFCPLATETYPE" ? firstMemberElementId[key]
+            bool gutterType = typeClass == "IFCPIPESEGMENTTYPE" && ownerId > 0 && elemById[ownerId].CategoryId == GutterCategoryId;
+            string tagArg = S((typeClass == "IFCPLATETYPE" || gutterType ? firstMemberElementId[key]
                     : currentProfile && typeClass == "IFCWINDOWSTYLE" && originalSymbolId > 0 ? originalSymbolId : typeElemId)
                 .ToString(CultureInfo.InvariantCulture));
-            string nameArg = S(typeClass == "IFCTYPEPRODUCT" ? TypeObjectName(typeElem, currentProfile) : TypeObjectNameParts(typeElem, currentProfile).Full);
+            string nameArg = S(typeClass == "IFCTYPEPRODUCT" ? TypeObjectName(typeElem, currentProfile)
+                : gutterType ? $"{FixedSystemFamilyName(elemById[ownerId])}:{TypeObjectNameParts(typeElem, currentProfile).Full}:{typeElemId.ToString(CultureInfo.InvariantCulture)}"
+                : TypeObjectNameParts(typeElem, currentProfile).Full);
             string identityKey = originalSymbolId == 0
                 ? typeElemId.ToString(CultureInfo.InvariantCulture)
                 : $"{typeElemId.ToString(CultureInfo.InvariantCulture)}:symbol:{originalSymbolId.ToString(CultureInfo.InvariantCulture)}";
@@ -67806,8 +67818,9 @@ public partial class IfcExporter
                 string trailingArgs = TypeClassesWithPredefinedType.Contains(typeClass)
                     ? predefinedTypes[key].Length == 0 ? ",$" : $",.{predefinedTypes[key]}."
                     : typeClass == "IFCFURNITURETYPE" ? ",$" : "";
+                // The ElementType of a gutter type repeats its name.
                 typeEntityId = w.Add(typeClass,
-                    $"{guidArg},{R(ownerHistId)},{nameArg},$,$,{hasPropertySetsArg},$,{tagArg},$" + trailingArgs);
+                    $"{guidArg},{R(ownerHistId)},{nameArg},$,$,{hasPropertySetsArg},$,{tagArg},{(gutterType ? nameArg : "$")}" + trailingArgs);
             }
 
             // The GlobalId rule uses the original symbol's own ExportId for mapped types, except
@@ -67825,7 +67838,8 @@ public partial class IfcExporter
             {
                 if (elemById[ownerId].SerializedExportId is { } ownerExportId)
                     exactTypeGuids[typeEntityId] = IfcGuid.ToIfcGuid(ElementExportIds.SubElementId(
-                        currentProfile ? elemById[ownerId].SerializedHandleExportId ?? ownerExportId : ownerExportId, InstanceAsTypeSubElementIndex));
+                        currentProfile ? elemById[ownerId].SerializedHandleExportId ?? ownerExportId : ownerExportId,
+                        gutterType ? GutterTypeSubElementIndex : InstanceAsTypeSubElementIndex));
             }
             else if (guidSourceId > 0 && elemById[guidSourceId] is { } source
                 && source.SerializedExportId is { } exportId
@@ -67907,6 +67921,7 @@ public partial class IfcExporter
             ("IFCSLABTYPE", -2000032) => "FLOOR",
             ("IFCSLABTYPE", -2000920) => "LANDING",
             ("IFCCOVERINGTYPE", -2000038) => "CEILING",
+            ("IFCPIPESEGMENTTYPE", GutterCategoryId) => "GUTTER",
             ("IFCMEMBERTYPE", -2000171) => "MULLION",
             ("IFCPLATETYPE", -2000170) => "CURTAIN_PANEL",
             ("IFCPIPESEGMENTTYPE", -2008050) => "FLEXIBLESEGMENT",
