@@ -141,7 +141,8 @@ public class IfcExporterMepSystemTests
         Assert.Contains(names, args => args.Contains("'Port_10_2'"));
     }
 
-    private static Element Wire(int id, int category = -2008039) => new() { Id = id, CategoryId = category };
+    private static Element Wire(int id, int category = -2008039, int? header = null) =>
+        new() { Id = id, CategoryId = category, NativeHeaderCategoryId = header };
 
     private static Dictionary<int, (int entityId, int placementId, string ifcType)> Terminals(params int[] hostIds) =>
         hostIds.Select((id, position) => (id, position)).ToDictionary(item => item.id, item => (3 + 2 * item.position, 4 + 2 * item.position, "IFCFLOWTERMINAL"));
@@ -200,6 +201,25 @@ public class IfcExporterMepSystemTests
         (entities, _) = WritePorts(new() { [10] = first, [20] = second, [30] = Wire(30) }, Terminals(10, 20));
         Assert.DoesNotContain(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
         Assert.Equal(2, entities.Count(entity => entity.Type == "IFCDISTRIBUTIONPORT"));
+    }
+
+    [Fact]
+    public void Ports_TheCategoryStoredInTheRecordDecidesWhetherAnElementIsAWire()
+    {
+        // The derived category of a wire of a newer file can be another one; the stored header category is the wire.
+        var first = ConnectorHost(10, (1, -1, 0, [(30, 0, 1)]));
+        var second = ConnectorHost(20, (1, -1, 0, [(30, 1, 1)]));
+        var (entities, _) = WritePorts(
+            new() { [10] = first, [20] = second, [30] = Wire(30, category: -2001120, header: -2008039) }, Terminals(10, 20));
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        // A stored category that is not the wire wins over a derived one that is.
+        (entities, _) = WritePorts(
+            new() { [10] = first, [20] = second, [30] = Wire(30, category: -2008039, header: -2008044) }, Terminals(10, 20));
+        Assert.DoesNotContain(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        // A stored null id leaves the derived category.
+        (entities, _) = WritePorts(
+            new() { [10] = first, [20] = second, [30] = Wire(30, header: -1) }, Terminals(10, 20));
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
     }
 
     [Fact]

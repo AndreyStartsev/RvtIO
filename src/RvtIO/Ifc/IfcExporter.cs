@@ -67395,7 +67395,7 @@ public partial class IfcExporter
             Join(inSystem > 0 ? inSystem : outSystem, inEntity, outEntity, portIn, portOut);
         }
 
-        // A wire (OST_Wire) is no product: it is named by the connectors of its two ends, by the number 0 or 1 of its own connector. The
+        // A wire (the category stored in its record, else its category) is no product: it is named by the connectors of its two ends, by the number 0 or 1 of its own connector. The
         // two hosts at its ends are connected through it, whatever their ids; a wire with an end that has no host, with two hosts at
         // one end, with the same host at both ends or with different numbers of the connectors at its ends leaves its connectors as they are.
         var wireEnds = new SortedDictionary<int, (int Host, int Index)?[]>();
@@ -67404,7 +67404,8 @@ public partial class IfcExporter
             foreach (var connector in connectors)
                 foreach (var reference in connector.Refs)
                     if (reference.Type == 1 && reference.Index is 0 or 1 && !products.ContainsKey(reference.Id)
-                        && elemById.TryGetValue(reference.Id, out var wire) && wire.CategoryId == (int)BuiltIns.BuiltInCategory.OST_Wire)
+                        && elemById.TryGetValue(reference.Id, out var wire)
+                        && (wire.NativeHeaderCategoryId is int header && header != -1 ? header : wire.CategoryId) == (int)BuiltIns.BuiltInCategory.OST_Wire)
                     {
                         if (!wireEnds.TryGetValue(reference.Id, out var ends)) wireEnds[reference.Id] = ends = new (int Host, int Index)?[2];
                         if (ends[reference.Index] is null) ends[reference.Index] = (hostId, connector.Index);
