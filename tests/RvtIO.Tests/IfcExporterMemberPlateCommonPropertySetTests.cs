@@ -297,7 +297,6 @@ public class IfcExporterMemberPlateCommonPropertySetTests
 
     [Theory]
     [InlineData(1)]
-    [InlineData(0)]
     [InlineData(null)]
     public void NonBraceFraming_StaysABeamWithBeamCommon(int? structuralType)
     {
@@ -307,6 +306,18 @@ public class IfcExporterMemberPlateCommonPropertySetTests
         Assert.DoesNotContain("=IFCMEMBER(", ifc);
         Assert.DoesNotContain("Pset_MemberCommon", ifc);
         Assert.Contains("'Pset_BeamCommon'", ifc);
+    }
+
+    [Fact]
+    public void NonStructuralFraming_IsAProxy_NotABeamOrAMember()
+    {
+        BraceProperties(IfcProfile.Current, structuralType: 0, driveLengthFt: 10.0, out string ifc);
+
+        SoleEntityId(ifc, "IFCBUILDINGELEMENTPROXY");
+        Assert.DoesNotContain("=IFCBEAM(", ifc);
+        Assert.DoesNotContain("=IFCMEMBER(", ifc);
+        Assert.DoesNotContain("Pset_BeamCommon", ifc);
+        Assert.DoesNotContain("Pset_MemberCommon", ifc);
     }
 
     [Fact]

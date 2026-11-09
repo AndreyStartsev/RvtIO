@@ -1711,8 +1711,14 @@ public partial class IfcExporter
                     ?? (elem.CategoryId == null && elem.Transform != null && elem.TypeId > 0
                         ? "IFCBUILDINGELEMENTPROXY"
                         : null);
-            if (ifcType == "IFCBEAM" && elem.NativeStructuralType == 2)
-                ifcType = "IFCMEMBER";
+            if (ifcType == "IFCBEAM")
+                ifcType = elem.NativeStructuralType switch
+                {
+                    2 => "IFCMEMBER",
+                    // A non-structural framing element is a proxy.
+                    0 => "IFCBUILDINGELEMENTPROXY",
+                    _ => ifcType,
+                };
             // A wall foundation (ContFooting) is an IfcFooting; the other foundations of
             // OST_StructuralFoundation stay slabs.
             if (CurrentProfile && ifcType == "IFCSLAB" && elem.RootClassName == "ContFooting")
