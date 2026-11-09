@@ -235,6 +235,82 @@ public class IfcExporterMepSystemTests
         Assert.DoesNotContain(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
     }
 
+    private static List<string> PortNames(List<(string Type, string Args)> entities) =>
+        entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args.Split(',')[2].Trim((char)39)).ToList();
+
+    [Fact]
+    public void Ports_OneConnectorThatNamesBothEndsOfAWireLeavesItAFreePort()
+    {
+        // The same host and connector at end 0 and end 1: no pair of a host with itself.
+        var lamp = ConnectorHost(10, (1, -1, 0, [(30, 0, 1), (30, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = lamp, [30] = Wire(30) }, Terminals(10));
+        Assert.Equal(["Port_10_1"], PortNames(entities));
+        Assert.DoesNotContain(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+    }
+
+    [Fact]
+    public void Ports_AWireEndWithTwoHostsLeavesAllTheirConnectorsFree()
+    {
+        // Hosts 10 and 12 both name end 0 of wire 30, host 20 names end 1: the wire is not used.
+        var a = ConnectorHost(10, (1, -1, 0, [(30, 0, 1)]));
+        var b = ConnectorHost(12, (1, -1, 0, [(30, 0, 1)]));
+        var c = ConnectorHost(20, (1, -1, 0, [(30, 1, 1)]));
+        var (entities, _) = WritePorts(
+            new() { [10] = a, [12] = b, [20] = c, [30] = Wire(30) }, Terminals(10, 12, 20));
+        Assert.Equal(["Port_10_1", "Port_12_1", "Port_20_1"], PortNames(entities));
+        Assert.DoesNotContain(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+    }
+
+    [Fact]
+    public void Ports_TwoWiresOnTheSameConnectorsWritePortsAndAPairOnce()
+    {
+        var first = ConnectorHost(10, (1, -1, 0, [(30, 0, 1), (31, 0, 1)]));
+        var second = ConnectorHost(20, (1, -1, 0, [(30, 1, 1), (31, 1, 1)]));
+        var (entities, _) = WritePorts(
+            new() { [10] = first, [20] = second, [30] = Wire(30), [31] = Wire(31) }, Terminals(10, 20));
+        Assert.Equal(["Port_10_1", "Port_20_1"], PortNames(entities));
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+    }
+
+    [Fact]
+    public void Ports_TwoWiresBetweenTwoHostsOnOtherConnectorsPairTheHostsOnceAndTheOtherConnectorsKeepFreePorts()
+    {
+        // The pair of two hosts is written once: the connectors 2 of the second wire are not left without a port.
+        var first = ConnectorHost(10, (1, -1, 0, [(30, 0, 1)]), (2, -1, 0, [(31, 0, 1)]));
+        var second = ConnectorHost(20, (1, -1, 0, [(30, 1, 1)]), (2, -1, 0, [(31, 1, 1)]));
+        var (entities, _) = WritePorts(
+            new() { [10] = first, [20] = second, [30] = Wire(30), [31] = Wire(31) }, Terminals(10, 20));
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Equal(["Port_10_1", "Port_20_1", "Port_10_2", "Port_20_2"], PortNames(entities));
+        Assert.Equal(4, entities.Count(entity => entity.Type == "IFCRELCONNECTSPORTTOELEMENT"));
+    }
+
+    [Fact]
+    public void Ports_AWireBetweenHostsThatAreAlreadyConnectedDirectlyLeavesItsConnectorsFreePorts()
+    {
+        // Connectors 1 reference each other; the wire joins connectors 2 of the same two hosts.
+        var first = ConnectorHost(10, (1, -1, 0, [(20, 1, 1)]), (2, -1, 0, [(30, 0, 1)]));
+        var second = ConnectorHost(20, (1, -1, 0, [(10, 1, 1)]), (2, -1, 0, [(30, 1, 1)]));
+        var (entities, _) = WritePorts(
+            new() { [10] = first, [20] = second, [30] = Wire(30) }, Terminals(10, 20));
+        Assert.Single(entities, entity => entity.Type == "IFCRELCONNECTSPORTS");
+        Assert.Equal(["Port_10_1", "Port_20_1", "Port_10_2", "Port_20_2"], PortNames(entities));
+    }
+
+    [Fact]
+    public void Ports_AConnectorWithADirectLinkAndAWireToAnotherHostIsPairedTwice()
+    {
+        // Connector 1 of host 10 is connected to host 12 and, by a wire, to host 20.
+        var a = ConnectorHost(10, (1, -1, 0, [(12, 1, 1), (30, 0, 1)]));
+        var b = ConnectorHost(12, (1, -1, 0, [(10, 1, 1)]));
+        var c = ConnectorHost(20, (1, -1, 0, [(30, 1, 1)]));
+        var (entities, _) = WritePorts(
+            new() { [10] = a, [12] = b, [20] = c, [30] = Wire(30) }, Terminals(10, 12, 20));
+        Assert.Equal(2, entities.Count(entity => entity.Type == "IFCRELCONNECTSPORTS"));
+        Assert.Equal(4, entities.Count(entity => entity.Type == "IFCDISTRIBUTIONPORT"));
+        Assert.Equal(1, PortNames(entities).Count(name => name == "Port_20_1"));
+    }
+
     [Fact]
     public void Ports_ARunOfTwoWiresGivesTheMiddleDeviceTwoPortsWithDifferentGlobalIds()
     {

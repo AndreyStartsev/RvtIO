@@ -67368,10 +67368,10 @@ public partial class IfcExporter
             Join(system, entityId, portId);
         }
 
-        // inSystem and outSystem are the systems of the two connectors that are paired.
-        void Pair(int inHost, int outHost, int index, bool bidirectional, int inSystem, int outSystem)
+        // inSystem and outSystem are the systems of the two connectors that are paired. The result is false when the two hosts were already connected and nothing is written.
+        bool Pair(int inHost, int outHost, int index, bool bidirectional, int inSystem, int outSystem)
         {
-            if (connected.Contains((inHost, outHost)) || (bidirectional && connected.Contains((outHost, inHost)))) return;
+            if (connected.Contains((inHost, outHost)) || (bidirectional && connected.Contains((outHost, inHost)))) return false;
             string inFlow = bidirectional ? "SOURCEANDSINK" : "SINK", outFlow = bidirectional ? "SOURCEANDSINK" : "SOURCE";
             int inEntity = products[inHost].entityId, outEntity = products[outHost].entityId;
             string inGlobalId = hostGlobalIds[inEntity], outGlobalId = hostGlobalIds[outEntity];
@@ -67393,11 +67393,13 @@ public partial class IfcExporter
             connected.Add((inHost, outHost));
             // A fitting stores no system of its own: the pair then belongs to the system of the connector it is paired with.
             Join(inSystem > 0 ? inSystem : outSystem, inEntity, outEntity, portIn, portOut);
+            return true;
         }
 
         // A wire (the category stored in its record, else its category) is no product: it is named by the connectors of its two ends, by the number 0 or 1 of its own connector. The
         // two hosts at its ends are connected through it, whatever their ids; a wire with an end that has no host, with two hosts at
-        // one end, with the same host at both ends or with different numbers of the connectors at its ends leaves its connectors as they are.
+        // one end, with the same host at both ends or with different numbers of the connectors at its ends leaves its connectors as they are. So do the connectors of a wire whose two hosts
+        // were already connected (the pair of the hosts is written once): they get free ports unless a pair written for another wire between the same connectors holds them.
         var wireEnds = new SortedDictionary<int, (int Host, int Index)?[]>();
         var wireBroken = new HashSet<int>();
         foreach (var (hostId, connectors) in graph)
@@ -67412,6 +67414,7 @@ public partial class IfcExporter
                         else if (ends[reference.Index] != (hostId, connector.Index)) wireBroken.Add(reference.Id);
                     }
         var wired = new HashSet<(int, int)>();
+        var unpaired = new List<(int Host, int Index, int Direction, int System)>();
         foreach (var (wireId, ends) in wireEnds)
             if (!wireBroken.Contains(wireId) && ends[0] is { } first && ends[1] is { } second
                 && first.Host != second.Host && first.Index == second.Index)
@@ -67432,7 +67435,8 @@ public partial class IfcExporter
                 var neighbours = connector.Refs.Where(reference => reference.Id != hostId && graph.ContainsKey(reference.Id)).ToList();
                 if (!IsConnected())
                 {
-                    if (!wired.Contains((hostId, connector.Index))) Standalone(hostId, connector.Index, connector.Direction, connector.System);
+                    if (wired.Contains((hostId, connector.Index))) unpaired.Add((hostId, connector.Index, connector.Direction, connector.System));
+                    else Standalone(hostId, connector.Index, connector.Direction, connector.System);
                     continue;
                 }
                 foreach (var reference in neighbours)
@@ -67453,12 +67457,19 @@ public partial class IfcExporter
                     else Pair(hostId, reference.Id, connector.Index, direction is not DirectionIn, connector.System, referenced.System);
                 }
             }
+        var withPort = new HashSet<(int, int)>();
         foreach (var (wireId, ends) in wireEnds)
             if (!wireBroken.Contains(wireId) && ends[0] is { } first && ends[1] is { } second
-                && first.Host != second.Host && first.Index == second.Index)
-                Pair(first.Host, second.Host, first.Index, true,
+                && first.Host != second.Host && first.Index == second.Index
+                && Pair(first.Host, second.Host, first.Index, true,
                     graph[first.Host].First(candidate => candidate.Index == first.Index).System,
-                    graph[second.Host].First(candidate => candidate.Index == second.Index).System);
+                    graph[second.Host].First(candidate => candidate.Index == second.Index).System))
+            {
+                withPort.Add(first);
+                withPort.Add(second);
+            }
+        foreach (var (host, index, direction, system) in unpaired)
+            if (!withPort.Contains((host, index))) Standalone(host, index, direction, system);
         return systemMembers;
     }
 
