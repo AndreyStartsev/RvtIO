@@ -6,8 +6,8 @@ namespace RvtIO.Ifc;
 
 /// <summary>Reinforcement bars of the current profile (IFC2X3): every Rebar and RebarInSystem element is an IfcReinforcingBar whose Body is
 /// one IfcSweptDiskSolid per bar of the set, swept along the centre line (an IfcCompositeCurve of IfcPolyline pieces and trimmed
-/// IfcCircle arcs). A bar is contained in the storey of its lowest point (in the building when the project has no storey) unless it is
-/// a member of an assembly; the bars of one RebarSystem
+/// IfcCircle arcs). A bar is contained in the storey of its lowest point (in the building when the project has no storey), also when it is
+/// a member of an assembly that is not written; the bars of one RebarSystem
 /// (area reinforcement) that are not members of an assembly are related to an IfcGroup of the system.</summary>
 public partial class IfcExporter
 {
@@ -71,22 +71,57 @@ public partial class IfcExporter
             + $"{S("")},{D(nominalMm)},{D(area)},{D(barLengthMm)},.NOTDEFINED.,$");
         ExportQuantityTakeOffPropertySet(w, elem, entityId, ownerHistId, barTypeName, propertySingleValueIds);
         // A bar has no level of its own (Element.m_assocLevelId = -1), so the storey is the one that holds the bottom of its bounding box;
-        // the bars of an assembly are aggregated by it instead of contained; a project without a storey puts them in the building
-        if (!data.InAssembly)
+        // a project without a storey puts them in the building. A member of an assembly is contained too: the assemblies that hold bars
+        // (parts assemblies) are not written, so nothing aggregates them. Aggregate them instead when those assemblies are written.
+        // The reference puts the assembly in the highest storey at or below the bottom of the Part that hosts the bar, so its bars follow that rule.
         {
-            double bottomFt = data.Bars.SelectMany(bar => bar).Min(piece => piece.MinZ()) - data.ModelDiameter / 2;
-            int byBottom = storeyIds.Count > 0 ? ResolveStoreyByBottomCurrent(bottomFt, storeyIds, elemById) : 0;
-            int storeyId = byBottom != 0 ? byBottom : defaultStoreyId;
+            int storeyId = 0;
+            if (data.InAssembly && storeyIds.Count > 0 && HostPartBottom(elem, elemById) is double partBottomFt)
+                storeyId = ResolveStoreyAtOrBelow(partBottomFt, storeyIds, elemById);
+            if (storeyId == 0)
+            {
+                double bottomFt = data.Bars.SelectMany(bar => bar).Min(piece => piece.MinZ()) - data.ModelDiameter / 2;
+                int byBottom = storeyIds.Count > 0 ? ResolveStoreyByBottomCurrent(bottomFt, storeyIds, elemById) : 0;
+                storeyId = byBottom != 0 ? byBottom : defaultStoreyId;
+            }
             if (!storeyContents.TryGetValue(storeyId, out var contents)) storeyContents[storeyId] = contents = [];
             contents.Add(entityId);
         }
-        // The bars of an assembly are related to the assembly (IfcRelAggregates) and no group of their system is written
+        // The reference writes no group of their system for the bars of an assembly
         if (data.SystemId > 0 && !data.InAssembly)
         {
             if (!_rebarSystemMembers.TryGetValue(data.SystemId, out var members)) _rebarSystemMembers[data.SystemId] = members = [];
             members.Add(entityId);
         }
         return true;
+    }
+
+    /// <summary>The bottom of the first Part on the host chain of a bar (the bar is hosted by a held instance, that by the Part); null without one.</summary>
+    private static double? HostPartBottom(Element bar, IReadOnlyDictionary<int, Element> elemById)
+    {
+        var host = bar;
+        for (int hop = 0; hop < 2 && host.HostId is int hostId && elemById.TryGetValue(hostId, out var next); hop++)
+        {
+            host = next;
+            if (host.CategoryId == -2000269 && (host.DecodedBox ?? host.Geometry?.BoundingBox) is { Length: >= 6 } box) return box[2];
+        }
+        return null;
+    }
+
+    /// <summary>The storey of the highest level at or below <paramref name="bottomFt"/> (the lowest level's when none is below); 0 without levels.</summary>
+    private static int ResolveStoreyAtOrBelow(double bottomFt, Dictionary<int, int> storeyIds, IReadOnlyDictionary<int, Element> elemById)
+    {
+        const double Tolerance = 1e-6;
+        int chosen = 0, lowest = 0;
+        double chosenElevation = double.NegativeInfinity, lowestElevation = double.PositiveInfinity;
+        foreach (var (levelId, storeyId) in storeyIds.OrderBy(pair => pair.Key))
+            if (elemById.TryGetValue(levelId, out var level))
+            {
+                double elevation = GetElevation(level);
+                if (elevation <= bottomFt + Tolerance && elevation >= chosenElevation) { chosen = storeyId; chosenElevation = elevation; }
+                if (elevation < lowestElevation) { lowest = storeyId; lowestElevation = elevation; }
+            }
+        return chosen != 0 ? chosen : lowest;
     }
 
     /// <summary>One IfcSweptDiskSolid along the pieces of a bar. Lengths of the directrix are written in metres and shifted to
