@@ -85,6 +85,8 @@ public partial class IfcExporter
         }
         foreach (var (elementId, product) in products)
             if (product.ifcType == "IFCMEMBER" && elementsById.TryGetValue(elementId, out Element? member)
+                // A brace with a straight drive curve takes the slope of that curve (ApplyBeamSlopePropertySetsCurrent), as a beam does.
+                && !(member.CategoryId == StructuralFramingCategoryId && ResolveBeamSlopeDegreesCurrent(member) != null)
                 && member.Geometry is { ExactMappedInstances: null or { Count: 0 } } memberGeometry
                 && LargestUpwardFaceSlopeCurrent(memberGeometry) is double degrees)
                 targets.Add((product.entityId, degrees));
@@ -102,7 +104,8 @@ public partial class IfcExporter
         return added;
     }
 
-    /// <summary>Pset_BeamCommon.Slope of every beam with a straight drive curve: the angle of the curve to the horizontal in degrees.
+    /// <summary>Pset_BeamCommon.Slope of every beam, and Pset_MemberCommon.Slope of every brace (a structural framing IfcMember), with a
+    /// straight drive curve: the angle of the curve to the horizontal in degrees.
     /// It does not depend on the BaseQuantities option or on the body of the beam. A beam without a straight drive curve has none.
     /// Returns the number of properties added.</summary>
     internal static int ApplyBeamSlopePropertySetsCurrent(
@@ -112,7 +115,9 @@ public partial class IfcExporter
     {
         var elementIdByEntity = new Dictionary<int, int>();
         foreach (var (elementId, product) in products)
-            if (product.ifcType == "IFCBEAM") elementIdByEntity[product.entityId] = elementId;
+            if (product.ifcType == "IFCBEAM"
+                || product.ifcType == "IFCMEMBER" && elementsById.TryGetValue(elementId, out Element? framing) && framing.CategoryId == StructuralFramingCategoryId)
+                elementIdByEntity[product.entityId] = elementId;
         var slopes = new Dictionary<int, double>();
         foreach (var (entityId, elementId) in elementIdByEntity)
             if (elementsById.TryGetValue(elementId, out Element? beam) && ResolveBeamSlopeDegreesCurrent(beam) is double slope)
@@ -131,7 +136,7 @@ public partial class IfcExporter
         {
             var (id, type, args) = w.EntityAt(i);
             if (type == "IFCPROPERTYSET" && PropertySetName.Match(args) is { Success: true } name
-                && StepWriter.Unescape(name.Groups[1].Value) == "Pset_BeamCommon")
+                && StepWriter.Unescape(name.Groups[1].Value) is "Pset_BeamCommon" or "Pset_MemberCommon")
                 psetIndexById[id] = i;
             else if (type == "IFCRELDEFINESBYPROPERTIES" && SingleObjectPropertyRelation.Match(args) is { Success: true } relation
                 && int.Parse(relation.Groups[1].ValueSpan, CultureInfo.InvariantCulture) is int objectId && slopes.ContainsKey(objectId)

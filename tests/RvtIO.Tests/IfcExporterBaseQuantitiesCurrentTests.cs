@@ -2118,7 +2118,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
 
-    private static string ExportBeam(IfcExporter exporter)
+    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false)
     {
         var beam = new Element
         {
@@ -2141,7 +2141,13 @@ public class IfcExporterBaseQuantitiesCurrentTests
                 BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = [0, 1, 2, 3, 4, 5] }],
             },
         };
-        var info = new RevitFileInfo();
+        beam.NativeStructuralType = structuralType;
+        if (driveCurve)
+        {
+            beam.CurveDriverLineLength = 10;
+            beam.CurveDriverLineZ = (0, 5);
+        }
+        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded };
         info.Elements.Add(beam);
         string path = Path.Combine(Path.GetTempPath(), $"revitreader-base-quantities-{Guid.NewGuid():N}.ifc");
         try
@@ -2180,6 +2186,34 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.Equal(10 * 0.3048 * 1000, QuantityIn(ifc, "LENGTH", "Length"), 6);
         Assert.Equal(0.4 * 0.6 * SquareFeet, QuantityIn(ifc, "AREA", "CrossSectionArea"), 9);
         Assert.Equal(0.4 * 0.6 * 10 * CubicFeet, QuantityIn(ifc, "VOLUME", "NetVolume"), 9);
+    }
+
+    [Fact]
+    public void Option_On_BraceOfDecodedFile_IsAMemberWithTheBeamLengthAndCrossSectionAreaAndItsOwnSlope()
+    {
+        string ifc = ExportBeam(new IfcExporter { BaseQuantities = true }, structuralType: 2, driveCurve: true);
+
+        Assert.Contains("=IFCMEMBER(", ifc);
+        Assert.Equal(10 * 0.3048 * 1000, QuantityIn(ifc, "LENGTH", "Length"), 6);
+        Assert.Equal(0.4 * 0.6 * SquareFeet, QuantityIn(ifc, "AREA", "CrossSectionArea"), 9);
+        Assert.Equal(0.4 * 0.6 * 10 * CubicFeet, QuantityIn(ifc, "VOLUME", "NetVolume"), 9);
+        // the rest is the member rule: no beam-only quantities
+        Assert.DoesNotContain("'GrossVolume'", ifc);
+        Assert.DoesNotContain("'OuterSurfaceArea'", ifc);
+        // one Slope, the angle of the drive curve (rise 5 over length 10), in Pset_MemberCommon
+        Assert.Single(Regex.Matches(ifc, "'Slope'"));
+        Assert.Equal(30.0, double.Parse(Regex.Match(ifc, @"'Slope',[^,]*,IFCPLANEANGLEMEASURE\(([^)]+)\)").Groups[1].Value, CultureInfo.InvariantCulture), 9);
+        Assert.DoesNotContain("Pset_BeamCommon", ifc);
+    }
+
+    [Fact]
+    public void Option_On_BraceOfUndecodedFile_KeepsTheMemberRule()
+    {
+        string ifc = ExportBeam(new IfcExporter { BaseQuantities = true }, structuralType: 2, geometryUndecoded: true);
+
+        Assert.Contains("=IFCMEMBER(", ifc);
+        // the member rule reads half the surface area of the solid as the section
+        Assert.NotEqual(0.4 * 0.6 * SquareFeet, QuantityIn(ifc, "AREA", "CrossSectionArea"), 6);
     }
 
     [Theory]

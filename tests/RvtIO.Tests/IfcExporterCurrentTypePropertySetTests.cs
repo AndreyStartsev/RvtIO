@@ -50,6 +50,48 @@ public class IfcExporterCurrentTypePropertySetTests
     }
 
     [Fact]
+    public void BraceType_IsAMemberTypeWithMemberCommonAndNoBarPitch_ABeamTypeStaysABeamType()
+    {
+        var brace = Product(100, -2001320, 500, 500);
+        brace.NativeStructuralType = 2;
+        var braceType = Type(500, "HSS 114", "Brace family");
+        braceType.CategoryId = -2001320;
+        string ifc = Export(IfcProfile.Current, braceType, brace);
+        Assert.DoesNotContain("=IFCBEAMTYPE(", ifc);
+        var sets = TypeSets(ifc, "IFCMEMBERTYPE");
+        Assert.Equal(["Pset_MemberCommon", "Pset_QuantityTakeOff"], sets.Select(set => set.Name));
+        Assert.Equal("IFCBOOLEAN(.T.)", sets[0].Properties["LoadBearing"]);
+        Assert.Equal("IFCBOOLEAN(.F.)", sets[0].Properties["IsExternal"]);
+        Assert.Equal("IFCIDENTIFIER('HSS 114')", sets[0].Properties["Reference"]);
+
+        var beam = Product(100, -2001320, 500, 500);
+        beam.NativeStructuralType = 1;
+        string beamIfc = Export(IfcProfile.Current, braceType, beam);
+        Assert.DoesNotContain("=IFCMEMBERTYPE(", beamIfc);
+        Assert.Single(Regex.Matches(beamIfc, @"=IFCBEAMTYPE\("));
+    }
+
+    [Fact]
+    public void NonStructuralFramingType_IsAProxyTypeWithTheProxyCommonSet_OnlyInTheCurrentProfile()
+    {
+        var framing = Product(100, -2001320, 500, 500);
+        framing.NativeStructuralType = 0;
+        var framingType = Type(500, "Strut 40", "Strut family");
+        framingType.CategoryId = -2001320;
+
+        string current = Export(IfcProfile.Current, framingType, framing);
+        Assert.Contains("=IFCBUILDINGELEMENTPROXY(", current);
+        Assert.DoesNotContain("=IFCBEAM(", current);
+        Assert.DoesNotContain("=IFCBEAMTYPE(", current);
+        Assert.Contains("Pset_BuildingElementProxyCommon", TypeSets(current, "IFCBUILDINGELEMENTPROXYTYPE").Select(set => set.Name));
+
+        // measured on one Revit 2021 file only: the legacy profile keeps the beam
+        string legacy = Export(IfcProfile.Legacy, framingType, framing);
+        Assert.Contains("=IFCBEAM(", legacy);
+        Assert.DoesNotContain("=IFCBUILDINGELEMENTPROXY(", legacy);
+    }
+
+    [Fact]
     public void DoorStyle_ReceivesDistributionFlowElementCommonLikeTheDoorDescriptions()
     {
         var type = Type(500, "800 x 2100", "Single-Flush");
