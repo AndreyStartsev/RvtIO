@@ -1098,6 +1098,44 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void Pass_Slab_ConvexArcOfTheOutline_GivesGrossVolumeOfTheExtrusion()
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "TZGD7y6S5209$mGLi_sPlj", owner, placement, AddExtrusionBody(w, 6, 3, 1));
+
+        Apply(w, owner, new() { [30] = new Element { Id = 30, Geometry = HalfDiscPrism(3, 6) } }, new() { [slab] = 30 });
+
+        // the half disc, not the polygon of its chords, 1 foot thick; Perimeter is not written for an outline with arcs
+        double halfDisc = Math.PI * 9 / 2;
+        Assert.Equal(halfDisc * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "GrossVolume").Value, 9);
+        Assert.DoesNotContain(Quantities(w, "IFCQUANTITYLENGTH"), q => q.Name == "Perimeter");
+    }
+
+    [Fact]
+    public void Pass_Slab_CurvedSideThatIsNoVerticalCylinder_GivesNoGrossVolume()
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "UZGD7y6S5209$mGLi_sPlj", owner, placement, AddExtrusionBody(w, 6, 3, 1));
+        var geometry = HalfDiscPrism(3, 6);
+        geometry.Faces[2].AnalyticCylinderAxis = [1, 0, 0];
+
+        Apply(w, owner, new() { [31] = new Element { Id = 31, Geometry = geometry } }, new() { [slab] = 31 });
+
+        Assert.DoesNotContain(Quantities(w, "IFCQUANTITYVOLUME"), q => q.Name == "GrossVolume");
+    }
+
+    [Fact]
+    public void Pass_Slab_ConvexArcOfTheOutlineWithoutAnExtrusionBody_GivesNoGrossVolume()
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "VZGD7y6S5209$mGLi_sPlj", owner, placement);
+
+        Apply(w, owner, new() { [32] = new Element { Id = 32, Geometry = HalfDiscPrism(3, 6) } }, new() { [slab] = 32 });
+
+        Assert.DoesNotContain(Quantities(w, "IFCQUANTITYVOLUME"), q => q.Name == "GrossVolume");
+    }
+
+    [Fact]
     public void Pass_Slab_ChordsWithoutTheCylinderOfTheirFacet_StayStraight()
     {
         var (w, owner, placement) = NewWriter();
