@@ -148,6 +148,12 @@ internal static partial class RebarReader
         {
             if (cls != rebar && cls != system && cls != inSystem && cls != barType && cls != settings && cls != shape && cls != joist && cls != joistType && cls != hookType) return;
             var walk = walker.Run(data, offset, size, cls, cls == shape ? (w, first) => ConstraintsValid(walker, w, first) : null);
+            // The bar of a Rebar that stopped behind an extensible storage entity is its RebarInstance, read before the entity payloads.
+            if (cls == rebar && walk.BeforeEntityBlobs() is { } beforeBlobs)
+            {
+                if (ReadPending(walker, beforeBlobs, ByQueue(beforeBlobs)) is { } afterEntity) pending.TryAdd(id, afterEntity);
+                return;
+            }
             // a type or shape block may stop at a class the schema does not declare after its name (RebarShape: tag 31065); an element must be whole
             if (!walk.RootRead || walk.Error != null && cls != shape && cls != barType && cls != joistType) return;
             var byQueue = ByQueue(walk);

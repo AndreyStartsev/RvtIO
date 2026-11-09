@@ -151,17 +151,17 @@ public class RebarReaderTests
     }
 
     /// <summary>One bar of a line (1 foot) and a quarter circle (radius 0.5 foot), in a system.</summary>
-    internal static Element Bar(int id, int systemId, bool inAssembly = false)
+    internal static Element Bar(int id, int systemId, bool inAssembly = false, double z = 0, int? hostId = null)
     {
         IReadOnlyList<RebarSegment> bar =
         [
-            new(false, [0, 0, 0], [1, 0, 0], [0, 0, 0], 0, 0, 1),
-            new(true, [1, 0.5, 0], [0, -1, 0], [1, 0, 0], 0.5, 0, Math.PI / 2),
+            new(false, [0, 0, z], [1, 0, 0], [0, 0, 0], 0, 0, 1),
+            new(true, [1, 0.5, z], [0, -1, 0], [1, 0, 0], 0.5, 0, Math.PI / 2),
         ];
         // diameters 8 mm (nominal) and 8 mm (model), in feet; the document rounds lengths to 10 mm
         return new Element
         {
-            Id = id, CategoryId = -2009000, TypeId = 900,
+            Id = id, CategoryId = -2009000, TypeId = 900, HostId = hostId,
             RebarBars = new RebarBars(900, systemId, null, [bar, bar], 8 / 304.8, 8 / 304.8, "Rebar 8", 10, InAssembly: inAssembly),
         };
     }
@@ -215,14 +215,45 @@ public class RebarReaderTests
     }
 
     [Fact]
-    public void Export_WritesNoGroupForTheBarsOfASystemThatAreAssemblyMembers()
+    public void Export_ContainsTheBarsOfAnAssemblyThatIsNotWrittenAndWritesNoGroupForThem()
     {
         string ifc = Export(Bar(500, 600, inAssembly: true), Bar(501, 600, inAssembly: true), new Element { Id = 600, CategoryId = -2009003, Name = "Area Reinforcement 1" });
         Assert.Equal(2, ifc.Split('\n').Count(l => l.Contains("IFCREINFORCINGBAR(")));
         Assert.DoesNotContain("IFCGROUP(", ifc);
         Assert.DoesNotContain("IFCRELASSIGNSTOGROUP(", ifc);
-        // an assembly aggregates its members: they are contained in no spatial structure
-        Assert.DoesNotContain("IFCRELCONTAINEDINSPATIALSTRUCTURE(", ifc);
+        // no assembly is written, so nothing aggregates the members: each is contained in the building like a bar that is not a member
+        var containment = Assert.Single(ifc.Split('\n'), l => l.Contains("IFCRELCONTAINEDINSPATIALSTRUCTURE("));
+        Assert.Equal(2, Regex.Match(containment, @",\(([^)]*)\),").Groups[1].Value.Split(',').Length);
+    }
+
+    private static Element Level(int id, string name, double elevationFeet) => new()
+    {
+        Id = id, Name = name, CategoryId = -2000240, Category = "OST_Levels", IsNativeLevel = true,
+        SerializedFamilyId = -1, SerializedUnplacedOwnerId = -1, SerializedOwnerDbViewId = -1,
+        Parameters =
+        [
+            new Parameter { Id = -1007102, Definition = new Definition { Name = "LEVEL_ELEV" }, StorageType = StorageType.Double, Value = elevationFeet },
+            new Parameter { Id = -1007111, StorageType = StorageType.Integer, Value = 1 },
+        ],
+    };
+
+    /// <summary>Levels at 0, 10 and 10.02 feet; a Part whose box starts at 9.8 feet hosts (through a held instance) a bar that lies at 20 feet.</summary>
+    [Theory]
+    [InlineData(true, "Level A")]
+    [InlineData(false, "Level C")]
+    public void Export_ContainsTheBarOfAnUnwrittenAssemblyInTheStoreyOfItsHostPart(bool inAssembly, string storey)
+    {
+        string ifc = Export(Level(10, "Level A", 0), Level(20, "Level B", 10), Level(30, "Level C", 10.02),
+            new Element { Id = 700, CategoryId = -2000269, BoundingBox = [0, 0, 9.8, 1, 1, 12] },
+            new Element { Id = 701, HostId = 700 },
+            Bar(500, 0, inAssembly: inAssembly, z: 20, hostId: 701));
+        string[] lines = ifc.Split('\n');
+        string bar = Assert.Single(lines, l => l.Contains("IFCREINFORCINGBAR("));
+        string barId = bar[..bar.IndexOf('=')];
+        string storeyLine = Assert.Single(lines, l => l.Contains("=IFCBUILDINGSTOREY(") && l.Contains($"'{storey}'"));
+        string storeyId = storeyLine[..storeyLine.IndexOf('=')];
+        var containment = Assert.Single(lines, l => l.Contains("IFCRELCONTAINEDINSPATIALSTRUCTURE(") && Regex.IsMatch(l, $@"\(([^)]*,)?{barId}(,[^)]*)?\)"));
+        Assert.EndsWith($",{storeyId});", containment.TrimEnd('\r'));
     }
 
     [Fact]
