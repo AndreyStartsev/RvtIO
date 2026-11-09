@@ -522,6 +522,14 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal int? SerializedCurveSystemTypeId { get; set; }
 
+        /// <summary>ZoneElement.m_bDefault of an HVAC zone (whether it is the default zone); null for other elements.</summary>
+        [JsonIgnore]
+        internal bool? SerializedZoneIsDefault { get; set; }
+
+        /// <summary>RoomElem.m_zoneElementId of a space: the HVAC zone it belongs to; null when it belongs to none.</summary>
+        [JsonIgnore]
+        internal int? SerializedSpaceZoneId { get; set; }
+
         /// <summary>RbsSystem.m_strName and m_typeId of an MEP system element (piping or duct system); null for other elements.</summary>
         [JsonIgnore]
         internal (string Name, int TypeId)? SerializedMepSystem { get; set; }

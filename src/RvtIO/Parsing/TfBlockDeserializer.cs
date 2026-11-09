@@ -279,6 +279,8 @@ internal static partial class TfBlockDeserializer
         // Parameter-list facts (Compact/CompactParameterLists): presence / class tag of owned pointers of the element base and
         // of the family instance.
         "37:m_cellList",
+        // HVAC zones: the default zone flag of a ZoneElement and the zone of a space (RoomElem).
+        "4215:m_bDefault", "3471:m_zoneElementId",
         .. ListFactFieldKeys,
     ];
 

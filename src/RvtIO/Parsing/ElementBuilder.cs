@@ -1729,6 +1729,13 @@ internal static partial class ElementBuilder
                     SetParam(e, -1140325, "RBS_SYSTEM_CLASSIFICATION_PARAM", StorageType.String, text);
                 continue;
             }
+            if (np.Fields.TryGetValue("4215:m_bDefault", out int zoneDefault))
+            {
+                e.SerializedZoneIsDefault = zoneDefault != 0;
+                continue;
+            }
+            if (np.Fields.TryGetValue("3471:m_zoneElementId", out int spaceZone) && spaceZone > 0)
+                e.SerializedSpaceZoneId = spaceZone;
             if (np.StringFields.TryGetValue("3170:m_strName", out string? ownName))
             {
                 SetParam(e, -1140324, "RBS_SYSTEM_NAME_PARAM", StorageType.String, ownName);

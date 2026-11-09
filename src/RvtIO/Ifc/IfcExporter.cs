@@ -6488,6 +6488,7 @@ public partial class IfcExporter
         var systemMembers = WriteDistributionPorts(w, ownerHistId, elemById, exportedIfcElements, CurrentProfile);
         if (CurrentProfile) AddCircuitBaseEquipment(elemById, exportedIfcElements, systemMembers);
         WriteMepSystems(w, ownerHistId, buildingId, elemById, systemMembers);
+        if (CurrentProfile) WriteHvacZones(w, ownerHistId, elemById, spaceEntityIdByRoomId, propertySingleValueIds);
         WriteModelGroups(w, ownerHistId, elemById, exportedIfcElements);
         WriteRebarSystemGroups(w, ownerHistId, elemById);
         if (CurrentProfile) WriteInsulationCoverings(w, ownerHistId, elemById, exportedIfcElements, exportedGlobalIds);
@@ -67219,6 +67220,37 @@ public partial class IfcExporter
                 $"{S(IfcGuid.FromName($"mep-system-building:{systemId}"))},{R(ownerHistId)},'','',{R(systemEntity)},{StepWriter.List(R(buildingId))}");
             w.Add("IFCRELASSIGNSTOGROUP",
                 $"{S(IfcGuid.FromMd5($"IfcRelAssignsToGroup:{globalId}"))},{R(ownerHistId)},'','',{StepWriter.List(members.Select(R))},$,{R(systemEntity)}");
+        }
+    }
+
+    /// <summary>
+    /// HVAC zones: an IfcZone named "number:id" (the default zone has the number "Default") for every zone with at least one
+    /// exported space (a space names its zone by RoomElem.m_zoneElementId), the number as Pset_ZoneCommon.Reference, and an
+    /// IfcRelAssignsToGroup of its spaces in id order. A zone without an exported space is not written.
+    /// </summary>
+    private void WriteHvacZones(
+        StepWriter w, int ownerHistId, IReadOnlyDictionary<int, Element> elemById,
+        IReadOnlyDictionary<int, int> spaceEntityIdByRoomId, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds)
+    {
+        var spacesByZone = elemById.Values.Where(item => item.SerializedSpaceZoneId != null && spaceEntityIdByRoomId.ContainsKey(item.Id))
+            .OrderBy(item => item.Id).ToLookup(item => item.SerializedSpaceZoneId!.Value, item => spaceEntityIdByRoomId[item.Id]);
+        foreach (var zone in elemById.Values.Where(item => item.SerializedZoneIsDefault != null).OrderBy(item => item.Id))
+        {
+            var members = spacesByZone[zone.Id].ToList();
+            if (members.Count == 0 || ExportFlagIsNo(zone, elemById)) continue;
+            string number = zone.SerializedZoneIsDefault == true ? "Default"
+                : zone.Parameters.FirstOrDefault(p => p.Id == -1114300)?.Value as string ?? "";
+            string id = zone.Id.ToString(CultureInfo.InvariantCulture);
+            string globalId = ResolveExactElementGlobalId(zone, _usedExportIds, handleBased: true) ?? IfcGuid.FromName($"hvac-zone:{id}");
+            int zoneEntity = w.Add("IFCZONE", $"{S(globalId)},{R(ownerHistId)},{S($"{number}:{id}")},'',''");
+            w.Add("IFCRELASSIGNSTOGROUP",
+                $"{S(ResolveExactElementGlobalId(zone, _usedExportIds, 1, true) ?? IfcGuid.FromName($"hvac-zone-rel:{id}"))},{R(ownerHistId)},'','',"
+                + $"{StepWriter.List(members.Select(R))},$,{R(zoneEntity)}");
+            int referenceId = GetOrAddPropertySingleValue(w, propertySingleValueIds, "Reference", $"IFCIDENTIFIER({S(number)})");
+            int psetId = w.Add("IFCPROPERTYSET",
+                $"{S(IfcGuid.FromName($"hvac-zone-pset:{id}"))},{R(ownerHistId)},{S("Pset_ZoneCommon")},'',{StepWriter.List(R(referenceId))}");
+            w.Add("IFCRELDEFINESBYPROPERTIES",
+                $"{S(IfcGuid.FromName($"hvac-zone-pset-rel:{id}"))},{R(ownerHistId)},'','',{StepWriter.List(R(zoneEntity))},{R(psetId)}");
         }
     }
 
