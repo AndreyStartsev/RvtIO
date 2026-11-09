@@ -338,6 +338,21 @@ public class IfcExporterMemberPlateCommonPropertySetTests
     }
 
     [Fact]
+    public void Brace_SpanIsTheDriveCurve_NotTheRoundedStoredLength()
+    {
+        var props = BraceProperties(IfcProfile.Current, structuralType: 2, driveLengthFt: 4.0003, out _,
+            configure: brace => brace.Parameters.Add(new Parameter
+            {
+                Id = -1001375, // INSTANCE_LENGTH_PARAM, stored rounded
+                StorageType = StorageType.Double,
+                Value = 4.0,
+            }));
+
+        var span = Regex.Match(props["Span"], @"^IFCPOSITIVELENGTHMEASURE\(([^)]+)\)$");
+        Assert.Equal(4.0003 * 304.8, double.Parse(span.Groups[1].Value, CultureInfo.InvariantCulture), precision: 6);
+    }
+
+    [Fact]
     public void Brace_WithoutADriveCurve_SpansItsStoredInstanceLength()
     {
         var props = BraceProperties(IfcProfile.Current, structuralType: 2, driveLengthFt: null, out _,
