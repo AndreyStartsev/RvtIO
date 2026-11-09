@@ -703,9 +703,10 @@ public partial class RvtFileReader
         string? systemFamilyLocale = _options.SystemFamilyNameLocale ?? rvtInfo.Metadata.SavedLocale;
         var systemFamilyNames = Lookup.RevitSystemFamilyNames.Load(rvtInfo.Metadata.RevitVersion, systemFamilyLocale);
         // an earlier release has no other name than those of the curtain wall, stair and MEP curve families, and only the type roots of those
-        // read them; they are read for the locale a profile requests, so a reader without a requested locale (the legacy profile) is unchanged
+        // read them; the MEP curve names follow the locale in effect, the curtain wall and stair names only a locale a profile requests, so a
+        // reader without a requested locale (the legacy profile) is unchanged
         var familyNames = systemFamilyNames
-            ?? Lookup.RevitSystemFamilyNames.LoadPreviousReleaseFamilies(rvtInfo.Metadata.RevitVersion, _options.SystemFamilyNameLocale);
+            ?? Lookup.RevitSystemFamilyNames.LoadPreviousReleaseFamilies(rvtInfo.Metadata.RevitVersion, systemFamilyLocale, _options.SystemFamilyNameLocale);
         int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames);
         // the stored lookup entries are in the language the file was saved in, whatever locale the exported names use
         rvtInfo.SerializedLookupNoneText = Lookup.RevitSystemFamilyNames.Load(

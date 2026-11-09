@@ -294,7 +294,7 @@ public class MepCurveNamingTests
         var tray = new Element { Id = 377386, CategoryId = -2008130 };
 
         int assigned = ElementBuilder.ApplyValidatedSystemFamilyNames([pipe, tray], state,
-            RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU"));
+            RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU", "ENU"));
 
         Assert.Equal(2, assigned);
         Assert.Equal("Pipe Types", pipe.ValidatedMepFamilyName);

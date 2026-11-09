@@ -130,23 +130,41 @@ internal sealed class RevitSystemFamilyNames
         return new RevitSystemFamilyNames(names, string.IsNullOrWhiteSpace(stairName) ? null : stairName) { _texts = texts };
     }
 
-    /// <summary>The English names of the families of the releases before the embedded names (Revit 2020 and 2021) when the requested
-    /// locale is English (the current IFC profile requests it, whatever language the file was saved in); null for any other file or locale.
-    /// Curtain Wall and the stair families are in it for both releases, the MEP curve families (ducts, pipes, conduits, cable trays, pipe
-    /// insulation) for 2021 only, and the stair occurrence name; no other kind or text is in it: only the type roots of those families and the stairs read this table.</summary>
-    internal static RevitSystemFamilyNames? LoadPreviousReleaseFamilies(string? revitVersion, string? locale)
+    /// <summary>The English names of the families of the releases before the embedded names (Revit 2020 and 2021). The MEP curve families
+    /// (ducts, pipes, conduits, cable trays, pipe insulation; 2021 only) are named when <paramref name="locale"/>, the locale in effect (the
+    /// requested one, else the one the file was saved in), is English. Curtain Wall, the stair families (both releases) and the stair occurrence
+    /// name are named only when <paramref name="requestedLocale"/>, the locale a profile asks for whatever language the file was saved in, is
+    /// English, so a reader without a requested locale (the legacy profile) is unchanged. Null when nothing is named; no other kind or text is
+    /// in it: only the type roots of those families and the stairs read this table.</summary>
+    internal static RevitSystemFamilyNames? LoadPreviousReleaseFamilies(string? revitVersion, string? locale, string? requestedLocale)
     {
-        if (!int.TryParse(revitVersion, out int version) || version is not (2020 or 2021)
-            || locale == null || !Cultures.TryGetValue(locale, out string? culture) || culture != "en-US") return null;
+        if (!int.TryParse(revitVersion, out int version) || version is not (2020 or 2021)) return null;
         var names = new Dictionary<SystemFamilyKind, string>();
-        foreach (var kind in version == 2021 ? MepCurveFamilies.Concat(CurtainAndStairFamilies) : CurtainAndStairFamilies)
+        string? stairName = null;
+        if (version == 2021 && IsEnglish(locale, out string? mepCulture))
+            AddNames(names, MepCurveFamilies, mepCulture!);
+        if (IsEnglish(requestedLocale, out string? culture))
+        {
+            AddNames(names, CurtainAndStairFamilies, culture!);
+            stairName = RevitUiNameTable.Get(culture!, StairNameKey);
+        }
+        return names.Count == 0 ? null : new RevitSystemFamilyNames(names, string.IsNullOrWhiteSpace(stairName) ? null : stairName);
+    }
+
+    private static bool IsEnglish(string? locale, out string? culture)
+    {
+        culture = null;
+        return locale != null && Cultures.TryGetValue(locale, out culture) && culture == "en-US";
+    }
+
+    private static void AddNames(Dictionary<SystemFamilyKind, string> names, IEnumerable<SystemFamilyKind> kinds, string culture)
+    {
+        foreach (var kind in kinds)
         {
             string? name = RevitUiNameTable.Get(culture, kind.ToString());
             if (kind == SystemFamilyKind.PipeInsulation) name = name?.Split('\n')[0].Trim();
             if (!string.IsNullOrWhiteSpace(name)) names[kind] = name;
         }
-        string? stairName = RevitUiNameTable.Get(culture, StairNameKey);
-        return new RevitSystemFamilyNames(names, string.IsNullOrWhiteSpace(stairName) ? null : stairName);
     }
 
     private static readonly SystemFamilyKind[] CurtainAndStairFamilies =

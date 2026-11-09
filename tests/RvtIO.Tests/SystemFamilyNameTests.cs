@@ -109,7 +109,7 @@ public class SystemFamilyNameTests
     [InlineData("2020", "PipeTypes", null)] [InlineData("2020", "BasicWall", null)]
     public void LoadPreviousReleaseFamilies_GivesTheNamesOfThoseFamiliesOnly(string version, string kind, string? expected)
     {
-        var names = RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "ENU")!;
+        var names = RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "ENU", "ENU")!;
         Assert.Equal(expected, names.Get(Enum.Parse<SystemFamilyKind>(kind)));
         Assert.Equal("Stair", names.StairOccurrenceName);
         Assert.Null(names.Get(RevitUiText.LevelFamily));
@@ -120,7 +120,26 @@ public class SystemFamilyNameTests
     [InlineData("2019", "ENU")] [InlineData("2022", "ENU")] [InlineData("2021", "RUS")] [InlineData("2020", "RUS")]
     [InlineData("2021", "DEU")] [InlineData("2021", null)] [InlineData(null, "ENU")] [InlineData("beta", "ENU")]
     public void LoadPreviousReleaseFamilies_OtherVersionOrLocaleGivesNoNames(string? version, string? locale) =>
-        Assert.Null(RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, locale));
+        Assert.Null(RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, locale, locale));
+
+    // Without a requested locale a file saved in English still names its MEP curve families (the locale in effect), but not its curtain walls
+    // and stairs; a file saved in another language names the curtain walls and stairs only for a requested English locale.
+    [Fact]
+    public void LoadPreviousReleaseFamilies_MepFollowsTheLocaleInEffect_CurtainWallAndStairsTheRequestedOne()
+    {
+        var saved = RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU", null)!;
+        Assert.Equal("Rectangular Duct", saved.Get(SystemFamilyKind.RectangularDuct));
+        Assert.Null(saved.Get(SystemFamilyKind.CurtainWall));
+        Assert.Null(saved.Get(SystemFamilyKind.AssembledStair));
+        Assert.Null(saved.StairOccurrenceName);
+
+        var requested = RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "RUS", "ENU")!;
+        Assert.Equal("Curtain Wall", requested.Get(SystemFamilyKind.CurtainWall));
+        Assert.Equal("Stair", requested.StairOccurrenceName);
+        Assert.Null(requested.Get(SystemFamilyKind.RectangularDuct));
+
+        Assert.Null(RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2020", "ENU", null));
+    }
 
     // A curtain wall and a stair type of a 2020/2021 file are named by the type root's own class, a basic wall type is not.
     [Theory]
@@ -136,7 +155,7 @@ public class SystemFamilyNameTests
         var state = new ParsingState();
         state.SystemTypeRoots[500] = (1, (ushort)cls, discriminator);
         var type = new Element { Id = 500, CategoryId = category, Name = "Type" };
-        ElementBuilder.ApplyValidatedSystemFamilyNames([type], state, RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU"));
+        ElementBuilder.ApplyValidatedSystemFamilyNames([type], state, RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU", "ENU"));
         Assert.Equal(expected, type.ValidatedSystemFamilyName);
         Assert.Null(type.FamilyName);
     }
@@ -157,7 +176,7 @@ public class SystemFamilyNameTests
         var type = new Element { Id = 500, CategoryId = -2000011, Name = "Type" };
         var elements = new List<Element> { type };
         if (mode == "duplicate_element") elements.Add(new Element { Id = 500, CategoryId = -2000011, Name = "Type" });
-        ElementBuilder.ApplyValidatedSystemFamilyNames(elements, state, RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2020", "ENU"));
+        ElementBuilder.ApplyValidatedSystemFamilyNames(elements, state, RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2020", "ENU", "ENU"));
         Assert.All(elements, element => Assert.Equal(expected, element.ValidatedSystemFamilyName));
     }
 
@@ -167,9 +186,9 @@ public class SystemFamilyNameTests
     public void ApplyValidatedStairOccurrenceNames_PreviousReleaseNamesAStairsRoot(string version, int category, string? expected)
     {
         var stair = new Element { Id = 700, CategoryId = category, NativeRootClassName = "Stairs" };
-        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "ENU"));
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "ENU", "ENU"));
         Assert.Equal(expected, stair.ValidatedStairOccurrenceName);
-        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "RUS"));
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "RUS", "RUS"));
         Assert.Null(stair.ValidatedStairOccurrenceName);
     }
 
@@ -189,7 +208,7 @@ public class SystemFamilyNameTests
             Id = 100, CategoryId = -2000120, SerializedOwnElementClassId = 3681, SerializedStairCore = [new(200, 3708)],
             SerializedStairTypeLinkIsResolved = true, SerializedStairTypeId = 300,
         };
-        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair, type], RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU"));
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair, type], RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU", "ENU"));
         Assert.Equal(expected, stair.ValidatedStairOccurrenceName);
         Assert.Null(type.ValidatedStairOccurrenceName);
     }
