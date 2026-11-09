@@ -28,20 +28,20 @@ internal static partial class RebarReader
     }
 
     /// <summary>Bend diameters of a bar type and its hook length settings (hook, offset, tangent length; -1 for none) by hook type id.</summary>
-    private sealed record BarKind(double StandardBend, double StandardHookBend, double StirrupTieBend,
+    internal sealed record BarKind(double StandardBend, double StandardHookBend, double StirrupTieBend,
         IReadOnlyDictionary<int, (double Hook, double Offset, double Tangent)> HookLengths);
 
-    private sealed record HookKind(double Angle, double Multiplier, int Style);
+    internal sealed record HookKind(double Angle, double Multiplier, int Style);
 
     /// <summary>The shape of a shape driven bar: per edge its direction in the plane and the id of the parameter that holds its dimension,
     /// per vertex its turn, the style (0 standard, 1 stirrup / tie) and the orientation of the two hooks (1 left, 3 right).</summary>
-    private sealed record ShapeDefinition(IReadOnlyList<double[]> Directions, IReadOnlyList<long> ParameterIds, IReadOnlyList<int> Turns,
+    internal sealed record ShapeDefinition(IReadOnlyList<double[]> Directions, IReadOnlyList<long> ParameterIds, IReadOnlyList<int> Turns,
         int Style, IReadOnlyList<long> HookOrientation);
 
     /// <summary>A shape driven bar with no cached curves: what its RebarInstance holds to rebuild them.</summary>
-    private sealed record PendingBar(int BarTypeId, int ShapeId, int HookId0, int HookId1, long HookOrientation0, long HookOrientation1, double BarLength,
+    internal sealed record PendingBar(int BarTypeId, int ShapeId, int HookId0, int HookId1, long HookOrientation0, long HookOrientation1, double BarLength,
         IReadOnlyDictionary<long, int> ParameterIndex, IReadOnlyList<double> Doubles, IReadOnlyList<double[]> Positions, IReadOnlyList<long> Included,
-        double[] Frame, bool InAssembly);
+        double[] Frame, bool InAssembly, bool Held = false);
 
     /// <summary>True when the queued objects from <paramref name="first"/> on are the constraints of the edges of a shape and their values
     /// are those of constraints: unit directions in the plane, small reference types, positive parameter ids. A start position of the read
@@ -143,7 +143,29 @@ internal static partial class RebarReader
     private static PendingBar? ReadPending(WideBlockWalker walker, WideBlockWalker.Walk walk, Dictionary<int, List<WideBlockWalker.Capture>> byQueue)
     {
         int instance = walk.Queue.FindIndex(c => walker.Class(c)?.Name == "RebarInstance");
-        if (instance < 0 || !byQueue.TryGetValue(instance, out var caps)) return null;
+        return instance < 0 || !byQueue.TryGetValue(instance, out var caps) ? null : ReadPending(caps, InAssembly(walker, walk, byQueue));
+    }
+
+    /// <summary>The bars of a RebarSystem of Revit 2020 and 2021, whose layers hold no curves: the RebarSystemGStep keeps one held instance per
+    /// RebarInSystem, a HeldRebarInstanceKey (m_index, m_layer) followed by the RebarInstBase of its bars. The result is by (layer, index).</summary>
+    internal static Dictionary<(int Layer, int Index), PendingBar> ReadHeld(IEnumerable<WideBlockWalker.Capture> captures)
+    {
+        var groups = new List<(int Layer, int Index, int Queue, List<WideBlockWalker.Capture> Caps)>();
+        long? index = null;
+        foreach (var c in captures)
+        {
+            if (c.Key == "HeldRebarInstanceKey.m_index") index = c.Integer;
+            else if (c.Key == "HeldRebarInstanceKey.m_layer" && index is long i) { groups.Add(((int)c.Integer, (int)i, c.QueueIndex, [])); index = null; }
+            else if (groups.Count > 0 && c.QueueIndex == groups[^1].Queue) groups[^1].Caps.Add(c);
+        }
+        var result = new Dictionary<(int, int), PendingBar>();
+        foreach (var (layer, held, _, caps) in groups)
+            if (ReadPending(caps, false) is { } bar) result.TryAdd((layer, held), bar with { Held = true });
+        return result;
+    }
+
+    private static PendingBar? ReadPending(List<WideBlockWalker.Capture> caps, bool inAssembly)
+    {
         if (IntegerOf(caps, "RebarInstBase.m_shapeId") is not long shape || IntegerOf(caps, "RebarInstBase.m_barTypeId") is not long barType
             || IntegerOf(caps, "RebarInstBase.m_hookTypeId0") is not long hook0 || IntegerOf(caps, "RebarInstBase.m_hookTypeId1") is not long hook1
             || IntegerOf(caps, "RebarInstBase.m_hookOrient0") is not long orient0 || IntegerOf(caps, "RebarInstBase.m_hookOrient1") is not long orient1
@@ -184,7 +206,7 @@ internal static partial class RebarReader
         }
         if (positions.Count != count || included.Count != 0 && included.Count != count) return null;
         return new PendingBar((int)barType, (int)shape, (int)hook0, (int)hook1, orient0, orient1, barLength,
-            ids.Zip(indexes).ToDictionary(pair => pair.First, pair => pair.Second), doubles, positions, included, frame[0], InAssembly(walker, walk, byQueue));
+            ids.Zip(indexes).ToDictionary(pair => pair.First, pair => pair.Second), doubles, positions, included, frame[0], inAssembly);
     }
 
     private const long MaxBarPositions = 100_000;
@@ -210,8 +232,9 @@ internal static partial class RebarReader
     }
 
     /// <summary>The bars of a shape driven bar with no cache, from <see cref="RebarShapeSolver"/> (null when the shape is outside what it
-    /// covers). The bar positions move the first bar twice, as for the cached bars.</summary>
-    private static RebarBars? SolveShapeDriven(PendingBar bar, ShapeDefinition shape, Dictionary<int, HookKind> hookKinds, BarKind barKind, double diameter)
+    /// covers). The bar positions move the first bar twice, as for the cached bars; the positions of a held instance are
+    /// the bar steps themselves and move it once.</summary>
+    internal static RebarBars? SolveShapeDriven(PendingBar bar, ShapeDefinition shape, Dictionary<int, HookKind> hookKinds, BarKind barKind, double diameter)
     {
         var lengths = new List<double>();
         foreach (long parameter in shape.ParameterIds)
@@ -231,7 +254,7 @@ internal static partial class RebarReader
         for (int i = 0; i < bar.Positions.Count; i++)
         {
             if (bar.Included.Count != 0 && bar.Included[i] == 0) continue;
-            bars.Add(first.Select(s => s.Moved(bar.Positions[i]).Moved(bar.Positions[i])).ToList());
+            bars.Add(first.Select(s => bar.Held ? s.Moved(bar.Positions[i]) : s.Moved(bar.Positions[i]).Moved(bar.Positions[i])).ToList());
         }
         return new RebarBars(bar.BarTypeId, 0, bar.BarLength, bars, ShapeName: bar.ShapeId.ToString(CultureInfo.InvariantCulture), InAssembly: bar.InAssembly);
     }
