@@ -256,6 +256,83 @@ public class IfcExporterMemberPlateCommonPropertySetTests
         finally { Cleanup(path); }
     }
 
+    private static Dictionary<string, string> BraceProperties(
+        IfcProfile profile, int? structuralType, double? driveLengthFt, out string ifc,
+        int categoryId = StructuralFramingCategoryId, string category = "OST_StructuralFraming")
+    {
+        var element = LinearElement(
+            id: 350, typeId: 351, name: "BraceType_HSS", categoryId: categoryId,
+            category: category, centreX: 0, curveElemLengthFt: null);
+        element.NativeStructuralType = structuralType;
+        element.CurveDriverLineLength = driveLengthFt;
+        var info = new RevitFileInfo();
+        info.Elements.Add(element);
+        string path = TempIfcPath("brace-member");
+        try
+        {
+            new IfcExporter { Profile = profile }.Export(info, path);
+            ifc = File.ReadAllText(path);
+        }
+        finally { Cleanup(path); }
+        if (!ifc.Contains("'Pset_MemberCommon'")) return [];
+        return ResolveProperties(ifc, SolePsetOfName(ifc, "Pset_MemberCommon").valueIds);
+    }
+
+    [Fact]
+    public void Brace_IsAMemberWithMemberCommonLoadBearingAndBeamSpan_NotABeam()
+    {
+        var props = BraceProperties(IfcProfile.Current, structuralType: 2, driveLengthFt: 10.0, out string ifc);
+
+        SoleEntityId(ifc, "IFCMEMBER");
+        Assert.DoesNotContain("=IFCBEAM(", ifc);
+        Assert.DoesNotContain("Pset_BeamCommon", ifc);
+        Assert.Equal(
+            new[] { "IsExternal", "LoadBearing", "Reference", "Span" },
+            props.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Equal("IFCBOOLEAN(.T.)", props["LoadBearing"]);
+        var span = Regex.Match(props["Span"], @"^IFCPOSITIVELENGTHMEASURE\(([^)]+)\)$");
+        Assert.True(span.Success, props["Span"]);
+        Assert.Equal(10.0 * 304.8, double.Parse(span.Groups[1].Value, CultureInfo.InvariantCulture), precision: 6);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    [InlineData(null)]
+    public void NonBraceFraming_StaysABeamWithBeamCommon(int? structuralType)
+    {
+        BraceProperties(IfcProfile.Current, structuralType, driveLengthFt: 10.0, out string ifc);
+
+        SoleEntityId(ifc, "IFCBEAM");
+        Assert.DoesNotContain("=IFCMEMBER(", ifc);
+        Assert.DoesNotContain("Pset_MemberCommon", ifc);
+        Assert.Contains("'Pset_BeamCommon'", ifc);
+    }
+
+    [Fact]
+    public void LegacyBrace_IsAMemberWithLoadBearingButNoSpan()
+    {
+        var props = BraceProperties(IfcProfile.Legacy, structuralType: 2, driveLengthFt: 10.0, out string ifc);
+
+        SoleEntityId(ifc, "IFCMEMBER");
+        Assert.Equal(
+            new[] { "IsExternal", "LoadBearing", "Reference" },
+            props.Keys.OrderBy(k => k, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void CurrentMullion_GetsNeitherLoadBearingNorSpan()
+    {
+        var props = BraceProperties(
+            IfcProfile.Current, structuralType: 2, driveLengthFt: 10.0, out string ifc,
+            MullionCategoryId, "OST_CurtainWallMullions");
+
+        SoleEntityId(ifc, "IFCMEMBER");
+        Assert.Equal(
+            new[] { "IsExternal", "Reference" },
+            props.Keys.OrderBy(k => k, StringComparer.Ordinal));
+    }
+
     [Fact]
     public void TwoMullionsWithSameTypeNameAndSpan_ShareAllThreePropertySingleValueInstances()
     {

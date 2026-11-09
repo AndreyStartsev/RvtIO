@@ -1711,7 +1711,7 @@ public partial class IfcExporter
                     ?? (elem.CategoryId == null && elem.Transform != null && elem.TypeId > 0
                         ? "IFCBUILDINGELEMENTPROXY"
                         : null);
-            if (info.GeometryUndecoded && ifcType == "IFCBEAM" && elem.NativeStructuralType == 2)
+            if (ifcType == "IFCBEAM" && elem.NativeStructuralType == 2)
                 ifcType = "IFCMEMBER";
             // A wall foundation (ContFooting) is an IfcFooting; the other foundations of
             // OST_StructuralFoundation stay slabs.
@@ -64315,19 +64315,11 @@ public partial class IfcExporter
             ParameterNameEquals(parameter, propertyName)
             || ParameterNameEquals(parameter, propertyName + "[Type]"));
 
-    /// <summary>The exact QTO property entity is reused.</summary>
-    private static void ExportBeamCommonPropertySet(
-        StepWriter w, Element elem, int elemEntityId, int ownerHistId,
-        int referenceValueId,
-        Dictionary<(string PropertyName, string ValueExpr), int> valuePool,
-        bool? isExternal = null, double? spanMillimetres = null)
+    /// <summary>LoadBearing of a framing occurrence: its own parameter, otherwise .T. for structural framing.</summary>
+    private static void AddStructuralFramingLoadBearing(
+        StepWriter w, Element elem, List<int> valueIds,
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool)
     {
-        var valueIds = new List<int> { referenceValueId };
-        if (spanMillimetres is double span)
-            valueIds.Add(GetOrAddPropertySingleValue(w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(span)})"));
-        if (isExternal is bool beamExternal)
-            valueIds.Add(GetOrAddPropertySingleValue(
-                w, valuePool, "IsExternal", beamExternal ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
         ExactIsExternalParameterResult loadBearing =
             ResolveExactOccurrenceBooleanParameter(elem, "LoadBearing");
         if (loadBearing.State == ExactIsExternalParameterState.Value)
@@ -64344,6 +64336,22 @@ public partial class IfcExporter
             valueIds.Add(GetOrAddPropertySingleValue(
                 w, valuePool, "LoadBearing", "IFCBOOLEAN(.T.)"));
         }
+    }
+
+    /// <summary>The exact QTO property entity is reused.</summary>
+    private static void ExportBeamCommonPropertySet(
+        StepWriter w, Element elem, int elemEntityId, int ownerHistId,
+        int referenceValueId,
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool,
+        bool? isExternal = null, double? spanMillimetres = null)
+    {
+        var valueIds = new List<int> { referenceValueId };
+        if (spanMillimetres is double span)
+            valueIds.Add(GetOrAddPropertySingleValue(w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(span)})"));
+        if (isExternal is bool beamExternal)
+            valueIds.Add(GetOrAddPropertySingleValue(
+                w, valuePool, "IsExternal", beamExternal ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
+        AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool);
 
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"beam-common-pset:{elem.Id}"))},{R(ownerHistId)},{S("Pset_BeamCommon")},$,{StepWriter.List(valueIds.Select(R))}");
@@ -65998,7 +66006,8 @@ public partial class IfcExporter
 
     /// <summary>
     /// Emits Pset_MemberCommon for one IFCMEMBER product: IsExternal, Reference, and - for curtain
-    /// wall mullions only - Span.
+    /// wall mullions only - Span. A structural framing member (a brace) also carries LoadBearing and,
+    /// in the current profile, the Span of a beam.
     /// </summary>
     private void ExportMemberCommonPropertySet(
         StepWriter w, Element elem, int elemEntityId, int ownerHistId,
@@ -66014,6 +66023,9 @@ public partial class IfcExporter
                 w, valuePool, "IsExternal",
                 isExternal ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"),
         };
+        bool framing = elem.CategoryId == StructuralFramingCategoryId;
+        if (framing)
+            AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool);
         if (referenceValue != null)
         {
             valueIds.Add(GetOrAddPropertySingleValue(
@@ -66023,6 +66035,10 @@ public partial class IfcExporter
         {
             _mainLoopReferenceOmittedCount++;
         }
+        if (framing && CurrentProfile
+            && ResolveBeamSpanMillimetresCurrent(elem, elementsById.GetValueOrDefault(elem.FamilyTypeId)) is double braceSpan)
+            valueIds.Add(GetOrAddPropertySingleValue(
+                w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(braceSpan)})"));
         if (elem.CategoryId == CurtainWallMullionCategoryId && !CurrentProfile)
         {
             Element? elementType = elem.FamilyTypeId > 0
