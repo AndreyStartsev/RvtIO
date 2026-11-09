@@ -96,6 +96,61 @@ public class IfcExporterHvacZoneTests
     }
 
     [Fact]
+    public void Zone_WithoutANameIsStillWrittenWithAnEmptyNumber()
+    {
+        // No sample has such a zone; it is kept (not skipped) because the zone does hold spaces.
+        var entities = WriteZones(Model(Zone(50, null, false), Space(4, 50)), new() { [4] = 30 });
+        Assert.Contains(",':50','',''", entities[0].Args);
+        Assert.Contains("IFCIDENTIFIER('')", entities[2].Args);
+    }
+
+    [Fact]
+    public void Zone_WithoutAnExportIdGetsAGlobalIdFromItsElementId()
+    {
+        var zone = Zone(50, "1", false);
+        zone.SerializedExportId = null;
+        var entities = WriteZones(Model(zone, Space(4, 50)), new() { [4] = 30 });
+        Assert.StartsWith($"'{IfcGuid.FromName("hvac-zone:50")}',", entities[0].Args);
+        Assert.StartsWith($"'{IfcGuid.FromName("hvac-zone-rel:50")}',", entities[1].Args);
+    }
+
+    [Fact]
+    public void Zone_KeepsItsExportIdWhateverIfcGuidParameterItHolds()
+    {
+        var zone = Zone(50, "1", false);
+        zone.Parameters.Add(new Parameter
+        {
+            Id = (int)BuiltInParameter.IFC_GUID, StorageType = StorageType.String, Value = "0123456789012345678901",
+        });
+        var entities = WriteZones(Model(zone, Space(4, 50)), new() { [4] = 30 });
+        Assert.StartsWith($"'{IfcGuid.ToIfcGuid(zone.SerializedExportId!.Value)}',", entities[0].Args);
+    }
+
+    [Theory]
+    [InlineData(IfcProfile.Current, 1)]
+    [InlineData(IfcProfile.Legacy, 0)]
+    public void Export_WritesTheZoneOnlyInTheCurrentProfile(IfcProfile profile, int expected)
+    {
+        var room = IfcExporterSpacesTests.Room(100, "Room", "1", 900);
+        room.SerializedSpaceZoneId = 50;
+        var info = new RevitFileInfo();
+        info.Elements.AddRange([IfcExporterSpacesTests.Level(900, "Level", 0), room, Zone(50, "3", false)]);
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-zone-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            new IfcExporter { Profile = profile }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(ifc, @"=IFCSPACE\("));
+            Assert.Equal(expected, System.Text.RegularExpressions.Regex.Matches(ifc, @"=IFCZONE\(").Count);
+            Assert.Equal(expected, System.Text.RegularExpressions.Regex.Matches(ifc, @"'Pset_ZoneCommon'").Count);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void ApplyMepSystemParams_KeepsTheDefaultFlagOfTheZoneAndTheZoneOfTheSpace()
     {
         var zone = new Element { Id = 50 };
