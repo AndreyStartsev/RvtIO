@@ -69492,32 +69492,6 @@ public partial class IfcExporter
                 && storeyIds.TryGetValue(levelId, out int storeyId))
                 return storeyId;
 
-        if (CurrentProfile)
-        {
-            // LEVEL_PARAM, SCHEDULE_LEVEL_PARAM, RBS_START_LEVEL_PARAM, FAMILY_BASE_LEVEL_PARAM,
-            // INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM, INSTANCE_REFERENCE_LEVEL_PARAM,
-            // SCHEDULE_BASE_LEVEL_PARAM.
-            foreach (int parameterId in elem.CategoryId is -2000035 or -2000120
-                         ? new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063, -1001352 }
-                         : new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063 })
-                if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId
-                    && storeyIds.TryGetValue(assocLevelId, out int assocStoreyId))
-                    return assocStoreyId;
-        }
-        // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
-        else foreach (var p in elem.Parameters)
-        {
-            if (p.StorageType == StorageType.ElementId && p.Value is int refId && refId > 0)
-            {
-                string? pName = p.Definition?.Name;
-                if (pName != null && (pName.Contains("LEVEL") || pName.Contains("CONSTRAINT") || pName.Contains("Level")))
-                {
-                    if (storeyIds.TryGetValue(refId, out int sid))
-                        return sid;
-                }
-            }
-        }
-
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
         if (CurrentProfile && elem.CategoryId is -2001330 or -2000100
@@ -69542,6 +69516,32 @@ public partial class IfcExporter
                     }
                 }
             return chosen;
+        }
+
+        if (CurrentProfile)
+        {
+            // LEVEL_PARAM, SCHEDULE_LEVEL_PARAM, RBS_START_LEVEL_PARAM, FAMILY_BASE_LEVEL_PARAM,
+            // INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM, INSTANCE_REFERENCE_LEVEL_PARAM,
+            // SCHEDULE_BASE_LEVEL_PARAM.
+            foreach (int parameterId in elem.CategoryId is -2000035 or -2000120
+                         ? new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063, -1001352 }
+                         : new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063 })
+                if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId
+                    && storeyIds.TryGetValue(assocLevelId, out int assocStoreyId))
+                    return assocStoreyId;
+        }
+        // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
+        else foreach (var p in elem.Parameters)
+        {
+            if (p.StorageType == StorageType.ElementId && p.Value is int refId && refId > 0)
+            {
+                string? pName = p.Definition?.Name;
+                if (pName != null && (pName.Contains("LEVEL") || pName.Contains("CONSTRAINT") || pName.Contains("Level")))
+                {
+                    if (storeyIds.TryGetValue(refId, out int sid))
+                        return sid;
+                }
+            }
         }
 
         // No stored level: the highest storey at or below the bottom of the element.

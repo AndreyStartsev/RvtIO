@@ -22,6 +22,7 @@ public class IfcExporterColumnContainerTests
         info.Elements.Add(Column(id: 100, baseLevelId: 7, bottom: 7));   // level 3.5: First, not the storey of the box bottom
         info.Elements.Add(Column(id: 101, baseLevelId: 8, bottom: 0));   // below every storey: the building
         info.Elements.Add(Column(id: 102, baseLevelId: 3, bottom: 0));   // a project storey: unchanged
+        info.Elements.Add(Column(id: 103, baseLevelId: 7, bottom: 7, levelParameterId: 3));   // a stored level reference does not override the base level
         string path = TempIfcPath("column-container");
 
         try
@@ -32,6 +33,7 @@ public class IfcExporterColumnContainerTests
             Assert.Equal("First", ContainerOf(ifc, "100"));
             Assert.Equal("IFCBUILDING", ContainerOf(ifc, "101"));
             Assert.Equal("Second", ContainerOf(ifc, "102"));
+            Assert.Equal("First", ContainerOf(ifc, "103"));
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
@@ -69,7 +71,7 @@ public class IfcExporterColumnContainerTests
             ],
         };
 
-    private static Element Column(int id, int baseLevelId, double bottom) => new()
+    private static Element Column(int id, int baseLevelId, double bottom, int? levelParameterId = null) => new()
     {
         Id = id,
         TypeId = 300,
@@ -81,6 +83,9 @@ public class IfcExporterColumnContainerTests
         [
             new Parameter { Id = -1012100, StorageType = StorageType.Integer, Value = PhaseId },
             new Parameter { Id = -1001350, StorageType = StorageType.ElementId, Value = baseLevelId },
+            .. levelParameterId is int levelId
+                ? [new Parameter { Id = -1001952, StorageType = StorageType.ElementId, Value = levelId }]
+                : Array.Empty<Parameter>(),
         ],
         BoundingBox = [0, 0, bottom, 1, 1, bottom + 3],
         Geometry = Body(bottom),
