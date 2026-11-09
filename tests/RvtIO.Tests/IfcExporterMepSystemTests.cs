@@ -781,6 +781,68 @@ public class IfcExporterMepSystemTests
     }
 
     [Fact]
+    public void Ports_AFittingPassesTheDirectionOnToTheFittingItIsConnectedTo()
+    {
+        // Pipe 10 (connector 0 out) feeds fitting 12, which feeds fitting 14, which feeds pipe 16 (connector 0 in). Neither fitting stores a direction
+        // or a system: 12 takes the in side from the pipe and 14 takes the in side from 12, so the pair of the fittings is no longer bidirectional.
+        var pipeIn = ConnectorHost(10, (0, 2, 50, [(12, 0, 1)]));
+        var first = ConnectorHost(12, (0, 0, 0, [(10, 0, 1)]), (1, 0, 0, [(14, 0, 1)]));
+        var second = ConnectorHost(14, (0, 0, 0, [(12, 1, 1)]), (1, 0, 0, [(16, 0, 1)]));
+        var pipeOut = ConnectorHost(16, (0, 1, 50, [(14, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = pipeIn, [12] = first, [14] = second, [16] = pipeOut },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING"), [14] = (7, 8, "IFCFLOWFITTING"), [16] = (9, 10, "IFCFLOWSEGMENT") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Equal(6, ports.Count);
+        Assert.Equal(3, ports.Count(args => args.EndsWith(".SINK.")));
+        Assert.Equal(3, ports.Count(args => args.EndsWith(".SOURCE.")));
+        Assert.Contains(ports, args => args.Contains("'InPort_14_") && args.EndsWith(".SINK."));
+        Assert.Contains(ports, args => args.Contains("'OutPort_12_") && args.EndsWith(".SOURCE."));
+    }
+
+    [Fact]
+    public void Ports_AFittingWithThreeConnectorsDoesNotPassTheDirectionOnBetweenItsConnectors()
+    {
+        // Fitting 12 has three connectors and knows the direction of one of them only (from pipe 10). Whether the others are in or out cannot be told
+        // (a tee collects as well as it splits), so its pair with the bare fitting 14 stays bidirectional.
+        var pipe = ConnectorHost(10, (0, 2, 50, [(12, 0, 1)]));
+        var tee = ConnectorHost(12, (0, 0, 0, [(10, 0, 1)]), (1, 0, 0, [(14, 0, 1)]), (2, 0, 0, []));
+        var bare = ConnectorHost(14, (0, 0, 0, [(12, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = pipe, [12] = tee, [14] = bare },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING"), [14] = (7, 8, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Contains(ports, args => args.Contains("'Port_14_0'") && args.EndsWith(".SOURCEANDSINK."));
+        Assert.Contains(ports, args => args.Contains("'Port_12_0'") && args.EndsWith(".SOURCEANDSINK."));
+    }
+
+    [Fact]
+    public void Ports_AFittingConnectorOfASystemKeepsItsOwnBidirectionalPortWhenTheOtherConnectorHasADirection()
+    {
+        // Fitting 12 has two connectors; connector 0 takes the in side from pipe 10, connector 1 stores system 50, which is its own calculation, so it stays bidirectional.
+        var pipe = ConnectorHost(10, (0, 2, 50, [(12, 0, 1)]));
+        var fitting = ConnectorHost(12, (0, 0, 0, [(10, 0, 1)]), (1, 0, 50, [(14, 0, 1)]));
+        var bare = ConnectorHost(14, (0, 0, 0, [(12, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = pipe, [12] = fitting, [14] = bare },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING"), [14] = (7, 8, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Contains(ports, args => args.Contains("'Port_14_") && args.EndsWith(".SOURCEANDSINK."));
+    }
+
+    [Fact]
+    public void Ports_AHostWithoutADirectionTakesTheOppositeOfTheFittingConnectorItIsPairedWith()
+    {
+        // The bare host 8 (lower id, so it is met first) stores no direction; the fitting connector it is connected to has taken the out side from
+        // pipe 10 through the fitting's other connector.
+        var pipe = ConnectorHost(10, (0, 2, 50, [(12, 0, 1)]));
+        var fitting = ConnectorHost(12, (0, 0, 0, [(10, 0, 1)]), (1, 0, 0, [(8, 1, 1)]));
+        var bare = ConnectorHost(8, (1, 0, 0, [(12, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [8] = bare, [10] = pipe, [12] = fitting },
+            new() { [8] = (1, 2, "IFCBUILDINGELEMENTPROXY"), [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Contains(ports, args => args.Contains("'InPort_8_") && args.EndsWith(".SINK."));
+        Assert.Contains(ports, args => args.Contains("'OutPort_12_") && args.EndsWith(".SOURCE."));
+    }
+
+    [Fact]
     public void Ports_TwoConnectorsWithoutADirectionStayBidirectionalWhenPaired()
     {
         var pipe = ConnectorHost(10, (1, 0, 0, [(12, 1, 1)]));
