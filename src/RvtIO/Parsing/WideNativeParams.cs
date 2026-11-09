@@ -42,6 +42,8 @@ internal sealed class WideNativeParams
 
     private const string PlaneOriginKey = "plane:m_origin";
 
+    private const string LineKeyPrefix = "gline:";
+
     private const string RoomPhaseKey = "room:m_phaseId";
 
     /// <summary>The own field of a system type root that decides its system family (Floor / Foundation Slab, stair construction method ...),
@@ -108,6 +110,9 @@ internal sealed class WideNativeParams
         if (keyed || rootName || name) return r22.ToString(CultureInfo.InvariantCulture) + ":" + field.Name;
         // the origin of the plane a datum plane (a Level) stands on, read by LevelElevation
         if (declaring.Name == "Plane" && field.Name == "m_origin") return PlaneOriginKey;
+        // the straight drive curve of an MEP curve (AddMepCurveLine)
+        if ((declaring.Name, field.Name) is ("GLine", "m_origin" or "m_dirVec") or ("GCurve", "m_endParams"))
+            return LineKeyPrefix + field.Name;
         // the phases of the project in their authored order and the phase of a room, read by ProjectPhaseOrder and RoomPhase
         if (declaring.Name == "AllProjectPhases" && field.Name == "m_phaseIds") return WideBlockWalker.AllItemsKeyPrefix + "phases";
         if (declaring.Name == "RoomElem" && field.Name == "m_phaseId") return RoomPhaseKey;
@@ -264,6 +269,7 @@ internal sealed class WideNativeParams
         }
 
         AddConnectorRecords(np, walk);
+        AddMepCurveLine(np, walk, rootClassId);
 
         // cell classes: what the CellList object queued
         for (int qi = 0; qi < walk.QueueEnd.Count; qi++)
@@ -275,6 +281,41 @@ internal sealed class WideNativeParams
         }
         np.TailWalkComplete = walk.Exact;
         return np;
+    }
+
+    /// <summary>The straight drive curve of a duct, pipe, conduit or cable tray (the GLine its CurveDriver queued) under the keys the
+    /// Revit 2022 walk gives it ("87:m_pCrv.origin@i", ".dirVec@i", ".endParams@i"), which ElementBuilder.ApplyMepCurveGeometry reads for
+    /// the length of the element. Nothing is written when the driver queued no GLine, more than one, or one with a value missing
+    /// (an arc or a spline driver).</summary>
+    private void AddMepCurveLine(TfBlockDeserializer.NativeParams np, WideBlockWalker.Walk walk, int rootClassId)
+    {
+        if (rootClassId < 0 || R22Id(rootClassId) is not (3148 or 3210 or 3134 or 598)) return;
+        int line = -1;
+        for (int owner = 0; owner < walk.QueueEnd.Count; owner++)
+        {
+            if (!_walker.IsA(walk.Queue[owner], "CurveDriver")) continue;
+            for (int child = walk.QueueCountAtStart[owner]; child < walk.QueueEnd[owner]; child++)
+            {
+                if (_walker.Class(walk.Queue[child])?.Name != "GLine") continue;
+                if (line >= 0) return;
+                line = child;
+            }
+        }
+        if (line < 0) return;
+        var values = new Dictionary<string, double>();
+        foreach (var c in walk.Captures)
+            if (c.QueueIndex == line && c.Kind == WideBlockWalker.CaptureKind.Real && c.Key.StartsWith(LineKeyPrefix, StringComparison.Ordinal)
+                && double.IsFinite(c.Real))
+                values[c.Key[LineKeyPrefix.Length..]] = c.Real;
+        string[] targets = ["origin", "dirVec", "endParams"];
+        string[] sources = ["m_origin", "m_dirVec", "m_endParams"];
+        int[] counts = [3, 3, 2];
+        for (int part = 0; part < 3; part++)
+            for (int i = 0; i < counts[part]; i++)
+                if (!values.ContainsKey($"{sources[part]}@{i}")) return;
+        for (int part = 0; part < 3; part++)
+            for (int i = 0; i < counts[part]; i++)
+                np.DoubleFields[$"87:m_pCrv.{targets[part]}@{i}"] = values[$"{sources[part]}@{i}"];
     }
 
     /// <summary>The connectors of the element and their calculations under the keys of the Revit 2022 walk
