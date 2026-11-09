@@ -67413,8 +67413,11 @@ public partial class IfcExporter
         foreach (var (hostId, connectors) in graph)
             foreach (var connector in connectors)
                 if (connector.Direction is DirectionIn or DirectionOut && connector.System > 0) flowOf[(hostId, connector.Index)] = connector.Direction;
+        // A connector that is paired with a connector of a system that stores the direction 0 is paired with a bidirectional calculation of its own and stays bidirectional.
         bool TakesFlow(int hostId, int index) => products[hostId].ifcType == "IFCFLOWFITTING" && !flowOf.ContainsKey((hostId, index))
-            && graph[hostId].First(connector => connector.Index == index).System == 0;
+            && graph[hostId].First(connector => connector.Index == index) is { System: 0 } own
+            && !own.Refs.Any(reference => reference.Id != hostId && graph.TryGetValue(reference.Id, out var other)
+                && other.FirstOrDefault(candidate => candidate.Index == reference.Index) is { System: > 0, Direction: 0 });
         for (bool changed = true; changed;)
         {
             changed = false;

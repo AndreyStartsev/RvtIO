@@ -828,6 +828,23 @@ public class IfcExporterMepSystemTests
     }
 
     [Fact]
+    public void Ports_AFittingConnectorPairedWithASegmentConnectorOfASystemWithDirectionZeroStaysBidirectional()
+    {
+        // Pipe 10 stores system 50 and the direction 0 on connector 0, which is its own bidirectional calculation. Fitting 12 takes the in side on connector 1
+        // from pipe 16 (out), but connector 0 is paired with the pipe's connector, so it does not take the out side from connector 1.
+        var pipe = ConnectorHost(10, (0, 0, 50, [(12, 0, 1)]));
+        var fitting = ConnectorHost(12, (0, 0, 0, [(10, 0, 1)]), (1, 0, 0, [(16, 1, 1)]));
+        var feed = ConnectorHost(16, (0, 0, 0, []), (1, 2, 50, [(12, 1, 1)]));
+        var (entities, _) = WritePorts(new() { [10] = pipe, [12] = fitting, [16] = feed },
+            new() { [10] = (3, 4, "IFCFLOWSEGMENT"), [12] = (5, 6, "IFCFLOWFITTING"), [16] = (7, 8, "IFCFLOWSEGMENT") });
+        var ports = entities.Where(entity => entity.Type == "IFCDISTRIBUTIONPORT").Select(entity => entity.Args).ToList();
+        Assert.Contains(ports, args => args.Contains("'Port_10_0'") && args.EndsWith(".SOURCEANDSINK."));
+        Assert.Contains(ports, args => args.Contains("'Port_12_0'") && args.EndsWith(".SOURCEANDSINK."));
+        Assert.Contains(ports, args => args.Contains("'InPort_12_1'") && args.EndsWith(".SINK."));
+        Assert.Contains(ports, args => args.Contains("'OutPort_16_1'") && args.EndsWith(".SOURCE."));
+    }
+
+    [Fact]
     public void Ports_AHostWithoutADirectionTakesTheOppositeOfTheFittingConnectorItIsPairedWith()
     {
         // The bare host 8 (lower id, so it is met first) stores no direction; the fitting connector it is connected to has taken the out side from
