@@ -265,6 +265,21 @@ public class IfcExporterBaseQuantitiesCurrentTests
         return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
     }
 
+    /// <summary>A body that is a vertical extrusion of a round tube profile (a hollow pile): outer radius and wall in the units of the writer.</summary>
+    private static int AddHollowCircleBody(StepWriter w, double radius, double wall, double depth)
+    {
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.)");
+        int profilePlacement = w.Add("IFCAXIS2PLACEMENT2D", $"#{origin},$");
+        int profile = w.Add("IFCCIRCLEHOLLOWPROFILEDEF", $".AREA.,$,#{profilePlacement},{StepWriter.Real(radius)},{StepWriter.Real(wall)}");
+        int point3 = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{point3},$,$");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int context = w.Add("IFCGEOMETRICREPRESENTATIONCONTEXT", $"$,'Model',3,1.E-05,#{position},$");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#{context},'Body','SweptSolid',(#{solid})");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
     private static int AddProduct(StepWriter w, string type, string guid, int owner, int placement, int? shape = null) =>
         w.Add(type, $"'{guid}',#{owner},'P',$,$,#{placement},{(shape is { } id ? "#" + id : "$")},'1'");
 
@@ -1109,6 +1124,24 @@ public class IfcExporterBaseQuantitiesCurrentTests
         double halfDisc = Math.PI * 9 / 2;
         Assert.Equal(halfDisc * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "GrossVolume").Value, 9);
         Assert.DoesNotContain(Quantities(w, "IFCQUANTITYLENGTH"), q => q.Name == "Perimeter");
+    }
+
+    [Theory]
+    [InlineData("IFCSLAB", true)]
+    [InlineData("IFCCOLUMN", false)]
+    public void Pass_HollowCircleBody_GivesOnlyASlabTheCircumferenceAndTheDiameter(string type, bool expected)
+    {
+        var (w, owner, placement) = NewWriter();
+        int product = AddProduct(w, type, "WZGD7y6S5209$mGLi_sPlj", owner, placement, AddHollowCircleBody(w, 0.4, 0.06, 7));
+
+        Apply(w, owner, new() { [33] = new Element { Id = 33, Geometry = HalfDiscPrism(3, 6) } }, new() { [product] = 33 });
+
+        var lengths = Quantities(w, "IFCQUANTITYLENGTH");
+        Assert.Equal(expected, lengths.Any(q => q.Name == "Perimeter"));
+        if (!expected) return;
+        // the circumference of the outer circle only, and the diameter
+        Assert.Equal(2 * Math.PI * 0.4, lengths.Single(q => q.Name == "Perimeter").Value, 9);
+        Assert.Equal(0.8, lengths.Single(q => q.Name == "Width").Value, 9);
     }
 
     [Fact]
