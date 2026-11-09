@@ -6504,6 +6504,8 @@ public partial class IfcExporter
         {
             int slopes = ApplySlopePropertySetsCurrent(w, elemById, exportedIfcElements, propertySingleValueIds);
             _diag?.WriteLine($"The current profile Slope properties: {slopes}");
+            int beamSlopes = ApplyBeamSlopePropertySetsCurrent(w, elemById, exportedIfcElements, propertySingleValueIds);
+            _diag?.WriteLine($"The current profile beam Slope properties: {beamSlopes}");
         }
         if (CurrentProfile && Environment.GetEnvironmentVariable("RVTIO_PSET_DIAG") is { Length: > 0 } thermalDiag)
             WriteThermalDiagCurrent(thermalDiag, elemById);

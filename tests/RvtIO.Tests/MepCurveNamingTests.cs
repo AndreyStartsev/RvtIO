@@ -283,6 +283,26 @@ public class MepCurveNamingTests
     }
 
     [Fact]
+    public void MepCurveFamilyNamesOfRevit2021_NameAPipeAndACableTrayTypeAndNothingElse()
+    {
+        var state = new ParsingState();
+        byte[] pipeType = Convert.FromBase64String(MepCurveBlocks.PipeType);
+        byte[] trayType = Convert.FromBase64String(MepCurveBlocks.CableTrayType);
+        RvtFileReader.RecordSystemTypeRoot(state, pipeType, 0, Size(pipeType), 3227, 553634);
+        RvtFileReader.RecordSystemTypeRoot(state, trayType, 0, Size(trayType), 3130, 377386);
+        var pipe = new Element { Id = 553634, CategoryId = -2008044 };
+        var tray = new Element { Id = 377386, CategoryId = -2008130 };
+
+        int assigned = ElementBuilder.ApplyValidatedSystemFamilyNames([pipe, tray], state,
+            RevitSystemFamilyNames.LoadMepCurveFamilies("2021", "ENU"));
+
+        Assert.Equal(2, assigned);
+        Assert.Equal("Pipe Types", pipe.ValidatedMepFamilyName);
+        Assert.Equal("Cable Tray with Fittings", tray.ValidatedMepFamilyName);
+        Assert.Equal(0, ElementBuilder.ApplyValidatedSystemFamilyNames([pipe, tray], state, RevitSystemFamilyNames.Load("2021", "ENU")));
+    }
+
+    [Fact]
     public void RepeatedIdenticalOccurrenceBlockKeepsTheValidationButADifferentOneBreaksIt()
     {
         byte[] pipe = Convert.FromBase64String(MepCurveBlocks.PipeOccurrence);
