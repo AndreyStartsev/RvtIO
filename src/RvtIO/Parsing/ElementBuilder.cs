@@ -1696,8 +1696,8 @@ internal static partial class ElementBuilder
     /// number (m_nIndex) and references; the connector that holds the reference of connection type 4 with an index of 50000
     /// or more to an element other than the circuit is the one of the panel. The base equipment is the first reference
     /// to another element of the connector that sits at array position equal to that number. The number equals the
-    /// position unless a connector was removed, which is when the reference names a load instead of the panel; this was
-    /// measured against the reference in 445 of 445 circuits of one file and 128 of 128 of another. Null when there is no panel
+    /// position unless a connector was removed; then the first reference of the connector at that position names a load, not the panel.
+    /// The rule was measured on the circuits of seven files of Revit 2021 to 2025 (see the changelog). Null when there is no panel
     /// connector, no connector at that position or no other element in it.
     /// </summary>
     private static int? CircuitBaseEquipmentId(int circuitId, TfBlockDeserializer.NativeParams np)
