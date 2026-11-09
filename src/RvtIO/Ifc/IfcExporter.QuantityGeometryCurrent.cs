@@ -215,20 +215,20 @@ public partial class IfcExporter
         return (taken.Sum(measure => measure.Volume) * CubicFeetToCubicMetres, taken.Sum(measure => measure.Area) * SquareFeetToSquareMetres);
     }
 
-    /// <summary>The vertical circular prism of a round solid, in feet: the distance of its two exact end faces and the radius of their
-    /// circle. The extrusion calculation has to accept the solid (two parallel end faces of the same exact area), the end faces are
-    /// the only exact planar faces, the corners of each lie on a circle, both circles are the same one, and every other face has its
-    /// corners on the side of that cylinder between the end faces. Null for any other solid.</summary>
-    internal static (double Depth, double Radius)? RoundPrismCurrent(GeometryData? geometry)
+    /// <summary>The vertical circular cylinder of a round solid, in feet: the distance of its two exact end faces and the radius of their
+    /// circle. The end faces are the only exact planar faces, horizontal, the corners of each lie on a circle, both circles are the same
+    /// one, and every other face has its corners on the side of that cylinder between the end faces (so no other solid is part of the
+    /// geometry). The areas of the end faces need not agree. Null for any other solid.</summary>
+    internal static (double Depth, double Radius)? RoundCylinderCurrent(GeometryData? geometry)
     {
-        if (geometry?.Faces is not { Count: > 0 } faces || !WallExtrusion.TryFindVerticalExtrusion(faces, out _, exactCylinders: true))
-            return null;
+        if (geometry?.Faces is not { Count: > 0 } faces) return null;
         var caps = faces.Where(IsExactCap).ToList();
         if (caps.Count != 2 || caps.Any(cap => cap.InnerVertices is { Count: > 0 } || cap.OuterVertices!.Count < 8)) return null;
         if (CircleOfCorners(caps[0].OuterVertices!) is not { } first || CircleOfCorners(caps[1].OuterVertices!) is not { } second) return null;
         double tolerance = 1e-6 * first.R;
         if (Math.Abs(first.R - second.R) > tolerance || Math.Abs(first.X - second.X) > tolerance || Math.Abs(first.Y - second.Y) > tolerance) return null;
         double z0 = caps[0].OuterVertices![0][2], z1 = caps[1].OuterVertices![0][2];
+        if (caps.Any(cap => cap.OuterVertices!.Any(corner => Math.Abs(corner[2] - cap.OuterVertices![0][2]) > tolerance))) return null;
         double low = Math.Min(z0, z1), high = Math.Max(z0, z1);
         if (high - low < 1e-9) return null;
         foreach (var face in faces)
@@ -238,6 +238,11 @@ public partial class IfcExporter
                     return null;
         return (high - low, first.R);
     }
+
+    /// <summary>The vertical circular prism of a round solid: a <see cref="RoundCylinderCurrent"/> that the extrusion calculation accepts
+    /// (two parallel end faces of the same exact area). Null for any other solid.</summary>
+    internal static (double Depth, double Radius)? RoundPrismCurrent(GeometryData? geometry) =>
+        RoundCylinderCurrent(geometry) is { } cylinder && WallExtrusion.TryFindVerticalExtrusion(geometry!.Faces, out _, exactCylinders: true) ? cylinder : null;
 
     /// <summary>The circle in the XY plane through three corners of a ring, null unless every corner lies on it (to within a millionth of
     /// the radius).</summary>

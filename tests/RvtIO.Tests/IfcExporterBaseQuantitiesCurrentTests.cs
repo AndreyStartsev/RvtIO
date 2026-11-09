@@ -3156,14 +3156,26 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", 10 * 0.3048 * 1000 * circle * SquareFeet), ("NetVolume", circle * 10 * CubicFeet));
     }
 
+    [Fact]
+    public void Pass_Column_RoundWithEndFacesOfDifferentArea_HasNoExtrusionDataAndTakesTheMeasuresOfTheNodeWithTheEndFaces()
+    {
+        double circle = Math.PI * 0.25;
+
+        var w = ColumnWriter(RoundColumnGeometry(topShortfall: 0.05));
+
+        Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
+        // the cross section is half the surface of the solid, the volume the one of the node
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("CrossSectionArea", (2 * Math.PI * 0.5 * 10 + 2 * circle) / 2 * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", circle * 10 * CubicFeet));
+    }
+
     public static TheoryData<string> NotARoundPrism => new()
     {
-        "different areas", "different circles", "corner off the cylinder", "tilted end face", "zero height",
+        "different circles", "corner off the cylinder", "tilted end face", "zero height",
     };
 
     private static GeometryData NotARoundPrismGeometry(string kind) => kind switch
     {
-        "different areas" => RoundColumnGeometry(topShortfall: 0.05),
         "different circles" => RoundColumnGeometry(topShift: 0.1),
         "corner off the cylinder" => RoundColumnGeometry(stray: 0.05),
         "tilted end face" => RoundColumnGeometry(topTilt: 0.1),
@@ -3186,8 +3198,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
     [Fact]
     public void Pass_Column_MeasuredFlatNodeAndASecondSolidWithoutMeasure_KeepsTheVolumeOfEverySolid()
     {
-        // the same open shell of the side without the box (made no round prism by end faces of different area): the box adds its own volume
-        double withoutBox = ColumnQuantities(RoundColumnGeometry(topShortfall: 0.05)).Single(q => q.Name == "NetVolume").Value;
+        // the same open shell of the side without the box (its end faces on two different circles make it no cylinder): the box adds its own volume
+        double withoutBox = ColumnQuantities(RoundColumnGeometry(topShift: 0.1)).Single(q => q.Name == "NetVolume").Value;
 
         var quantities = ColumnQuantities(RoundColumnGeometry(extraSolid: true));
 

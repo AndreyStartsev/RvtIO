@@ -1375,15 +1375,16 @@ public partial class IfcExporter
     /// Length, CrossSectionArea (the profile), OuterSurfaceArea (the length and perimeter in millimetres, taken as square
     /// metres) and GrossVolume (the length in millimetres times the area in square metres); otherwise the cross section is the
     /// computed host area. NetVolume is the computed host volume, else the volume of the solids. A round column whose exact end
-    /// faces are listed beside a tessellated side (see <see cref="RoundPrismCurrent"/>) has the extrusion data of its circle, and the
-    /// volume and surface of the node that carries those end faces stand for the solid.</summary>
+    /// faces are listed beside a tessellated side (see <see cref="RoundPrismCurrent"/>) has the extrusion data of its circle; a round
+    /// column that is a vertical cylinder (see <see cref="RoundCylinderCurrent"/>) takes the volume and surface of the node that carries
+    /// its end faces for the solid.</summary>
     private List<QuantityValue> ColumnQuantitiesCurrent(Element element, ProfileExtrusion? body)
     {
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
         var totals = SolidTotalsCurrent(shells);
-        // The measures of the node with the end faces stand for the solid of a round column only.
-        var capTotals = RoundPrismCurrent(element.Geometry) != null ? CapNodeTotalsCurrent(element.Geometry) : null;
+        // The measures of the node with the end faces stand for the solid of a round column (a vertical cylinder) only.
+        var capTotals = RoundCylinderCurrent(element.Geometry) != null ? CapNodeTotalsCurrent(element.Geometry) : null;
         if ((ExtrusionDataCurrent(body, shells) ?? RoundExtrusionDataCurrent(element.Geometry)) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area;
@@ -1404,9 +1405,9 @@ public partial class IfcExporter
         }
         else
         {
-            AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? totals?.Area / 2);
+            AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? (capTotals?.Area ?? totals?.Area) / 2);
             AddIfPositive(result, QuantityKind.Volume, "NetVolume",
-                ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? totals?.Volume);
+                ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? capTotals?.Volume ?? totals?.Volume);
         }
         return result;
     }
