@@ -1550,6 +1550,47 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.Equal(3.2, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Length").Value, 9);
     }
 
+    private static Element WallTypeWithLayers(int id, params double[] layerWidthsMetres) => new()
+    {
+        Id = id, CategoryId = -2000011, SerializedSystemTypeClassId = 512,
+        SerializedHostTypeLayers = layerWidthsMetres.Select(width => new RvtIO.Internal.RawCompoundStructureLayer(
+            BitConverter.DoubleToInt64Bits(width / 0.3048), 0, 0, 0, 0, 0, 0)).ToArray(),
+    };
+
+    [Fact]
+    public void Pass_SimpleRectangularWall_WidthIsTheTotalOfTheLayersOfItsType()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 3.2, 0.202, 2.7);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        double length = 3.2 / 0.3048, thickness = 0.202 / 0.3048, height = 2.7 / 0.3048;
+        // The solid is 0.202 m thick, the layers of the type add up to 0.25 m: Width, the footprint and GrossVolume follow the layers.
+        var element = new Element { Id = 11, CategoryId = -2000011, SerializedSystemTypeId = 12, Geometry = Box(length, thickness, height),
+            Location = new LocationCurve { Length = 3.2 / 0.3048 } };
+
+        Apply(w, owner, new() { [11] = element, [12] = WallTypeWithLayers(12, 0.1, 0.15) }, new() { [wall] = 11 });
+
+        double side = 3.2 * 2.7;
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Height", 2.7), ("Length", 3.2), ("Width", 0.25));
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("GrossFootprintArea", 3.2 * 0.25), ("GrossSideArea", side), ("NetSideArea", side));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", 0.25 * side), ("NetVolume", 3.2 * 0.202 * 2.7));
+    }
+
+    [Fact]
+    public void Pass_SimpleRectangularWall_TypeWithoutUsableLayersKeepsTheProfileWidth()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 3.2, 0.202, 2.7);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        double length = 3.2 / 0.3048, thickness = 0.202 / 0.3048, height = 2.7 / 0.3048;
+        var element = new Element { Id = 11, CategoryId = -2000011, SerializedSystemTypeId = 12, Geometry = Box(length, thickness, height) };
+        var type = WallTypeWithLayers(12, 0.0, double.NaN);
+
+        Apply(w, owner, new() { [11] = element, [12] = type }, new() { [wall] = 11 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Height", 2.7), ("Length", 3.2), ("Width", 0.202));
+    }
+
     [Fact]
     public void Pass_WallThatIsNotSimpleRectangular_UsesTheHeightAsItsLength()
     {
