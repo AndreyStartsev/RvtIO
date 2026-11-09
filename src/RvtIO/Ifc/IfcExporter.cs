@@ -69679,6 +69679,8 @@ public partial class IfcExporter
                     && elemById.TryGetValue(levelId, out var nestedLevel) && nestedLevel.CategoryId == -2000240)
                     offStoreyLevel = nestedLevel;
             }
+        // The base level outranks the element's own level parameters below, whether it is a storey or not.
+        if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
 
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
