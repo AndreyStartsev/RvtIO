@@ -5,8 +5,8 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Beams of the current profile that share one mapped body: only the first one has extrusion data (the full quantity set and
-/// no Slope); every later one has NetVolume and NetSurfaceArea and the Slope of its drive curve.</summary>
+/// <summary>Beams of the current profile that share one mapped body: every beam keeps its own full quantity set; every later one also
+/// gets the Slope of its drive curve.</summary>
 public class IfcExporterBeamSharedBodyTests
 {
     private static GeoFace Face(params double[][] ring)
@@ -102,7 +102,7 @@ public class IfcExporterBeamSharedBodyTests
     private static Element BoxBeam(int id) => new() { Id = id, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
 
     [Fact]
-    public void LaterBeamOfASharedBody_HasOnlyTheNetQuantities_AndTheFirstOneTheFullSet()
+    public void LaterBeamOfASharedBody_KeepsTheFullQuantitySet_LikeTheFirstOne()
     {
         var (w, owner, placement) = NewWriter();
         int map = AddMap(w);
@@ -112,14 +112,8 @@ public class IfcExporterBeamSharedBodyTests
         Apply(w, owner, first, second, BoxBeam);
 
         var names = QuantityNames(w);
-        Assert.Equal(1, names.Count(name => name == "Length"));
-        Assert.Equal(1, names.Count(name => name == "GrossVolume"));
-        Assert.Equal(1, names.Count(name => name == "GrossSurfaceArea"));
-        Assert.Equal(1, names.Count(name => name == "OuterSurfaceArea"));
-        Assert.Equal(2, names.Count(name => name == "NetVolume"));
-        Assert.Equal(2, names.Count(name => name == "NetSurfaceArea"));
-        // Known limit: the later beam keeps its CrossSectionArea (the expected output has none for it in most files).
-        Assert.Equal(2, names.Count(name => name == "CrossSectionArea"));
+        foreach (string name in new[] { "Length", "GrossVolume", "GrossSurfaceArea", "OuterSurfaceArea", "CrossSectionArea", "NetVolume", "NetSurfaceArea" })
+            Assert.Equal(2, names.Count(quantity => quantity == name));
     }
 
     [Fact]

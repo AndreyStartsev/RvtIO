@@ -145,8 +145,6 @@ public partial class IfcExporter
         public HashSet<int> OpeningsWithFormerDepthClearance { get; init; } = new();
         /// <summary>Parent container entity of each aggregated child (IfcRelAggregates).</summary>
         public Dictionary<int, int> ParentByChild { get; } = new();
-        /// <summary>The representation maps that the Body of an earlier beam already uses.</summary>
-        public HashSet<int> BeamRepresentationMaps { get; } = new();
     }
 
     private static bool TryParseStepReal(string token, out double value) =>
@@ -858,7 +856,7 @@ public partial class IfcExporter
             "IFCSLAB" => SlabQuantitiesCurrent(context, element, body, arguments),
             "IFCCOVERING" => CoveringQuantitiesCurrent(element),
             "IFCCOLUMN" => ColumnQuantitiesCurrent(element, body),
-            "IFCBEAM" => BeamQuantitiesCurrent(context, element, body, arguments[6]),
+            "IFCBEAM" => BeamQuantitiesCurrent(element, body),
             "IFCSTAIRFLIGHT" => StairFlightQuantitiesCurrent(element, arguments),
             "IFCRAILING" => RailingQuantitiesCurrent(context, element),
             _ => none,
@@ -1431,15 +1429,12 @@ public partial class IfcExporter
 
     /// <summary>The Beam description (common structural quantities and NetSurfaceArea): the calculators read the
     /// extrusion data of a prism body, in consistent units.</summary>
-    private List<QuantityValue> BeamQuantitiesCurrent(QuantityContextCurrent context, Element element, ProfileExtrusion? body, string representation)
+    private List<QuantityValue> BeamQuantitiesCurrent(Element element, ProfileExtrusion? body)
     {
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
         var totals = SolidTotalsCurrent(shells);
-        // The body export keeps its extrusion data for the first beam of a shared representation map only; every later one reuses the
-        // mapped body and has the Net quantities alone.
-        bool reusesBody = BodyRepresentationMapCurrent(context.W, context.IndexById, representation) is int mapId && !context.BeamRepresentationMaps.Add(mapId);
-        if (!reusesBody && ExtrusionDataCurrent(body, shells) is { } extrusion)
+        if (ExtrusionDataCurrent(body, shells) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area, perimeter = extrusion.Perimeter;
             AddIfPositive(result, QuantityKind.Length, "Length", length);
@@ -1449,11 +1444,7 @@ public partial class IfcExporter
             AddIfPositive(result, QuantityKind.Volume, "GrossVolume", area * length);
         }
         else
-        {
-            // A later beam keeps this CrossSectionArea although the expected output has none for it in most files: no feature that tells
-            // those files apart is known.
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? totals?.Area / 2);
-        }
         var beamNet = NodeSolidTotalsCurrent(element.Geometry) ?? totals;
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", ComputedHostVolumeCurrent(element) ?? beamNet?.Volume);
         AddIfPositive(result, QuantityKind.Area, "NetSurfaceArea", beamNet?.Area);
