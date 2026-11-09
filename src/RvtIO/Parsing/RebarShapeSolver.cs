@@ -42,12 +42,16 @@ internal static class RebarShapeSolver
             if (hook != null && (hook.Angle < Math.PI / 2 - 1e-9 || hook.Angle > Math.PI + 1e-9 || hook.Side is not (1 or -1) || !(hook.Radius > 0)
                 || hook.TangentLength != null && hook.Angle > Math.PI - 1e-9 || hook.TangentLength is <= 0)) return null;
         var u = directions;
-        // the corners are quarter turns to the side of their turn, the only ones supported
+        // the corners turn by a quarter or less to the side of their turn; a shape with a corner that is not a quarter turn has its own rules
+        bool oblique = false;
         for (int j = 1; j < n; j++)
         {
             double cross = u[j - 1][0] * u[j][1] - u[j - 1][1] * u[j][0];
-            if (Math.Abs(Dot(u[j - 1], u[j])) > 1e-9 || Math.Abs(cross) < 1 - 1e-9 || turns[j] != Math.Sign(cross)) return null;
+            double angle = Math.Atan2(Math.Abs(cross), Dot(u[j - 1], u[j]));
+            if (turns[j] != Math.Sign(cross) || angle < 1e-9 || angle > Math.PI / 2 + 1e-9) return null;
+            if (Math.Abs(angle - Math.PI / 2) > 1e-9) oblique = true;
         }
+        if (oblique) return start == null && end == null ? SolveOblique(u, lengths, turns, diameter, cornerRadius) : null;
         var reference = new double[n + 1][];
         reference[0] = [0, 0, 0];
         for (int i = 0; i < n; i++) reference[i + 1] = Add(reference[i], Scale(u[i], lengths[i]));
@@ -85,6 +89,34 @@ internal static class RebarShapeSolver
         result.AddRange(lines);
         result.AddRange(endPieces);
         return result;
+    }
+
+    /// <summary>A shape without hooks that has a corner that is not a quarter turn (obtuse corners, like the two bends of a joggle). The
+    /// dimension of an edge runs between the outer corners of its two ends (the outer corner of a bend lies on the outer side of the bar,
+    /// half a diameter from the centre line, <c>d/2 tan(angle/2)</c> ahead of the centre line corner along the edge before the corner and
+    /// as far behind it along the edge after it); the first and the last outer point follow the side of their neighbour. So the centre line
+    /// corners are the vertices of a polygon whose edge i has the length <c>sqrt(L^2 - lateral^2) - delta(i) - delta(i + 1)</c>, where
+    /// <c>lateral</c> is the diameter when the two outer corners are on different sides of the edge (a joggle: opposite turns) and 0
+    /// otherwise, and the edges keep their fixed directions. The bend arcs are tangent to the polygon, as everywhere else.</summary>
+    private static List<RebarSegment>? SolveOblique(IReadOnlyList<double[]> u, IReadOnlyList<double> lengths, IReadOnlyList<int> turns, double diameter, double cornerRadius)
+    {
+        int n = u.Count;
+        var tangent = new double[n + 1];
+        for (int j = 1; j < n; j++) tangent[j] = Math.Tan(Math.Acos(Math.Clamp(Dot(u[j - 1], u[j]), -1, 1)) / 2);
+        // the outer side of a corner is opposite to its turn; the ends take the side of the corner next to them
+        int Outer(int vertex) => -turns[Math.Clamp(vertex, 1, n - 1)];
+        var points = new List<double[]> { Scale(Left(u[0]), diameter / 2 * turns[1]) };
+        var radii = new List<double> { 0 };
+        for (int i = 0; i < n; i++)
+        {
+            double lateral = Outer(i) == Outer(i + 1) ? 0 : diameter;
+            double polygon = Math.Sqrt(lengths[i] * lengths[i] - lateral * lateral) - diameter / 2 * (tangent[i] + tangent[i + 1]);
+            // the straight piece between the two arcs must have a length
+            if (!(polygon - cornerRadius * (tangent[i] + tangent[i + 1]) > 0)) return null;
+            points.Add(Add(points[i], Scale(u[i], polygon)));
+            radii.Add(i == n - 1 ? 0 : cornerRadius);
+        }
+        return Fillets(points, radii);
     }
 
     /// <summary>The leg and the arc of a hook at the tangent point <paramref name="tangent"/> of the edge with direction <paramref name="u"/>:

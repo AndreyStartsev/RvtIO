@@ -107,7 +107,7 @@ internal static partial class RebarReader
         IEnumerable<long> Values(string key) => caps.Where(c => c.Key == key && c.Kind == WideBlockWalker.CaptureKind.Integer).Select(c => c.Integer);
         if (Values("RebarShapeEdge.m_constraints#").Any(n => n != 2) || Values("RebarShapeEdge.m_type").Any(t => t != 0)
             || Values("RebarShapeEdge.m_arcHeightParamId").Any(v => v != -1) || Values("RebarShapeEdge.m_radiusParamId").Any(v => v != -1)
-            || Values("RebarShapeVertex.m_constraints#").Any(n => n != 0) || Values("RebarShapeVertex.m_bendAngle").Any(a => a != 3)) return null;
+            || Values("RebarShapeVertex.m_constraints#").Any(n => n != 0) || Values("RebarShapeVertex.m_bendAngle").Any(a => a is not (1 or 3))) return null;
         var turns = Values("RebarShapeVertex.m_turn").Select(t => (int)t).ToList();
         if (turns.Count != vertexCount) return null;
         var directions = new List<double[]>();
