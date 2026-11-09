@@ -460,6 +460,197 @@ public class IfcExporterMepSystemTests
         Assert.Null(plain.SerializedMepSystem);
     }
 
+    private const int ElectricalCircuitCategory = -2008037;
+
+    // The circuit's own connector manager: connector 0 holds the circuit's reference to itself (type 4) and a load (type 1), the last
+    // connector holds the reference to the panel (type 4, index 50000 + the circuit's number on the panel).
+    private static TfBlockDeserializer.NativeParams CircuitRecord(int circuitId, int panelId, int panelIndex = 50001, int panelType = 4)
+    {
+        var native = new TfBlockDeserializer.NativeParams();
+        native.StringFields["3170:m_strName"] = "";
+        native.Fields["3170:m_typeId"] = -1;
+        Connector(native, 0, 0);
+        native.Fields["771#0:m_arrRefs#"] = 2;
+        native.Fields["771#0:m_arrRefs@0:id"] = circuitId;
+        native.Fields["771#0:m_arrRefs@0:index"] = 9;
+        native.Fields["771#0:m_arrRefs@0:type"] = 4;
+        native.Fields["771#0:m_arrRefs@1:id"] = 467291;
+        native.Fields["771#0:m_arrRefs@1:index"] = 1;
+        native.Fields["771#0:m_arrRefs@1:type"] = 1;
+        Connector(native, 1, 1);
+        native.Fields["771#1:m_arrRefs#"] = 1;
+        native.Fields["771#1:m_arrRefs@0:id"] = panelId;
+        native.Fields["771#1:m_arrRefs@0:index"] = panelIndex;
+        native.Fields["771#1:m_arrRefs@0:type"] = panelType;
+        return native;
+    }
+
+    private static Element ReadCircuit(TfBlockDeserializer.NativeParams native, int category = ElectricalCircuitCategory)
+    {
+        var circuit = new Element { Id = 50, CategoryId = category };
+        var state = new ParsingState();
+        state.NativeParams[50] = native;
+        ElementBuilder.ApplyMepSystemParams(new RevitFileInfo { Elements = [circuit] }, state, null);
+        return circuit;
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_ReadsTheBaseEquipmentOfAnElectricalCircuit()
+    {
+        var circuit = ReadCircuit(CircuitRecord(50, 581483));
+        Assert.Equal(581483, circuit.SerializedCircuitBaseEquipmentId);
+        Assert.Equal(("", -1), circuit.SerializedMepSystem);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_CircuitWithoutAPanelReferenceHasNoBaseEquipment()
+    {
+        // Only its reference to itself and its loads (type 1): no base equipment.
+        var withoutPanel = CircuitRecord(50, 581483);
+        withoutPanel.Fields.Remove("771#1:m_nIndex");
+        Assert.Null(ReadCircuit(withoutPanel).SerializedCircuitBaseEquipmentId);
+        // A type 4 reference below index 50000, a load reference (type 1) at index 50000 and a reference to the circuit itself are not base equipment.
+        Assert.Null(ReadCircuit(CircuitRecord(50, 581483, panelIndex: 49999)).SerializedCircuitBaseEquipmentId);
+        Assert.Null(ReadCircuit(CircuitRecord(50, 581483, panelType: 1)).SerializedCircuitBaseEquipmentId);
+        Assert.Null(ReadCircuit(CircuitRecord(50, 50)).SerializedCircuitBaseEquipmentId);
+    }
+
+    // A connector was removed from the circuit: the connector numbers run 0, 2, 3, so the panel connector (number 2) sits at array
+    // position 1 and the connector at array position 2 is the load with number 3.
+    private static TfBlockDeserializer.NativeParams CircuitRecordWithARemovedConnector(int circuitId, int panelId, int panelConnectorNumber)
+    {
+        var native = CircuitRecord(circuitId, panelId);
+        native.Fields["771#1:m_nIndex"] = panelConnectorNumber;
+        Connector(native, 2, 3);
+        native.Fields["771#2:m_arrRefs#"] = 2;
+        native.Fields["771#2:m_arrRefs@0:id"] = 700;
+        native.Fields["771#2:m_arrRefs@0:index"] = 1;
+        native.Fields["771#2:m_arrRefs@0:type"] = 1;
+        native.Fields["771#2:m_arrRefs@1:id"] = 701;
+        native.Fields["771#2:m_arrRefs@1:index"] = 1;
+        native.Fields["771#2:m_arrRefs@1:type"] = 1;
+        return native;
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_ConnectorNumberNotEqualToItsPositionTakesTheFirstReferenceOfTheConnectorAtThatPosition()
+    {
+        // Two candidates: the panel (reference at index 50001) and the first load of the connector at array position 2.
+        Assert.Equal(700, ReadCircuit(CircuitRecordWithARemovedConnector(50, 581483, panelConnectorNumber: 2)).SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_NoConnectorAtThePositionOfThePanelConnectorNumberGivesNoBaseEquipment()
+    {
+        Assert.Null(ReadCircuit(CircuitRecordWithARemovedConnector(50, 581483, panelConnectorNumber: 3)).SerializedCircuitBaseEquipmentId);
+        // The connector at that position holds only the circuit itself.
+        var onlyItself = CircuitRecordWithARemovedConnector(50, 581483, panelConnectorNumber: 2);
+        onlyItself.Fields["771#2:m_arrRefs#"] = 1;
+        onlyItself.Fields["771#2:m_arrRefs@0:id"] = 50;
+        Assert.Null(ReadCircuit(onlyItself).SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_OnlyAnElectricalCircuitReadsBaseEquipment()
+    {
+        Assert.Null(ReadCircuit(CircuitRecord(50, 581483), category: -2008013).SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_ACircuitWithoutAReadCategoryIsRecognisedByItsClass()
+    {
+        // A circuit with no loads can have a stored category that is not read; its class still says it is a circuit.
+        var native = CircuitRecord(50, 581483);
+        var circuit = new Element { Id = 50, NativeRootClassName = "RbsElectricalSystem" };
+        var state = new ParsingState();
+        state.NativeParams[50] = native;
+        ElementBuilder.ApplyMepSystemParams(new RevitFileInfo { Elements = [circuit] }, state, null);
+        Assert.Equal(581483, circuit.SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ElectricalCircuit_BecomesAnUnnamedIfcSystemWithItsBaseEquipmentAsTheOnlyMember()
+    {
+        var exportId = new Guid("11112222-3333-4444-5555-666677778888");
+        var circuit = new Element { Id = 50, SerializedExportId = exportId, SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483 };
+        var elements = new Dictionary<int, Element> { [50] = circuit };
+        var members = new SortedDictionary<int, SortedSet<int>>();
+        IfcExporter.AddCircuitBaseEquipment(elements, new Dictionary<int, (int, int, string)> { [581483] = (7, 8, "IFCBUILDINGELEMENTPROXY") }, members);
+
+        var types = WriteSystems(elements, members, out var entities);
+
+        Assert.Equal(["IFCSYSTEM", "IFCRELSERVICESBUILDINGS", "IFCRELASSIGNSTOGROUP"], types);
+        string globalId = IfcGuid.ToIfcGuid(exportId);
+        Assert.Equal($"'{globalId}',#20,'','',''", entities[0].Args);
+        Assert.EndsWith(",#20,'','',#1,(#9)", entities[1].Args);
+        Assert.Equal($"'{IfcGuid.FromMd5($"IfcRelAssignsToGroup:{globalId}")}',#20,'','',(#7),$,#1", entities[2].Args);
+    }
+
+    [Fact]
+    public void ElectricalCircuit_WithoutAnExportedBaseEquipmentIsNotWritten()
+    {
+        var withBase = new Element { Id = 50, SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483 };
+        var withoutBase = new Element { Id = 51, SerializedMepSystem = ("", -1) };
+        var elements = new Dictionary<int, Element> { [50] = withBase, [51] = withoutBase, [52] = new Element { Id = 52 } };
+        var members = new SortedDictionary<int, SortedSet<int>>();
+        // The panel of the first circuit is not an exported product.
+        IfcExporter.AddCircuitBaseEquipment(elements, new Dictionary<int, (int, int, string)> { [999] = (7, 8, "IFCBUILDINGELEMENTPROXY") }, members);
+        Assert.Empty(members);
+        Assert.Empty(WriteSystems(elements, members, out _));
+    }
+
+    private static string ExportText(IfcProfile profile, params Element[] elements)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-circuit-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            new IfcExporter { Profile = profile }.Export(new RevitFileInfo { Elements = [.. elements] }, path);
+            return File.ReadAllText(path);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(IfcProfile.Current, true)]
+    [InlineData(IfcProfile.Legacy, false)]
+    public void ElectricalCircuit_IsWrittenAsAnIfcSystemOnlyInTheCurrentProfile(IfcProfile profile, bool written)
+    {
+        var panel = IfcExporterBeamCommonPropertySetTests.Product(581483, 600, -2001040, "OST_ElectricalEquipment", "Panel");
+        panel.SerializedExportId = Guid.NewGuid();
+        var circuit = new Element
+        {
+            Id = 50, Name = "", CategoryId = ElectricalCircuitCategory, Category = "OST_ElectricalCircuit", SerializedExportId = Guid.NewGuid(),
+            SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483,
+        };
+        string ifc = ExportText(profile, panel, circuit);
+        Assert.Contains("=IFCBUILDINGELEMENTPROXY(", ifc);
+        if (written)
+        {
+            Assert.Contains("=IFCSYSTEM(", ifc);
+            Assert.Contains("=IFCRELASSIGNSTOGROUP(", ifc);
+        }
+        else
+        {
+            Assert.DoesNotContain("=IFCSYSTEM(", ifc);
+            Assert.DoesNotContain("=IFCRELASSIGNSTOGROUP(", ifc);
+        }
+    }
+
+    [Fact]
+    public void ElectricalCircuit_DoesNotChangeANamedSystemsMembers()
+    {
+        var system = new Element { Id = 50, SerializedMepSystem = ("Supply 1", 60) };
+        var circuit = new Element { Id = 70, SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483 };
+        var members = new SortedDictionary<int, SortedSet<int>> { [50] = new SortedSet<int> { 4, 5 } };
+        IfcExporter.AddCircuitBaseEquipment(new Dictionary<int, Element> { [50] = system, [70] = circuit },
+            new Dictionary<int, (int, int, string)> { [581483] = (7, 8, "IFCBUILDINGELEMENTPROXY") }, members);
+        Assert.Equal([4, 5], members[50]);
+        Assert.Equal([7], members[70]);
+    }
+
     [Fact]
     public void Ports_AreWrittenForAFileWithItsOwnSchemaToo()
     {
