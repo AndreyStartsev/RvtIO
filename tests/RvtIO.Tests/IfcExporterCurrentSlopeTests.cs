@@ -94,6 +94,45 @@ public class IfcExporterCurrentSlopeTests
         Assert.Equal((false, (int?)null), Read("Body", "MappedRepresentation", unknownProduct: true));
     }
 
+    /// <summary>Two columns of one type with the same vertical geometry, the second one with the given product shape (null: none, an
+    /// unrecognised body); returns the number of Slope properties written.</summary>
+    private static int SlopesOfTwoColumns(Func<StepWriter, int> secondShape)
+    {
+        var w = new StepWriter();
+        int owner = w.Add("IFCOWNERHISTORY", "$,$,$,.NOCHANGE.,$,$,$,0");
+        int placement = w.Add("IFCLOCALPLACEMENT", "$,$");
+        int type = w.Add("IFCCOLUMNTYPE", "'RZGD7y6S5209$mGLi_sPl0',#" + owner + ",'T',$,$,$,$,$,$,.COLUMN.");
+        int ownBody = Shape(w, "SweptSolid");
+        var products = new Dictionary<int, (int entityId, int placementId, string ifcType)>();
+        var elements = new Dictionary<int, Element>();
+        var members = new List<int>();
+        foreach (var (elementId, shape) in new[] { (10, ownBody), (20, secondShape(w)) })
+        {
+            int column = w.Add("IFCCOLUMN", $"'RZGD7y6S5209$mGLi_sPl{elementId / 10}',#{owner},'P',$,$,#{placement},{(shape > 0 ? "#" + shape : "$")},'{elementId}'");
+            int property = w.Add("IFCPROPERTYSINGLEVALUE", "'Reference','',IFCIDENTIFIER('x'),$");
+            int pset = w.Add("IFCPROPERTYSET", $"'RZGD7y6S5209$mGLi_sP{elementId}',#{owner},'Pset_ColumnCommon','',(#{property})");
+            w.Add("IFCRELDEFINESBYPROPERTIES", $"'RZGD7y6S5209$mGLi_sQ{elementId}',#{owner},$,$,(#{column}),#{pset}");
+            products[elementId] = (column, placement, "IFCCOLUMN");
+            elements[elementId] = new Element { Id = elementId, CategoryId = -2001330, Geometry = Prism() };
+            members.Add(column);
+        }
+        w.Add("IFCRELDEFINESBYTYPE", $"'RZGD7y6S5209$mGLi_sR0',#{owner},$,$,({string.Join(",", members.Select(id => "#" + id))}),#{type}");
+        return new IfcExporter().ApplySlopePropertySetsCurrent(w, elements, products, new());
+    }
+
+    private static int Shape(StepWriter w, string representationType)
+    {
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"$,'Body','{representationType}',($)");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
+    [Fact]
+    public void SecondColumnOfAType_WithABodyThatIsNotRecognised_ReceivesNoSlope_WithABodyOfItsOwn_ReceivesIt()
+    {
+        Assert.Equal(1, SlopesOfTwoColumns(_ => 0));
+        Assert.Equal(2, SlopesOfTwoColumns(w => Shape(w, "SweptSolid")));
+    }
+
     [Fact]
     public void ColumnWithATiltedTop_ReceivesNoSlope()
     {

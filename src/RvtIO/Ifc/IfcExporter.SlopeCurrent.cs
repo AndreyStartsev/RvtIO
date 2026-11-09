@@ -14,7 +14,7 @@ public partial class IfcExporter
     /// member that holds solids of its own (a railing support: its body is no mapped item) takes the last attempt of
     /// the calculation, the slope of the largest face whose normal has a positive Z. Beams, slanted columns and
     /// members whose body is mapped are not covered.</summary>
-    private int ApplySlopePropertySetsCurrent(
+    internal int ApplySlopePropertySetsCurrent(
         StepWriter w, IReadOnlyDictionary<int, Element> elementsById,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products,
         Dictionary<(string PropertyName, string ValueExpr), int> pool)
@@ -61,7 +61,7 @@ public partial class IfcExporter
         var targets = new List<(int EntityId, double Degrees)>();
         string? diagPath = Environment.GetEnvironmentVariable("RVTIO_PSET_DIAG");
         var indexById = new Dictionary<int, int>();
-        for (int i = 0; i < count; i++) indexById[w.EntityAt(i).Id] = i;
+        for (int i = 0; i < count; i++) indexById.TryAdd(w.EntityAt(i).Id, i); // a repeated id keeps its first entity
         foreach (var members in typeMembers)
         {
             // The members that share one mapped body are the extrusion of its first member (the lowest element id); a member with a
