@@ -166,7 +166,7 @@ public class RebarShapeSolverTests
     {
         double c = Math.Cos(Math.PI / 6), s = Math.Sin(Math.PI / 6);
         double[] x = [1, 0, 0], up = [c, s, 0], down = [c, -s, 0];
-        // the joggle itself is solved (the reference of the other cases)
+        // the joggle itself is solved
         Assert.NotNull(RebarShapeSolver.Solve([x, up, x], [2400, 250, 650], [0, 1, -1, 0], D, 29, null, null));
         // the same turn at both corners (a doubled bend), a single obtuse corner, an obtuse corner next to a quarter turn and four edges are not measured
         Assert.Null(RebarShapeSolver.Solve([x, up, [Math.Cos(Math.PI / 3), Math.Sin(Math.PI / 3), 0]], [2400, 250, 650], [0, 1, 1, 0], D, 29, null, null));
