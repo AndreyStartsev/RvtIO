@@ -33,10 +33,65 @@ public class IfcExporterCurrentSlopeTests
     }
 
     [Fact]
-    public void RoundColumn_WithExactEndFacesOutsideItsShell_IsAVerticalExtrusionWhenTheEndFacesAgree()
+    public void RoundColumn_WithExactEndFacesOutsideItsShell_IsAVerticalExtrusion()
     {
         Assert.True(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(), out _));
+    }
+
+    [Fact]
+    public void RoundColumn_WhoseEndFacesAreNotOneCircleOfOneArea_IsNoVerticalExtrusion()
+    {
         Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topShortfall: 0.05), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topShift: 0.1), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(stray: 0.05), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topTilt: 0.1), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(height: 0), out _));
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(extraSolid: true), out _));
+    }
+
+    [Fact]
+    public void RectangularColumn_WithAnExactEndFaceOutsideItsShell_KeepsTheJudgementOfItsShell()
+    {
+        // the rule of the round column does not reach other geometry: the box without its top face in the shell is no extrusion, whatever
+        // the faces beside the shell say
+        GeometryData box = Prism();
+        box.Faces[1].PlaneSurface = true;
+        box.Faces[1].QuadratureArea = 12;
+        box.BrepSolids = [new GeoBrepSolid { IsClosed = false, FaceIndices = [0, 2, 3, 4, 5] }];
+        Assert.False(IfcExporter.HasVerticalExtrusionCurrent(box, out _));
+    }
+
+    [Fact]
+    public void RoundColumn_InTheExport_ReceivesNinetyDegrees()
+    {
+        string ifc = Export(IfcProfile.Current, ColumnType(901), Column(100, 901, IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry()));
+        Assert.Equal("IFCPLANEANGLEMEASURE(90.)", ColumnSet(ifc, 100).GetValueOrDefault("Slope"));
+        ifc = Export(IfcProfile.Current, ColumnType(901), Column(100, 901, IfcExporterBaseQuantitiesCurrentTests.RoundColumnGeometry(topShortfall: 0.05)));
+        Assert.DoesNotContain("Slope", ColumnSet(ifc, 100).Keys);
+    }
+
+    [Fact]
+    public void BodyOfAProduct_IsMappedOwnOrUnrecognised()
+    {
+        static (bool Known, int? Map) Read(string representationIdentifier, string representationType, bool withShape = true, bool unknownProduct = false)
+        {
+            var w = new StepWriter();
+            int map = w.Add("IFCREPRESENTATIONMAP", "$,$");
+            int item = w.Add("IFCMAPPEDITEM", $"#{map},$");
+            int representation = w.Add("IFCSHAPEREPRESENTATION", $"$,'{representationIdentifier}','{representationType}',(#{item})");
+            int shape = w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+            int product = w.Add("IFCCOLUMN", $"'g',$,'P',$,$,$,{(withShape ? "#" + shape : "$")},'1'");
+            var indexById = new Dictionary<int, int>();
+            for (int i = 0; i < w.EntityCount; i++) indexById[w.EntityAt(i).Id] = i;
+            bool known = IfcExporter.TryMappedBodySourceCurrent(w, indexById, unknownProduct ? 999 : product, out int? source);
+            return (known, source == map ? -1 : source);
+        }
+
+        Assert.Equal((true, (int?)-1), Read("Body", "MappedRepresentation"));
+        Assert.Equal((true, (int?)null), Read("Body", "SweptSolid"));
+        Assert.Equal((false, (int?)null), Read("Axis", "Curve3D"));
+        Assert.Equal((false, (int?)null), Read("Body", "MappedRepresentation", withShape: false));
+        Assert.Equal((false, (int?)null), Read("Body", "MappedRepresentation", unknownProduct: true));
     }
 
     [Fact]

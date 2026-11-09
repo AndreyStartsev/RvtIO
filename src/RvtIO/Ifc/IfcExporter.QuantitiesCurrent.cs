@@ -1382,7 +1382,8 @@ public partial class IfcExporter
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
         var totals = SolidTotalsCurrent(shells);
-        var capTotals = CapNodeTotalsCurrent(element.Geometry);
+        // The measures of the node with the end faces stand for the solid of a round column only.
+        var capTotals = RoundPrismCurrent(element.Geometry) != null ? CapNodeTotalsCurrent(element.Geometry) : null;
         if ((ExtrusionDataCurrent(body, shells) ?? RoundExtrusionDataCurrent(element.Geometry)) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area;
@@ -1403,9 +1404,9 @@ public partial class IfcExporter
         }
         else
         {
-            AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? (capTotals?.Area ?? totals?.Area) / 2);
+            AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? totals?.Area / 2);
             AddIfPositive(result, QuantityKind.Volume, "NetVolume",
-                ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? capTotals?.Volume ?? totals?.Volume);
+                ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? totals?.Volume);
         }
         return result;
     }

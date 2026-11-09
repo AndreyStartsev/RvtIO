@@ -67,9 +67,14 @@ public partial class IfcExporter
             // The members that share one mapped body are the extrusion of its first member (the lowest element id); a member with a
             // body of its own is an extrusion of its own.
             var usedMaps = new HashSet<int>();
+            bool first = true;
             foreach (int entityId in members.OrderBy(entityId => elementIdByEntity[entityId]))
             {
-                if (MappedBodySourceCurrent(w, indexById, entityId) is { } map && !usedMaps.Add(map)) continue;
+                // A body whose form is not recognised is not guessed to be a body of its own: only the first member of the type is judged then.
+                bool recognised = TryMappedBodySourceCurrent(w, indexById, entityId, out int? map);
+                bool shared = map is { } source && !usedMaps.Add(source);
+                if (shared || (!first && !recognised)) continue;
+                first = false;
                 if (!elementsById.TryGetValue(elementIdByEntity[entityId], out Element? column) || column.Geometry is not { } geometry)
                     continue;
                 bool vertical = HasVerticalExtrusionCurrent(geometry, out string detail);
@@ -147,24 +152,33 @@ public partial class IfcExporter
         return added;
     }
 
-    /// <summary>The representation map of the Body of a product when it is written as a mapped item, else null.</summary>
-    private static int? MappedBodySourceCurrent(StepWriter w, Dictionary<int, int> indexById, int productEntity)
+    /// <summary>How the Body of a product is written. True when its form is recognised: <paramref name="map"/> is then the representation
+    /// map of a mapped item, or null for a body of its own (any Body representation that is not a mapped one). False when the product,
+    /// its shape or its representations do not have the expected form, or no Body is found: the caller must not guess.</summary>
+    internal static bool TryMappedBodySourceCurrent(StepWriter w, Dictionary<int, int> indexById, int productEntity, out int? map)
     {
-        var product = SplitStepArguments(w.EntityAt(indexById[productEntity]).Args);
-        if (product.Length < 7 || !TryEntityId(product[6], out int shapeId) || !indexById.TryGetValue(shapeId, out int shapeIndex)) return null;
+        map = null;
+        if (!indexById.TryGetValue(productEntity, out int productIndex)) return false;
+        var product = SplitStepArguments(w.EntityAt(productIndex).Args);
+        if (product.Length < 7 || !TryEntityId(product[6], out int shapeId) || !indexById.TryGetValue(shapeId, out int shapeIndex)) return false;
         var shape = SplitStepArguments(w.EntityAt(shapeIndex).Args);
-        if (shape.Length != 3 || shape[2].Length < 3) return null;
+        if (shape.Length != 3 || shape[2].Length < 3) return false;
         foreach (string token in SplitStepArguments(shape[2][1..^1]))
         {
             if (!TryEntityId(token, out int representationId) || !indexById.TryGetValue(representationId, out int representationIndex)) continue;
             var representation = SplitStepArguments(w.EntityAt(representationIndex).Args);
-            if (representation.Length != 4 || representation[1] != "'Body'" || representation[2] != "'MappedRepresentation'" || representation[3].Length < 3) continue;
+            if (representation.Length != 4 || representation[1] != "'Body'") continue;
+            if (representation[2] != "'MappedRepresentation'") return true;
+            if (representation[3].Length < 3) return false;
             var items = SplitStepArguments(representation[3][1..^1]);
-            if (items.Length == 1 && TryEntityId(items[0], out int itemId) && indexById.TryGetValue(itemId, out int itemIndex)
-                && w.EntityAt(itemIndex).Type == "IFCMAPPEDITEM" && TryEntityId(SplitStepArguments(w.EntityAt(itemIndex).Args)[0], out int map))
-                return map;
+            if (items.Length != 1 || !TryEntityId(items[0], out int itemId) || !indexById.TryGetValue(itemId, out int itemIndex)
+                || w.EntityAt(itemIndex).Type != "IFCMAPPEDITEM"
+                || SplitStepArguments(w.EntityAt(itemIndex).Args) is not { Length: > 0 } itemArguments || !TryEntityId(itemArguments[0], out int source))
+                return false;
+            map = source;
+            return true;
         }
-        return null;
+        return false;
     }
 
     /// <summary>Every solid of the instance is a vertical extrusion for the body export. An instance of three solids, one of
@@ -176,9 +190,12 @@ public partial class IfcExporter
         var solids = geometry.BrepSolids is { Count: > 0 } shells
             ? shells.Select(shell => shell.FaceIndices.Where(index => (uint)index < (uint)faces.Count).Select(index => faces[index]).ToList()).ToList()
             : [faces];
-        // A round solid lists its exact end faces outside the tessellated shell of its side: the solid is all the faces then.
-        if (geometry.BrepSolids is [var only] && faces.Where((face, index) => !only.FaceIndices.Contains(index)).Any(IsExactCap))
-            solids = [faces];
+        // A round column (see RoundPrismCurrent) lists its exact end faces outside the tessellated shell of its side: its solid is all the faces then.
+        if (geometry.BrepSolids is [var only] && RoundPrismCurrent(geometry) != null)
+        {
+            var inShell = only.FaceIndices.ToHashSet();
+            if (faces.Where((face, index) => !inShell.Contains(index)).Any(IsExactCap)) solids = [faces];
+        }
         bool all = true;
         var parts = new List<string>();
         foreach (var solid in solids)
