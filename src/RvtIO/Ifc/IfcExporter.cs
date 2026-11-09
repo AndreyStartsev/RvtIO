@@ -1736,6 +1736,9 @@ public partial class IfcExporter
             if (CurrentProfile && elem.CategoryId == -2009000 && elem.TypeId > 0
                 && ifcType == "IFCBUILDINGELEMENTPROXY")
                 ifcType = "IFCREINFORCINGMESH";
+            // A roof soffit is a covering with no predefined type.
+            if (CurrentProfile && elem.CategoryId == RoofSoffitCategoryId && ifcType == "IFCBUILDINGELEMENTPROXY")
+                ifcType = "IFCCOVERING";
             // The current profile writes a wall's openings only
             // beside a wall exported as an extrusion with an axis; the openings of a plain IfcWall
             // are cut into its Brep.
@@ -4564,7 +4567,7 @@ public partial class IfcExporter
                 "IFCREINFORCINGMESH" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},$,$,$,$,$,$,$,$,$",
                 "IFCCOVERING" =>
-                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.{ResolveCoveringOccurrencePredefinedType(elem, referenceElementType, elementIdOccurrenceCounts)}.",
+                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile && elem.CategoryId == RoofSoffitCategoryId ? "$" : $".{ResolveCoveringOccurrencePredefinedType(elem, referenceElementType, elementIdOccurrenceCounts)}.")}",
                 "IFCRAILING" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile && elem.NativeMasterSymbolId is not > 0 ? "$" : ".NOTDEFINED.")}",
                 "IFCSTAIR" =>
@@ -65623,6 +65626,7 @@ public partial class IfcExporter
     private const int StructuralColumnCategoryId = -2001330;
     private const int FloorCategoryId = -2000032;
     private const int RoofCategoryId = -2000035;
+    private const int RoofSoffitCategoryId = -2001393;
     private const int CurtainSystemCategoryId = -2000090;
     private const int MassExteriorWallCategoryId = -2003413;
     private const int MassInteriorWallCategoryId = -2003412;
@@ -67800,7 +67804,7 @@ public partial class IfcExporter
             else
             {
                 string trailingArgs = TypeClassesWithPredefinedType.Contains(typeClass)
-                    ? $",.{predefinedTypes[key]}."
+                    ? predefinedTypes[key].Length == 0 ? ",$" : $",.{predefinedTypes[key]}."
                     : typeClass == "IFCFURNITURETYPE" ? ",$" : "";
                 typeEntityId = w.Add(typeClass,
                     $"{guidArg},{R(ownerHistId)},{nameArg},$,$,{hasPropertySetsArg},$,{tagArg},$" + trailingArgs);
@@ -67894,6 +67898,9 @@ public partial class IfcExporter
             return "ROOF";
         if (type.CategoryId == null || type.CategoryId != occurrence.CategoryId)
             return "NOTDEFINED";
+        // No predefined type: the empty value is written as $.
+        if (currentProfile && typeClass == "IFCCOVERINGTYPE" && type.CategoryId == RoofSoffitCategoryId)
+            return "";
         string value = (typeClass, type.CategoryId) switch
         {
             ("IFCWALLTYPE", -2000011) when type.SerializedBasicWallTypeFunction is >= 0 and <= 5 => "STANDARD",
