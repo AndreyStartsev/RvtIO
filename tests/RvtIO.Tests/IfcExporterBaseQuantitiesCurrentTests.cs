@@ -3086,7 +3086,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     /// rounds every coordinate to a 32-bit number, as mesh vertices are read.</summary>
     internal static GeometryData RoundColumnGeometry(double topShortfall = 0, double topShift = 0, double topTilt = 0, double height = 10,
         double stray = 0, bool extraSolid = false, int sides = 12, bool polygonArea = false, bool hole = false, bool splitCapNodes = false,
-        double[]? offset = null, bool float32 = false)
+        double[]? offset = null, bool float32 = false, bool planarSides = false)
     {
         const double radius = 0.5;
         double[] Corner(int k, double z) => [radius * Math.Cos(2 * Math.PI * k / sides), radius * Math.Sin(2 * Math.PI * k / sides), z];
@@ -3102,7 +3102,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         };
         if (hole) faces[0].InnerVertices = [Enumerable.Range(0, 8).Select(k => new[] { 0.1 * Math.Cos(2 * Math.PI * k / 8), 0.1 * Math.Sin(2 * Math.PI * k / 8), 0.0 }).ToList()];
         for (int k = 0; k < sides; k++)
-            faces.Add(new() { GeometryNode = 18, OuterVertices = [Corner(k, 0), Corner(k + 1, 0), Corner(k + 1, height), Corner(k, height)] });
+            faces.Add(new() { GeometryNode = 18, PlaneSurface = planarSides, OuterVertices = [Corner(k, 0), Corner(k + 1, 0), Corner(k + 1, height), Corner(k, height)] });
         if (stray > 0) faces[3].OuterVertices![2] = [(radius + stray) * Math.Cos(2 * Math.PI / sides), (radius + stray) * Math.Sin(2 * Math.PI / sides), height];
         var solids = new List<GeoBrepSolid> { new() { IsClosed = false, FaceIndices = [.. Enumerable.Range(2, sides + 1)] } };
         if (extraSolid)
@@ -3182,7 +3182,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     public static TheoryData<string> NotARoundPrism => new()
     {
         "different circles", "end faces 6% apart in area", "corner off the cylinder", "tilted end face", "zero height", "hole in an end face",
-        "4 corners", "5 corners", "6 corners", "7 corners", "8-gon", "12-gon", "16-gon",
+        "4 corners", "5 corners", "6 corners", "7 corners", "8-gon", "12-gon", "16-gon", "40-gon with planar facets",
     };
 
     private static GeometryData NotARoundPrismGeometry(string kind) => kind switch
@@ -3202,6 +3202,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
         "8-gon" => RoundColumnGeometry(sides: 8, polygonArea: true),
         "12-gon" => RoundColumnGeometry(sides: 12, polygonArea: true),
         "16-gon" => RoundColumnGeometry(sides: 16, polygonArea: true),
+        // the exact end area of a regular 40-gon is within the area tolerance of its circle: only the planar facets refuse it
+        "40-gon with planar facets" => RoundColumnGeometry(sides: 40, polygonArea: true, planarSides: true),
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 

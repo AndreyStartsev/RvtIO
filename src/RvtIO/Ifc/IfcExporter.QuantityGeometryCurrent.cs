@@ -220,8 +220,8 @@ public partial class IfcExporter
     /// <summary>The vertical circular cylinder of a round solid, in feet: the distance of its two exact end faces and the radius of their
     /// circle. The end faces are the only exact planar faces, without holes, with at least eight corners, horizontal, the corners of each
     /// lie on a circle, both circles are the same one, the exact area of each is that of its circle to within
-    /// <see cref="RoundCapAreaTolerance"/> (a polygon is no circle), and every other face has its corners on the side of that cylinder
-    /// between the end faces (so no other solid is part of the geometry). The areas of the two end faces need not agree with each other.
+    /// <see cref="RoundCapAreaTolerance"/> (a polygon is no circle), no other face is a vertical plane surface of the file (a facet of a
+    /// polygonal prism), and every other face has its corners on the side of that cylinder between the end faces (so no other solid is part of the geometry). The areas of the two end faces need not agree with each other.
     /// The distances are compared to a millionth of the radius, or to eight units in the last place of a 32-bit coordinate of the
     /// largest magnitude where that is more (mesh vertices are read as 32-bit numbers; the end faces of the sample are exact doubles
     /// up to 150 feet from the origin). Null for any other solid.</summary>
@@ -241,6 +241,9 @@ public partial class IfcExporter
         if (caps.Any(cap => cap.OuterVertices!.Any(corner => Math.Abs(corner[2] - cap.OuterVertices![0][2]) > tolerance))) return null;
         double low = Math.Min(z0, z1), high = Math.Max(z0, z1);
         if (high - low < 1e-9) return null;
+        // A side facet that lies on a plane surface of the file belongs to a polygonal prism, not to a cylinder: the only planar faces
+        // besides the end faces are copies of them, which are horizontal.
+        if (faces.Any(face => face.PlaneSurface && !IsExactCap(face) && face.OuterVertices is { Count: > 0 } ring && ring.Any(corner => Math.Abs(corner[2] - ring[0][2]) > tolerance))) return null;
         foreach (var face in faces)
             foreach (var corner in face.OuterVertices ?? [])
                 if (Math.Abs(Math.Sqrt((corner[0] - first.X) * (corner[0] - first.X) + (corner[1] - first.Y) * (corner[1] - first.Y)) - first.R) > tolerance
