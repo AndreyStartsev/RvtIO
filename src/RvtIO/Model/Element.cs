@@ -534,6 +534,10 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal (string Name, int TypeId)? SerializedMepSystem { get; set; }
 
+        /// <summary>The base equipment (panel) of an electrical circuit, from its connector manager; null for other elements and for a circuit with none.</summary>
+        [JsonIgnore]
+        internal int? SerializedCircuitBaseEquipmentId { get; set; }
+
         /// <summary>Own SymbolInfo type name with the original localized system family,
         /// used for LayerSet metadata and IFC floor/ceiling Type.Name; the name remains
         /// separate from the public Name/FamilyName projection.</summary>
