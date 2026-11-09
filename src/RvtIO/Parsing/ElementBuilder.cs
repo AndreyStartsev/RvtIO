@@ -3337,7 +3337,13 @@ internal static partial class ElementBuilder
             {
                 double lineLength = Math.Sqrt(lineX * lineX + lineY * lineY + lineDirZ * lineDirZ);
                 if (double.IsFinite(lineLength) && lineLength > 0)
+                {
                     e.CurveDriverLineDirection = (lineX / lineLength, lineY / lineLength, lineDirZ / lineLength);
+                    if (np.DoubleFields.TryGetValue("87:m_pCrv.endParams@0", out double lineStart)
+                        && np.DoubleFields.TryGetValue("87:m_pCrv.endParams@1", out double lineEnd)
+                        && double.IsFinite(lineStart) && double.IsFinite(lineEnd) && lineEnd != lineStart)
+                        e.CurveDriverLineLength = Math.Abs(lineEnd - lineStart) * lineLength;
+                }
             }
             if (np.DoubleFields.TryGetValue("3789:m_copingDistance", out double copingDistance) && double.IsFinite(copingDistance))
                 e.FramingCopingDistance = copingDistance;

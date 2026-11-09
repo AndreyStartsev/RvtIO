@@ -335,7 +335,16 @@ public partial class IfcExporter
             if (owner?.Parameters.FirstOrDefault(parameter => parameter.Id == InstanceLengthParamId) is
                 { IsApproximate: false, Value: double lengthFeet } && double.IsFinite(lengthFeet) && lengthFeet > 0)
                 return lengthFeet * 304.8;
-        return null;
+        // A beam without a stored length spans its drive curve.
+        return beam.CurveDriverLineLength is double driveFeet && double.IsFinite(driveFeet) && driveFeet > 0 ? driveFeet * 304.8 : null;
+    }
+
+    /// <summary>Pset_BeamCommon.Slope in degrees: the angle between the drive curve of the beam and the horizontal plane, never negative.</summary>
+    internal static double? ResolveBeamSlopeDegreesCurrent(Element beam)
+    {
+        if (beam.CurveDriverLineLength is not double length || !(length > 0) || beam.CurveDriverLineZ is not { } z) return null;
+        double ratio = Math.Min(1.0, Math.Abs(z.EndZ - z.StartZ) / length);
+        return ratio < 1e-9 ? 0.0 : Math.Asin(ratio) * 180.0 / Math.PI;
     }
 
     /// <summary>Pset_CoveringCommon.TotalThickness of a ceiling: CEILING_THICKNESS, which a compound ceiling type
