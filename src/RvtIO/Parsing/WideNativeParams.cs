@@ -44,6 +44,8 @@ internal sealed class WideNativeParams
 
     private const string LineKeyPrefix = "gline:";
 
+    private const string SplineNodeKeyPrefix = "snode:";
+
     private const string RoomPhaseKey = "room:m_phaseId";
 
     /// <summary>The own field of a system type root that decides its system family (Floor / Foundation Slab, stair construction method ...),
@@ -113,6 +115,9 @@ internal sealed class WideNativeParams
         // the straight drive curve of an MEP curve (AddMepCurveLine)
         if ((declaring.Name, field.Name) is ("GLine", "m_origin" or "m_dirVec") or ("GCurve", "m_endParams"))
             return LineKeyPrefix + field.Name;
+        // the nodes of the Hermite spline that drives a flexible duct or pipe (AddFlexCurveNodes)
+        if (declaring.Name == "SplineNode" && field.Name is "m_iParametr" or "m_iPoint" or "m_iTangent")
+            return SplineNodeKeyPrefix + field.Name;
         // the phases of the project in their authored order and the phase of a room, read by ProjectPhaseOrder and RoomPhase
         if (declaring.Name == "AllProjectPhases" && field.Name == "m_phaseIds") return WideBlockWalker.AllItemsKeyPrefix + "phases";
         if (declaring.Name == "RoomElem" && field.Name == "m_phaseId") return RoomPhaseKey;
@@ -270,6 +275,7 @@ internal sealed class WideNativeParams
 
         AddConnectorRecords(np, walk);
         AddMepCurveLine(np, walk, rootClassId);
+        AddFlexCurveNodes(np, walk, rootClassId);
 
         // cell classes: what the CellList object queued
         for (int qi = 0; qi < walk.QueueEnd.Count; qi++)
@@ -316,6 +322,39 @@ internal sealed class WideNativeParams
         for (int part = 0; part < 3; part++)
             for (int i = 0; i < counts[part]; i++)
                 np.DoubleFields[$"87:m_pCrv.{targets[part]}@{i}"] = values[$"{sources[part]}@{i}"];
+    }
+
+    /// <summary>The nodes of the Hermite spline that drives a flexible duct or pipe (the GHermiteSpline its CurveDriver queued), seven
+    /// values each (parameter, point, tangent), under the keys of the Revit 2022 walk ("87:m_pCrv.nodes", "87:m_pCrv.node{i}@{k}"), which
+    /// ElementBuilder.FlexCurveLength reads. Nothing is written for another root, a driver without exactly one spline, or nodes that
+    /// are not complete.</summary>
+    private void AddFlexCurveNodes(TfBlockDeserializer.NativeParams np, WideBlockWalker.Walk walk, int rootClassId)
+    {
+        if (rootClassId < 0 || R22Id(rootClassId) is not (3177 or 3180)) return;
+        int spline = -1;
+        for (int owner = 0; owner < walk.QueueEnd.Count; owner++)
+        {
+            if (!_walker.IsA(walk.Queue[owner], "CurveDriver")) continue;
+            for (int child = walk.QueueCountAtStart[owner]; child < walk.QueueEnd[owner]; child++)
+            {
+                if (_walker.Class(walk.Queue[child])?.Name != "GHermiteSpline") continue;
+                if (spline >= 0) return;
+                spline = child;
+            }
+        }
+        if (spline < 0) return;
+        var values = new List<double>();
+        string[] order = ["m_iParametr", "m_iPoint@0", "m_iPoint@1", "m_iPoint@2", "m_iTangent@0", "m_iTangent@1", "m_iTangent@2"];
+        foreach (var c in walk.Captures)
+        {
+            if (c.QueueIndex != spline || c.Kind != WideBlockWalker.CaptureKind.Real || !c.Key.StartsWith(SplineNodeKeyPrefix, StringComparison.Ordinal)) continue;
+            if (c.Key[SplineNodeKeyPrefix.Length..] != order[values.Count % order.Length] || !double.IsFinite(c.Real)) return;
+            values.Add(c.Real);
+        }
+        if (values.Count < 2 * order.Length || values.Count % order.Length != 0) return;
+        for (int i = 0; i < values.Count; i++)
+            np.DoubleFields[$"87:m_pCrv.node{i / order.Length}@{i % order.Length}"] = values[i];
+        np.DoubleFields["87:m_pCrv.nodes"] = values.Count / order.Length;
     }
 
     /// <summary>The connectors of the element and their calculations under the keys of the Revit 2022 walk
