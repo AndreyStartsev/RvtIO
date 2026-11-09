@@ -91,6 +91,21 @@ internal static class RebarShapeSolver
         return result;
     }
 
+    /// <summary>A joggle of three edges (the first and the last edge with a fixed direction, two opposite turns) whose middle edge is given by
+    /// the vector <paramref name="outer"/> between its two outer corners (the sum of its projections) instead of a direction: the direction is the
+    /// one for which that vector leaves the lateral distance of the two outer corners (one diameter, to the side of the first turn) across it.
+    /// With <paramref name="lengths"/> of the first and the last edge the rest is <see cref="Solve"/> of a shape whose middle edge has that direction
+    /// and the length of the vector. Null when the shape is not a joggle or has hooks (<paramref name="noHooks"/> false).</summary>
+    internal static List<RebarSegment>? SolveJoggle(double[] first, double[] last, double[] outer, IReadOnlyList<double> lengths, IReadOnlyList<int> turns,
+        double diameter, double cornerRadius, bool noHooks)
+    {
+        if (!noHooks || turns.Count != 4 || turns[0] != 0 || turns[3] != 0 || turns[1] == 0 || turns[2] != -turns[1] || lengths.Count != 2 || outer[2] != 0) return null;
+        double length = Math.Sqrt(Dot(outer, outer));
+        if (!(diameter > 0) || !(length > diameter)) return null;
+        double angle = Math.Atan2(outer[1], outer[0]) - Math.Asin(diameter * turns[1] / length);
+        return Solve([first, [Math.Cos(angle), Math.Sin(angle), 0], last], [lengths[0], length, lengths[1]], turns, diameter, cornerRadius, null, null);
+    }
+
     /// <summary>A shape without hooks that has a corner that is not a quarter turn (obtuse corners, like the two bends of a joggle). The
     /// dimension of an edge runs between the outer corners of its two ends (the outer corner of a bend lies on the outer side of the bar,
     /// half a diameter from the centre line, <c>d/2 tan(angle/2)</c> ahead of the centre line corner along the edge before the corner and

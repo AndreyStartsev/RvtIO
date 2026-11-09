@@ -192,6 +192,36 @@ public class RebarReaderTests
         Assert.Contains(lines, l => l.StartsWith("#") && l.Contains("=IFCBUILDING(") && containment.EndsWith(l[..l.IndexOf('=')] + ");"));
     }
 
+    /// <summary>A container of two items (one bar each) of the container type "Container 1".</summary>
+    private static Element Container(int id)
+    {
+        IReadOnlyList<RebarSegment> line = [new(false, [0, 0, 0], [1, 0, 0], [0, 0, 0], 0, 0, 1)];
+        RebarBars Item(int index) => new(900, 0, null, [line], 8 / 304.8, 8 / 304.8, "Rebar 8", 10, ItemIndex: index);
+        return new Element { Id = id, CategoryId = -2009000, RebarBars = new RebarBars(-1, 0, null, [], BarTypeName: "Container 1", Items: [Item(0), Item(1)]) };
+    }
+
+    [Fact]
+    public void Export_WritesEachItemOfARebarContainerAsABarAndGroupsThemUnderTheContainer()
+    {
+        string[] lines = Export(Container(700)).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var bars = lines.Where(l => l.Contains("IFCREINFORCINGBAR(")).ToArray();
+        Assert.Equal(2, bars.Length);
+        // name family:container type:container id: item index, ObjectType family:container type, Tag the container id, the bar's own diameter and length
+        Assert.Contains("'Structural Rebar Container:Container 1:700: 0','','Structural Rebar Container:Container 1',", bars[0]);
+        Assert.Contains("'Structural Rebar Container:Container 1:700: 1','','Structural Rebar Container:Container 1',", bars[1]);
+        Assert.All(bars, bar => Assert.Contains(",'700','',8.,", bar));
+        Assert.All(bars, bar => Assert.Contains(",300.,.NOTDEFINED.,$)", bar));
+        // one group named by the container type holds both, one Pset_QuantityTakeOff (Reference = the container type) serves both
+        Assert.Single(lines, l => l.Contains("IFCGROUP(") && l.Contains("'Structural Rebar Container:Container 1'"));
+        var assignment = Assert.Single(lines, l => l.Contains("IFCRELASSIGNSTOGROUP("));
+        Assert.Matches(@",\(#\d+,#\d+\),\$,#\d+\);", assignment);
+        Assert.Single(lines, l => l.Contains("IFCPROPERTYSET(") && l.Contains("'Pset_QuantityTakeOff'"));
+        Assert.Contains(lines, l => l.Contains("IFCPROPERTYSINGLEVALUE(") && l.Contains("'Reference'") && l.Contains("IFCIDENTIFIER('Container 1')"));
+        // both bars are contained once
+        var containment = Assert.Single(lines, l => l.Contains("IFCRELCONTAINEDINSPATIALSTRUCTURE("));
+        Assert.Equal(2, Regex.Match(containment, @",\(([^)]*)\),").Groups[1].Value.Split(',').Length);
+    }
+
     [Fact]
     public void Export_CountsEveryWrittenReinforcingBarAsAnExportedProduct()
     {

@@ -34,9 +34,11 @@ internal static partial class RebarReader
     internal sealed record HookKind(double Angle, double Multiplier, int Style);
 
     /// <summary>The shape of a shape driven bar: per edge its direction in the plane and the id of the parameter that holds its dimension,
-    /// per vertex its turn, the style (0 standard, 1 stirrup / tie) and the orientation of the two hooks (1 left, 3 right).</summary>
+    /// per vertex its turn, the style (0 standard, 1 stirrup / tie) and the orientation of the two hooks (1 left, 3 right).
+    /// The middle edge of a joggle of three edges may be given by its length and two projections (the id of the parameter that holds the length
+    /// of its projection and the direction projected on): it has no fixed direction (a zero vector in <c>Directions</c>) and <c>Projections</c> are its two.</summary>
     internal sealed record ShapeDefinition(IReadOnlyList<double[]> Directions, IReadOnlyList<long> ParameterIds, IReadOnlyList<int> Turns,
-        int Style, IReadOnlyList<long> HookOrientation);
+        int Style, IReadOnlyList<long> HookOrientation, IReadOnlyList<(long ParameterId, double[] Direction)>? Projections = null);
 
     /// <summary>A shape driven bar with no cached curves: what its RebarInstance holds to rebuild them.</summary>
     internal sealed record PendingBar(int BarTypeId, int ShapeId, int HookId0, int HookId1, long HookOrientation0, long HookOrientation1, double BarLength,
@@ -103,20 +105,26 @@ internal static partial class RebarReader
             return null;
         long edgeCount = IntegerOf(caps, "RebarShapeDefinitionBySegments.m_edges#") ?? -1, vertexCount = IntegerOf(caps, "RebarShapeDefinitionBySegments.m_vertices#") ?? -1;
         var children = Children(walk, definition).ToList();
-        if (edgeCount < 1 || vertexCount != edgeCount + 1 || children.Count != 2 * edgeCount) return null;
+        // an edge has two constraints (length and fixed direction); the middle edge of a joggle has three (length and two projections)
+        var constraintCounts = caps.Where(c => c.Key == "RebarShapeEdge.m_constraints#" && c.Kind == WideBlockWalker.CaptureKind.Integer).Select(c => (int)c.Integer).ToList();
+        if (edgeCount < 1 || vertexCount != edgeCount + 1 || constraintCounts.Count != edgeCount
+            || constraintCounts.Where((n, i) => n != 2 && !(n == 3 && edgeCount == 3 && i == 1)).Any() || children.Count != constraintCounts.Sum()) return null;
         IEnumerable<long> Values(string key) => caps.Where(c => c.Key == key && c.Kind == WideBlockWalker.CaptureKind.Integer).Select(c => c.Integer);
-        if (Values("RebarShapeEdge.m_constraints#").Any(n => n != 2) || Values("RebarShapeEdge.m_type").Any(t => t != 0)
+        if (Values("RebarShapeEdge.m_type").Any(t => t != 0)
             || Values("RebarShapeEdge.m_arcHeightParamId").Any(v => v != -1) || Values("RebarShapeEdge.m_radiusParamId").Any(v => v != -1)
             || Values("RebarShapeVertex.m_constraints#").Any(n => n != 0) || Values("RebarShapeVertex.m_bendAngle").Any(a => a is not (1 or 3))) return null;
         var turns = Values("RebarShapeVertex.m_turn").Select(t => (int)t).ToList();
         if (turns.Count != vertexCount) return null;
         var directions = new List<double[]>();
         var parameters = new List<long>();
+        var projections = new List<(long, double[])>();
+        int offset = 0;
         for (int edge = 0; edge < edgeCount; edge++)
         {
             long? parameter = null;
             double[]? direction = null;
-            foreach (int child in children.Skip(2 * edge).Take(2))
+            var edgeProjections = new List<(long, double[])>();
+            foreach (int child in children.Skip(offset).Take(constraintCounts[edge]))
             {
                 if (!byQueue.TryGetValue(child, out var childCaps)) return null;
                 switch (walker.Class(walk.Queue[child])?.Name)
@@ -130,13 +138,28 @@ internal static partial class RebarReader
                         if (RealOf(childCaps, "XYZ.m_xyz@0") is double x && RealOf(childCaps, "XYZ.m_xyz@1") is double y && RealOf(childCaps, "XYZ.m_xyz@2") is double z)
                             direction = [x, y, z];
                         break;
+                    case "RebarShapeConstraintProjEdgeLength":
+                        // the length of the projection of the edge on a direction, between outer surfaces too
+                        if (IntegerOf(childCaps, "RebarShapeConstraintProjEdgeLength.m_refType@0") != 1 || IntegerOf(childCaps, "RebarShapeConstraintProjEdgeLength.m_refType@1") != 1
+                            || IntegerOf(childCaps, "RebarShapeConstraintProjEdgeLength.m_paramId") is not long projected
+                            || RealOf(childCaps, "XYZ.m_xyz@0") is not double px || RealOf(childCaps, "XYZ.m_xyz@1") is not double py || RealOf(childCaps, "XYZ.m_xyz@2") is not double pz
+                            || pz != 0 || Math.Abs(px * px + py * py - 1) > 1e-9) return null;
+                        edgeProjections.Add((projected, [px, py, pz]));
+                        break;
                 }
+            }
+            offset += constraintCounts[edge];
+            if (constraintCounts[edge] == 3)
+            {
+                if (parameter == null || direction != null || edgeProjections.Count != 2) return null;
+                projections = edgeProjections;
+                direction = [0, 0, 0];
             }
             if (parameter == null || direction == null) return null;
             parameters.Add(parameter.Value);
             directions.Add(direction);
         }
-        return new ShapeDefinition(directions, parameters, turns, (int)style, [ori0, ori1]);
+        return new ShapeDefinition(directions, parameters, turns, (int)style, [ori0, ori1], projections.Count == 0 ? null : projections);
     }
 
     /// <summary>The RebarInstance of a Rebar that has no cache: its shape, hooks, parameter values and bar positions.</summary>
@@ -164,7 +187,8 @@ internal static partial class RebarReader
         return result;
     }
 
-    private static PendingBar? ReadPending(List<WideBlockWalker.Capture> caps, bool inAssembly)
+    /// <param name="containerItem">The item of a RebarContainer: one bar at the position of the shape frame (the position arrays hold nothing).</param>
+    private static PendingBar? ReadPending(List<WideBlockWalker.Capture> caps, bool inAssembly, bool containerItem = false)
     {
         if (IntegerOf(caps, "RebarInstBase.m_shapeId") is not long shape || IntegerOf(caps, "RebarInstBase.m_barTypeId") is not long barType
             || IntegerOf(caps, "RebarInstBase.m_hookTypeId0") is not long hook0 || IntegerOf(caps, "RebarInstBase.m_hookTypeId1") is not long hook1
@@ -186,7 +210,13 @@ internal static partial class RebarReader
         if (count is < 1 or > MaxBarPositions) return null;
         List<double[]> positions;
         List<long> included;
-        if (trfs.TryGetValue(Positions, out var stored))
+        if (containerItem)
+        {
+            if (count != 1 || trfs.GetValueOrDefault(Positions) is not { Count: 0 }) return null;
+            positions = [[1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]];
+            included = [1];
+        }
+        else if (trfs.TryGetValue(Positions, out var stored))
         {
             positions = stored;
             included = IncludedFlags(caps);
@@ -242,12 +272,27 @@ internal static partial class RebarReader
             if (!bar.ParameterIndex.TryGetValue(parameter, out int index)) return null;
             lengths.Add(bar.Doubles[index]);
         }
+        // the middle edge of a joggle given by projections: the vector between its outer corners is the sum of the projections
+        double[]? joggle = null;
+        if (shape.Projections != null)
+        {
+            joggle = [0, 0, 0];
+            foreach (var (parameter, direction) in shape.Projections)
+            {
+                if (!bar.ParameterIndex.TryGetValue(parameter, out int index)) return null;
+                for (int k = 0; k < 3; k++) joggle[k] += bar.Doubles[index] * direction[k];
+            }
+            // its length parameter must say the same
+            if (Math.Abs(Math.Sqrt(joggle[0] * joggle[0] + joggle[1] * joggle[1]) - lengths[1]) > 1e-6) return null;
+        }
         bool unsupported = false;
         var start = HookOf(bar.HookId0, bar.HookOrientation0, 0, shape, hookKinds, barKind, diameter, ref unsupported);
         var end = HookOf(bar.HookId1, bar.HookOrientation1, 1, shape, hookKinds, barKind, diameter, ref unsupported);
         if (unsupported) return null;
         double corner = ((shape.Style == 1 ? barKind.StirrupTieBend : barKind.StandardBend) + diameter) / 2;
-        var pieces = RebarShapeSolver.Solve(shape.Directions, lengths, shape.Turns, diameter, corner, start, end);
+        var pieces = joggle != null
+            ? RebarShapeSolver.SolveJoggle(shape.Directions[0], shape.Directions[2], joggle, [lengths[0], lengths[2]], shape.Turns, diameter, corner, start == null && end == null)
+            : RebarShapeSolver.Solve(shape.Directions, lengths, shape.Turns, diameter, corner, start, end);
         if (pieces == null) return null;
         var first = pieces.Select(piece => piece.Moved(bar.Frame)).ToList();
         var bars = new List<IReadOnlyList<RebarSegment>>();
