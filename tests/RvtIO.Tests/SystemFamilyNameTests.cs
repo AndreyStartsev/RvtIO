@@ -141,16 +141,75 @@ public class SystemFamilyNameTests
         Assert.Null(type.FamilyName);
     }
 
+    // The exact own root decides for the previous releases too: a repeated element id, a repeated root, a malformed root or a root without a class gets no name.
+    [Theory]
+    [InlineData("ok", "Curtain Wall")] [InlineData("duplicate_element", null)] [InlineData("block_count_2", null)]
+    [InlineData("class_0", null)] [InlineData("no_root", null)]
+    public void ApplyValidatedSystemFamilyNames_PreviousReleaseNeedsOneExactOwnRoot(string mode, string? expected)
+    {
+        var state = new ParsingState();
+        if (mode != "no_root") state.SystemTypeRoots[500] = mode switch
+        {
+            "block_count_2" => (2, (ushort)2559, null),
+            "class_0" => (1, (ushort)0, null),
+            _ => (1, (ushort)2559, null),
+        };
+        var type = new Element { Id = 500, CategoryId = -2000011, Name = "Type" };
+        var elements = new List<Element> { type };
+        if (mode == "duplicate_element") elements.Add(new Element { Id = 500, CategoryId = -2000011, Name = "Type" });
+        ElementBuilder.ApplyValidatedSystemFamilyNames(elements, state, RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2020", "ENU"));
+        Assert.All(elements, element => Assert.Equal(expected, element.ValidatedSystemFamilyName));
+    }
+
     // The stair of a 2020/2021 file takes the instance name of the English table; an element of another category does not.
     [Theory]
-    [InlineData(-2000120, "Stair")] [InlineData(-2000011, null)]
-    public void ApplyValidatedStairOccurrenceNames_PreviousReleaseNamesAStairsRoot(int category, string? expected)
+    [InlineData("2021", -2000120, "Stair")] [InlineData("2020", -2000120, "Stair")] [InlineData("2021", -2000011, null)]
+    public void ApplyValidatedStairOccurrenceNames_PreviousReleaseNamesAStairsRoot(string version, int category, string? expected)
     {
-        var stair = new Element { Id = 700, CategoryId = category, RootClassName = "Stairs" };
-        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU"));
+        var stair = new Element { Id = 700, CategoryId = category, NativeRootClassName = "Stairs" };
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "ENU"));
         Assert.Equal(expected, stair.ValidatedStairOccurrenceName);
-        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "RUS"));
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "RUS"));
         Assert.Null(stair.ValidatedStairOccurrenceName);
+    }
+
+    // The stair of the new record layout (class 3681) is named only when its type carries a validated system family name, which a type of
+    // a 2020/2021 file now does.
+    [Theory]
+    [InlineData(true, "Stair")] [InlineData(false, null)]
+    public void ApplyValidatedStairOccurrenceNames_PreviousReleaseNamesANewLayoutStairOnlyWithAValidatedType(bool typeIsNamed, string? expected)
+    {
+        var type = new Element
+        {
+            Id = 300, CategoryId = -2000120, SerializedStairsTypeClassId = 3742,
+            ValidatedSystemFamilyName = typeIsNamed ? "Assembled Stair" : null,
+        };
+        var stair = new Element
+        {
+            Id = 100, CategoryId = -2000120, SerializedOwnElementClassId = 3681, SerializedStairCore = [new(200, 3708)],
+            SerializedStairTypeLinkIsResolved = true, SerializedStairTypeId = 300,
+        };
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair, type], RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU"));
+        Assert.Equal(expected, stair.ValidatedStairOccurrenceName);
+        Assert.Null(type.ValidatedStairOccurrenceName);
+    }
+
+    // Through the reader: only a reader that is asked for the English locale (the current profile) names the curtain walls and stairs of a
+    // 2020 file; a reader without a locale (the legacy profile) leaves every name unset, as it did before.
+    [SkippableFact]
+    public void Reader_PreviousReleaseFamilyNamesFollowTheRequestedLocale()
+    {
+        string path = TestFiles.Find("Test_2020.rvt");
+        var requested = new RvtFileReader(new RvtReaderOptions { R22Layout = true, SystemFamilyNameLocale = "ENU" }).Read(path);
+        Assert.Contains(requested.Elements, e => e.CategoryId == -2000120 && e.ValidatedSystemFamilyName == "Assembled Stair");
+        Assert.Contains(requested.Elements, e => e.ValidatedStairOccurrenceName == "Stair");
+        var legacy = new RvtFileReader(new RvtReaderOptions { R22Layout = true }).Read(path);
+        Assert.All(legacy.Elements, e =>
+        {
+            Assert.Null(e.ValidatedSystemFamilyName);
+            Assert.Null(e.ValidatedMepFamilyName);
+            Assert.Null(e.ValidatedStairOccurrenceName);
+        });
     }
 
     // The embedded names apply to every version from 2022 on.

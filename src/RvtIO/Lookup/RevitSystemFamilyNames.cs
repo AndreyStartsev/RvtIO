@@ -136,7 +136,7 @@ internal sealed class RevitSystemFamilyNames
     /// insulation) for 2021 only, and the stair occurrence name; no other kind or text is in it: only the type roots of those families and the stairs read this table.</summary>
     internal static RevitSystemFamilyNames? LoadPreviousReleaseFamilies(string? revitVersion, string? locale)
     {
-        if (!int.TryParse(revitVersion, out int version) || version is not (2020 or 2021) || version >= RevitUiNameTable.BundleVersion
+        if (!int.TryParse(revitVersion, out int version) || version is not (2020 or 2021)
             || locale == null || !Cultures.TryGetValue(locale, out string? culture) || culture != "en-US") return null;
         var names = new Dictionary<SystemFamilyKind, string>();
         foreach (var kind in version == 2021 ? MepCurveFamilies.Concat(CurtainAndStairFamilies) : CurtainAndStairFamilies)

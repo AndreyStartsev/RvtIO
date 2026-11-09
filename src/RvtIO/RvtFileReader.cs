@@ -702,14 +702,15 @@ public partial class RvtFileReader
             + $"types with an own name={rvtInfo.Elements.Count(e => e.ValidatedMepTypeName != null)}");
         string? systemFamilyLocale = _options.SystemFamilyNameLocale ?? rvtInfo.Metadata.SavedLocale;
         var systemFamilyNames = Lookup.RevitSystemFamilyNames.Load(rvtInfo.Metadata.RevitVersion, systemFamilyLocale);
-        var previousReleaseNames = systemFamilyNames ?? Lookup.RevitSystemFamilyNames.LoadPreviousReleaseFamilies(rvtInfo.Metadata.RevitVersion, systemFamilyLocale);
-        // an earlier release has no other name than those of the curtain wall, stair and MEP curve families, and only the type roots of those read them
-        int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state,
-            previousReleaseNames);
+        // an earlier release has no other name than those of the curtain wall, stair and MEP curve families, and only the type roots of those
+        // read them; they are read for the locale a profile requests, so a reader without a requested locale (the legacy profile) is unchanged
+        var familyNames = systemFamilyNames
+            ?? Lookup.RevitSystemFamilyNames.LoadPreviousReleaseFamilies(rvtInfo.Metadata.RevitVersion, _options.SystemFamilyNameLocale);
+        int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames);
         // the stored lookup entries are in the language the file was saved in, whatever locale the exported names use
         rvtInfo.SerializedLookupNoneText = Lookup.RevitSystemFamilyNames.Load(
             rvtInfo.Metadata.RevitVersion, rvtInfo.Metadata.SavedLocale)?.Get(Lookup.RevitUiText.LookupNone);
-        ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, previousReleaseNames);
+        ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, familyNames);
         ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx);
         ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames);
         ElementBuilder.ApplyColumnLocationMarks(rvtInfo, state.OwnDocumentUnitOptions?.Value, state.ElemClassIdx);
