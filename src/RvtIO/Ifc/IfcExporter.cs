@@ -1832,6 +1832,13 @@ public partial class IfcExporter
             int elemPlacementId = 0;
             if (bbox == null || bbox.Length < 6)
             {
+                // A roof that holds a curtain system is written as the parent of its children, in a file with decoded geometry or not.
+                if (ifcType == "IFCROOF" && roofContainerChildren.ContainsKey(elem.Id))
+                {
+                    pendingCurtainParents[elem.Id] = (elem, elemStoreyId, false);
+                    noGeom++;
+                    continue;
+                }
                 // The geometry of a 64-bit-id file is not decoded: the product is written without a
                 // representation.
                 if (info.GeometryUndecoded)
@@ -1843,8 +1850,7 @@ public partial class IfcExporter
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                     goto productWithoutGeometry;
                 }
-                if (ifcType == "IFCCURTAINWALL" && exactCurtainChildren.ContainsKey(elem.Id)
-                    || ifcType == "IFCROOF" && roofContainerChildren.ContainsKey(elem.Id))
+                if (ifcType == "IFCCURTAINWALL" && exactCurtainChildren.ContainsKey(elem.Id))
                     pendingCurtainParents[elem.Id] = (elem, elemStoreyId, false);
                 noGeom++;
                 continue;
@@ -67765,11 +67771,15 @@ public partial class IfcExporter
         var result = new Dictionary<int, List<int>>();
         foreach (var child in elements)
         {
-            if (child.Id <= 0 || child.CategoryId is not (-2000170 or -2000171 or -2000014 or -2000023 or -2000011)
-                || child.SerializedCurtainHostId is not > 0
+            if (child.Id <= 0 || child.CategoryId is not (-2000170 or -2000171 or -2000014 or -2000023 or -2000011))
+                continue;
+            // A panel or mullion without a curtain host id points to its curtain wall by the plain host id.
+            int hostId = child.SerializedCurtainHostId is > 0 ? child.SerializedCurtainHostId.Value
+                : child.CategoryId is -2000170 or -2000171 ? child.SerializedHostId ?? 0 : 0;
+            if (hostId <= 0
                 || occurrenceCounts.GetValueOrDefault(child.Id) != 1
-                || !byId.TryGetValue(child.SerializedCurtainHostId.Value, out var parent)
-                || parent.Id != child.SerializedCurtainHostId.Value || parent.Id == child.Id
+                || !byId.TryGetValue(hostId, out var parent)
+                || parent.Id != hostId || parent.Id == child.Id
                 || parent.CategoryId != -2000011 || parent.IsBlockOnly
                 || occurrenceCounts.GetValueOrDefault(parent.Id) != 1
                 || parent.FamilyTypeId <= 0 || !byId.TryGetValue(parent.FamilyTypeId, out var type)
