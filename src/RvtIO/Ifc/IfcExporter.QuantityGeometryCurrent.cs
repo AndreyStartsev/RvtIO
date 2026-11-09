@@ -196,6 +196,65 @@ public partial class IfcExporter
         return best;
     }
 
+    /// <summary>An exact end face: a planar face that carries the area of the Revit face (<see cref="GeoFace.QuadratureArea"/>).</summary>
+    private static bool IsExactCap(GeoFace face) => face.PlaneSurface && face.QuadratureArea != null && face.OuterVertices is { Count: >= 3 };
+
+    /// <summary>Volume (m3) and surface area (m2) of the measured nodes whose faces are all exact end faces: a round solid lists its two
+    /// planar end faces under the node that holds its integrals, while its curved side is listed as a tessellated node without integrals
+    /// (which leaves <see cref="NodeSolidTotalsCurrent"/> unknown and only the open shell of the side to measure). Null when no node
+    /// qualifies.</summary>
+    internal static (double Volume, double Area)? CapNodeTotalsCurrent(GeometryData? geometry)
+    {
+        if (geometry?.NodeMeasures is not { Count: > 0 } measures || geometry.Faces.Count == 0) return null;
+        var capNodes = geometry.Faces.GroupBy(face => face.GeometryNode).Where(group => group.All(IsExactCap)).Select(group => group.Key).ToHashSet();
+        var byNode = new Dictionary<int, RvtIO.Parsing.MeshNodeMeasure>();
+        foreach (var measure in measures)
+            if (capNodes.Contains(measure.Node)) byNode.TryAdd(measure.Node, measure);
+        var taken = byNode.Values.Where(measure => measure.Volume > 0).ToList();
+        if (taken.Count == 0) return null;
+        return (taken.Sum(measure => measure.Volume) * CubicFeetToCubicMetres, taken.Sum(measure => measure.Area) * SquareFeetToSquareMetres);
+    }
+
+    /// <summary>The vertical circular prism of a round solid, in feet: the distance of its two exact end faces and the radius of their
+    /// circle. The extrusion calculation has to accept the solid (two parallel end faces of the same exact area), the end faces are
+    /// the only exact planar faces, the corners of each lie on a circle, both circles are the same one, and every other face has its
+    /// corners on the side of that cylinder between the end faces. Null for any other solid.</summary>
+    internal static (double Depth, double Radius)? RoundPrismCurrent(GeometryData? geometry)
+    {
+        if (geometry?.Faces is not { Count: > 0 } faces || !WallExtrusion.TryFindVerticalExtrusion(faces, out _, exactCylinders: true))
+            return null;
+        var caps = faces.Where(IsExactCap).ToList();
+        if (caps.Count != 2 || caps.Any(cap => cap.InnerVertices is { Count: > 0 } || cap.OuterVertices!.Count < 8)) return null;
+        if (CircleOfCorners(caps[0].OuterVertices!) is not { } first || CircleOfCorners(caps[1].OuterVertices!) is not { } second) return null;
+        double tolerance = 1e-6 * first.R;
+        if (Math.Abs(first.R - second.R) > tolerance || Math.Abs(first.X - second.X) > tolerance || Math.Abs(first.Y - second.Y) > tolerance) return null;
+        double z0 = caps[0].OuterVertices![0][2], z1 = caps[1].OuterVertices![0][2];
+        double low = Math.Min(z0, z1), high = Math.Max(z0, z1);
+        if (high - low < 1e-9) return null;
+        foreach (var face in faces)
+            foreach (var corner in face.OuterVertices ?? [])
+                if (Math.Abs(Math.Sqrt((corner[0] - first.X) * (corner[0] - first.X) + (corner[1] - first.Y) * (corner[1] - first.Y)) - first.R) > tolerance
+                    || corner[2] < low - tolerance || corner[2] > high + tolerance)
+                    return null;
+        return (high - low, first.R);
+    }
+
+    /// <summary>The circle in the XY plane through three corners of a ring, null unless every corner lies on it (to within a millionth of
+    /// the radius).</summary>
+    private static (double X, double Y, double R)? CircleOfCorners(IReadOnlyList<double[]> ring)
+    {
+        var a = ring[0];
+        var b = ring[ring.Count / 3];
+        var c = ring[2 * ring.Count / 3];
+        double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+        if (Math.Abs(d) < 1e-12) return null;
+        double a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+        double x = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
+        double y = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+        double radius = Math.Sqrt((a[0] - x) * (a[0] - x) + (a[1] - y) * (a[1] - y));
+        return ring.All(p => Math.Abs(Math.Sqrt((p[0] - x) * (p[0] - x) + (p[1] - y) * (p[1] - y)) - radius) <= 1e-6 * radius) ? (x, y, radius) : null;
+    }
+
     /// <summary>Mean height of a face and the height range of a set of faces, in feet. The windings of decoded faces do not say
     /// which side is outside, so "top" and "bottom" are told by the height of a face against the middle of the range.</summary>
     private static double MeanHeightCurrent(GeoFace face) => face.OuterVertices!.Average(point => point[2]);

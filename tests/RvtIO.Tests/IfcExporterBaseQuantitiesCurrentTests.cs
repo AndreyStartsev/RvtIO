@@ -3072,4 +3072,68 @@ public class IfcExporterBaseQuantitiesCurrentTests
 
         AssertQuantities(FoundationVolume(geometry), ("NetVolume", 40 * CubicFeet));
     }
+
+    // ---- round columns: exact end faces beside a tessellated side ----
+
+    /// <summary>A vertical round solid of radius 0.5 and height 10 feet as the decoded geometry holds it: the node with the integrals lists
+    /// its two exact end faces (the top one smaller by <paramref name="topShortfall"/>), the tessellated node without integrals lists
+    /// the twelve side facets and a copy of the bottom end; the shell of the instance is that open tessellated node.</summary>
+    private static GeometryData RoundColumnGeometry(double topShortfall = 0)
+    {
+        const int sides = 12;
+        const double radius = 0.5, height = 10;
+        double[] Corner(int k, double z) => [radius * Math.Cos(2 * Math.PI * k / sides), radius * Math.Sin(2 * Math.PI * k / sides), z];
+        var bottom = Enumerable.Range(0, sides).Select(k => Corner(k, 0)).ToList();
+        var top = Enumerable.Range(0, sides).Select(k => Corner(k, height)).ToList();
+        double circle = Math.PI * radius * radius;
+        var faces = new List<GeoFace>
+        {
+            new() { GeometryNode = 10, PlaneSurface = true, QuadratureArea = circle, OuterVertices = bottom, Origin = bottom[0], Normal = [0, 0, -1] },
+            new() { GeometryNode = 10, PlaneSurface = true, QuadratureArea = circle - topShortfall, OuterVertices = top, Origin = top[0], Normal = [0, 0, 1] },
+            new() { GeometryNode = 18, PlaneSurface = true, OuterVertices = bottom, Origin = bottom[0], Normal = [0, 0, -1] },
+        };
+        for (int k = 0; k < sides; k++)
+            faces.Add(new() { GeometryNode = 18, OuterVertices = [Corner(k, 0), Corner(k + 1, 0), Corner(k + 1, height), Corner(k, height)] });
+        return new GeometryData
+        {
+            Faces = faces,
+            BrepSolids = [new GeoBrepSolid { IsClosed = false, FaceIndices = [.. Enumerable.Range(2, sides + 1)] }],
+            NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(10, 2 * Math.PI * radius * height + 2 * circle, circle * height)],
+        };
+    }
+
+    private static void ApplyColumn(StepWriter w, int owner, int placement, GeometryData geometry)
+    {
+        int column = AddProduct(w, "IFCCOLUMN", "RZGD7y6S5209$mGLi_sPlj", owner, placement);
+        Apply(w, owner, new() { [15] = new Element { Id = 15, CategoryId = -2001330, Geometry = geometry } }, new() { [column] = 15 });
+    }
+
+    [Fact]
+    public void Pass_Column_Round_TakesTheExtrusionDataOfItsCircleAndTheMeasuresOfTheNodeWithTheEndFaces()
+    {
+        var (w, owner, placement) = NewWriter();
+        double circle = Math.PI * 0.25;
+
+        ApplyColumn(w, owner, placement, RoundColumnGeometry());
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Length", 10 * 0.3048));
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", circle * SquareFeet),
+            ("OuterSurfaceArea", 10 * 0.3048 * 1000 * Math.PI * 1.0 * 0.3048 * 1000));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", 10 * 0.3048 * 1000 * circle * SquareFeet), ("NetVolume", circle * 10 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_Column_Round_WithEndFacesOfDifferentAreaIsNoExtrusionAndKeepsTheMeasuresOfTheNode()
+    {
+        var (w, owner, placement) = NewWriter();
+        double circle = Math.PI * 0.25;
+
+        ApplyColumn(w, owner, placement, RoundColumnGeometry(topShortfall: 0.05));
+
+        Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
+        // the cross section is half the surface of the solid, the volume the one of the node
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("CrossSectionArea", (2 * Math.PI * 0.5 * 10 + 2 * circle) / 2 * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", circle * 10 * CubicFeet));
+    }
 }
