@@ -114,7 +114,7 @@ internal static partial class RebarReader
             || Values("RebarShapeEdge.m_arcHeightParamId").Any(v => v != -1) || Values("RebarShapeEdge.m_radiusParamId").Any(v => v != -1)
             || Values("RebarShapeVertex.m_constraints#").Any(n => n != 0) || Values("RebarShapeVertex.m_bendAngle").Any(a => a is not (1 or 3))) return null;
         var turns = Values("RebarShapeVertex.m_turn").Select(t => (int)t).ToList();
-        if (turns.Count != vertexCount) return null;
+        if (turns.Count != vertexCount || turns.Any(t => t is < -1 or > 1)) return null;
         var directions = new List<double[]>();
         var parameters = new List<long>();
         var projections = new List<(long, double[])>();
@@ -143,7 +143,7 @@ internal static partial class RebarReader
                         if (IntegerOf(childCaps, "RebarShapeConstraintProjEdgeLength.m_refType@0") != 1 || IntegerOf(childCaps, "RebarShapeConstraintProjEdgeLength.m_refType@1") != 1
                             || IntegerOf(childCaps, "RebarShapeConstraintProjEdgeLength.m_paramId") is not long projected
                             || RealOf(childCaps, "XYZ.m_xyz@0") is not double px || RealOf(childCaps, "XYZ.m_xyz@1") is not double py || RealOf(childCaps, "XYZ.m_xyz@2") is not double pz
-                            || pz != 0 || Math.Abs(px * px + py * py - 1) > 1e-9) return null;
+                            || !double.IsFinite(px) || !double.IsFinite(py) || pz != 0 || Math.Abs(px * px + py * py - 1) > 1e-9) return null;
                         edgeProjections.Add((projected, [px, py, pz]));
                         break;
                 }

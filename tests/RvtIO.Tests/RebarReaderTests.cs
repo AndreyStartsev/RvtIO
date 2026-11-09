@@ -223,6 +223,17 @@ public class RebarReaderTests
     }
 
     [Fact]
+    public void Export_GivesTheItemsAndTheGroupOfAContainerWithoutAnExportIdDistinctGlobalIds()
+    {
+        string[] lines = Export(Container(700), Container(701)).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var ids = lines.Where(l => l.Contains("IFCREINFORCINGBAR(") || l.Contains("IFCGROUP(")).Select(l => Regex.Match(l, @"\('([^']*)'").Groups[1].Value).ToArray();
+        // 2 containers: 2 items and a group each
+        Assert.Equal(6, ids.Length);
+        Assert.All(ids, id => Assert.Equal(22, id.Length));
+        Assert.Equal(ids.Length, ids.Distinct().Count());
+    }
+
+    [Fact]
     public void Export_CountsEveryWrittenReinforcingBarAsAnExportedProduct()
     {
         var info = new RevitFileInfo();

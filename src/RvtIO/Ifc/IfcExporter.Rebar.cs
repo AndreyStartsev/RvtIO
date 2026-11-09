@@ -76,7 +76,8 @@ public partial class IfcExporter
         {
             if (item.Bars.Count == 0 || item.Bars.Any(bar => bar.Count == 0) || string.IsNullOrEmpty(item.BarTypeName)) continue;
             int entityId = WriteRebarBar(w, elem, item, ownerHistId, axisId, parentPlacementId, bodySubCtxId,
-                $"{label}:{elem.Id.ToString(CultureInfo.InvariantCulture)}: {item.ItemIndex.ToString(CultureInfo.InvariantCulture)}", label, item.ItemIndex + 4);
+                $"{label}:{elem.Id.ToString(CultureInfo.InvariantCulture)}: {item.ItemIndex.ToString(CultureInfo.InvariantCulture)}", label, item.ItemIndex + 4,
+                IfcGuid.FromName($"rebar-container-item:{elem.Id}:{item.ItemIndex}"));
             PlaceRebarInStorey(elem, item, elemById, entityId, storeyIds, defaultStoreyId, storeyContents);
             members.Add(entityId);
         }
@@ -90,9 +91,10 @@ public partial class IfcExporter
         return true;
     }
 
-    /// <summary>One IfcReinforcingBar of <paramref name="data"/> (its swept disks, placement and quantities), without property set and storey.</summary>
+    /// <summary>One IfcReinforcingBar of <paramref name="data"/> (its swept disks, placement and quantities), without property set and storey.
+    /// <paramref name="fallbackGlobalId"/> is its GlobalId when the element has no usable export id (the items of a container share their element).</summary>
     private int WriteRebarBar(StepWriter w, Element elem, RebarBars data, int ownerHistId, int axisId, int parentPlacementId, int bodySubCtxId,
-        string elemName, string objectType, int subElementIndex)
+        string elemName, string objectType, int subElementIndex, string? fallbackGlobalId = null)
     {
         var items = new List<string>();
         double firstBarLengthFt = 0;
@@ -115,7 +117,7 @@ public partial class IfcExporter
         double nominalMm = data.NominalDiameter * FeetToMillimetres;
         double area = Math.PI * Math.Pow(nominalMm / 2000, 2);
 
-        string globalId = ResolveExactElementGlobalId(elem, _usedExportIds, subElementIndex, CurrentProfile) ?? IfcGuid.FromElementId(elem.Id);
+        string globalId = ResolveExactElementGlobalId(elem, _usedExportIds, subElementIndex, CurrentProfile) ?? fallbackGlobalId ?? IfcGuid.FromElementId(elem.Id);
         return w.Add("IFCREINFORCINGBAR",
             $"{S(globalId)},{R(ownerHistId)},{S(elemName)},{S("")},{S(objectType)},{R(placementId)},{R(shapeId)},{S(elem.Id.ToString(CultureInfo.InvariantCulture))},"
             + $"{S("")},{D(nominalMm)},{D(area)},{D(barLengthMm)},.NOTDEFINED.,$");
@@ -229,7 +231,7 @@ public partial class IfcExporter
         foreach (var (containerId, (label, members)) in _rebarContainerMembers.OrderBy(pair => pair.Key))
         {
             if (!elemById.TryGetValue(containerId, out var container) || ExportFlagIsNo(container, elemById)) continue;
-            string globalId = ResolveExactElementGlobalId(container, _usedExportIds, handleBased: CurrentProfile) ?? IfcGuid.FromElementId(container.Id);
+            string globalId = ResolveExactElementGlobalId(container, _usedExportIds, handleBased: CurrentProfile) ?? IfcGuid.FromName($"rebar-container:{container.Id}");
             int group = w.Add("IFCGROUP", $"{S(globalId)},{R(ownerHistId)},{S(label)},{S("")},{S(label)}");
             w.Add("IFCRELASSIGNSTOGROUP",
                 $"{S(IfcGuid.FromMd5($"IfcRelAssignsToGroup:{globalId}"))},{R(ownerHistId)},{S("")},{S("")},{StepWriter.List(members.Select(R))},$,{R(group)}");
