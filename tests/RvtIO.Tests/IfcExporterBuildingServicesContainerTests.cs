@@ -38,6 +38,35 @@ public class IfcExporterBuildingServicesContainerTests
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 
+    [Fact]
+    public void NestedServicesElement_TakesTheNonStoreyLevelOfItsTopLevelInstance()
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(Level(id: 1, name: "Ground", elevation: 0, buildingStory: true));
+        info.Elements.Add(Level(id: 2, name: "First", elevation: 3, buildingStory: true));
+        info.Elements.Add(Level(id: 3, name: "Second", elevation: 6, buildingStory: true));
+        info.Elements.Add(Level(id: 7, name: "Hung ceiling", elevation: 3.5, buildingStory: false));
+        var parent = Fitting(id: 100, levelId: 7, bottom: 7);                                // the top-level instance: First
+        parent.Parameters.Add(new Parameter { Id = -1001350, StorageType = StorageType.ElementId, Value = 7 });
+        info.Elements.Add(parent);
+        var nested = Fitting(id: 101, levelId: 0, bottom: 7);                                // no level of its own: the geometry would give Second
+        nested.Parameters = nested.Parameters.Where(parameter => parameter.Id != -1001952).ToList();
+        nested.SuperInstanceId = 100;
+        nested.NativeMasterSymbolId = 5;
+        info.Elements.Add(nested);
+        string path = TempIfcPath("services-container-nested");
+
+        try
+        {
+            new IfcExporter().Export(info, path);
+            string ifc = File.ReadAllText(path);
+
+            Assert.Equal("First", ContainerOf(ifc, "100"));
+            Assert.Equal("First", ContainerOf(ifc, "101"));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
     /// <summary>The name of the storey, or the class of the building, that contains the product with this Tag.</summary>
     private static string ContainerOf(string ifc, string tag)
     {

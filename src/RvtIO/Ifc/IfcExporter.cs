@@ -69668,10 +69668,17 @@ public partial class IfcExporter
             _ when elem.NativeMasterSymbolId is > 0 => [-1001350, -1001365, -1001383],
             _ => [],
         };
+        // A building-services element whose level is a Level that is not a project storey stands like a column
+        // on such a level: in the highest storey at or below it, in the building where no storey is that low.
+        Element? offStoreyLevel = null;
         foreach (int parameterId in baseLevelParameters)
-            if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId
-                && storeyIds.TryGetValue(levelId, out int storeyId))
-                return storeyId;
+            if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
+            {
+                if (storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
+                if (CurrentProfile && offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                    && elemById.TryGetValue(levelId, out var nestedLevel) && nestedLevel.CategoryId == -2000240)
+                    offStoreyLevel = nestedLevel;
+            }
 
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
@@ -69687,9 +69694,6 @@ public partial class IfcExporter
             // LEVEL_PARAM, SCHEDULE_LEVEL_PARAM, RBS_START_LEVEL_PARAM, FAMILY_BASE_LEVEL_PARAM,
             // INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM, INSTANCE_REFERENCE_LEVEL_PARAM,
             // SCHEDULE_BASE_LEVEL_PARAM.
-            // A building-services element whose level is a Level that is not a project storey stands like a column
-            // on such a level: in the highest storey at or below it, in the building where no storey is that low.
-            Element? offStoreyLevel = null;
             foreach (int parameterId in elem.CategoryId is -2000035 or -2000120
                          ? new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063, -1001352 }
                          : new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063 })
