@@ -43,6 +43,25 @@ internal sealed class WideBlockWalker
         public readonly List<int> QueueCountAtStart = [];
         /// <summary>Queue index of the first object that held an extensible storage entity without stored values, which the walk passes; -1 when none.</summary>
         public int EmptyEntityAt = -1;
+
+        /// <summary>For a walk that stopped with an error behind an extensible storage entity (<see cref="EmptyEntityAt"/>): the walk cut to the
+        /// objects that were queued when that object started. The payloads of its entities lie in the stream before the objects queued
+        /// later, so what the walk read of those is misplaced and its error comes from them; the objects before that are read where they are.
+        /// Null when the walk has no such entity or stopped inside the cut (its error is then a real one).</summary>
+        public Walk? BeforeEntityBlobs()
+        {
+            if (!RootRead || Error == null || EmptyEntityAt < 0 || EmptyEntityAt >= QueueCountAtStart.Count) return null;
+            int bound = QueueCountAtStart[EmptyEntityAt];
+            if (QueueStart.Count - 1 < bound || QueueEnd.Count < bound) return null;
+            var cut = new Walk { RootRead = true, Position = Position, EmptyEntityAt = EmptyEntityAt };
+            cut.Queue.AddRange(Queue.Take(bound));
+            cut.QueueStart.AddRange(QueueStart.Take(bound));
+            cut.QueueEnd.AddRange(QueueEnd.Take(bound));
+            cut.QueueCountAtStart.AddRange(QueueCountAtStart.Take(bound));
+            cut.Captures.AddRange(Captures.Where(c => c.QueueIndex < bound));
+            cut.Records.AddRange(Records.Where(r => r.QueueIndex < bound));
+            return cut;
+        }
     }
 
     /// <summary>Key of a record that names the field ("Declaring.field") of the root object it was read inline from; absent for a queued object.</summary>
