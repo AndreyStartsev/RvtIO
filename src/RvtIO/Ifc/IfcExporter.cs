@@ -1835,6 +1835,7 @@ public partial class IfcExporter
             int shapeId = 0;
             List<(int ShapeId, bool IsLanding)>? rampPartBodies = null;
             var rampLayout = RampLayout.Single;
+            int rampAxisId = 0;
             int elemPlacementId = 0;
             if (bbox == null || bbox.Length < 6)
             {
@@ -4362,6 +4363,11 @@ public partial class IfcExporter
                     // A beam is extruded along the axes of the family-instance export: its structural
                     // axis, then x and y.
                 }
+                else if (rampLayout == RampLayout.Monolithic
+                    && TryWriteRampBodyAtMinimumCurrent(w, geoForBrep, bodySubCtxId, out shapeId, out bodyWriteOutcome, out rampAxisId))
+                {
+                    // The container of a monolithic ramp sits at the lowest vertex of its body.
+                }
                 else
                 {
                     var facetedShape = CreateFacetedBrepWithOutcome(
@@ -4369,7 +4375,7 @@ public partial class IfcExporter
                     shapeId = facetedShape.ShapeId;
                     bodyWriteOutcome = facetedShape.Outcome;
                 }
-                elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
+                elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(rampAxisId > 0 ? rampAxisId : axisId)}");
                 withFaces++;
             }
             else if (ifcType is "IFCWALLSTANDARDCASE" or "IFCWALL")

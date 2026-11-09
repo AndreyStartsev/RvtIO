@@ -165,6 +165,47 @@ public class IfcRampTests
         Assert.Empty(Entities(ifc, "IFCBUILDINGELEMENTPROXY"));
     }
 
+    private static double[] Point(string ifc, string id) =>
+        Args(Assert.Single(Entities(ifc, "IFCCARTESIANPOINT"), point => Id(point) == id))[0].Trim('(', ')')
+            .Split(',').Select(value => double.Parse(value, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+
+    // The point of the IfcAxis2Placement3D behind an IfcLocalPlacement.
+    private static double[] PlacementOrigin(string ifc, string placementId)
+    {
+        var placement = Assert.Single(Entities(ifc, "IFCLOCALPLACEMENT"), place => Id(place) == placementId);
+        var axis = Assert.Single(Entities(ifc, "IFCAXIS2PLACEMENT3D"), place => Id(place) == Args(placement)[1]);
+        return Point(ifc, Args(axis)[0]);
+    }
+
+    [Fact]
+    public void Export_MonolithicRamp_IsPlacedAtTheLowestVertexOfItsBody()
+    {
+        double dx = 10, dy = 20, dz = 5;
+        var faces = BigSolid();
+        foreach (var face in faces)
+            face.OuterVertices = face.OuterVertices!.Select(v => new[] { v[0] + dx, v[1] + dy, v[2] + dz }).ToList();
+        string ifc = Export(IfcProfile.Current, Ramp(Solids(faces)));
+        var ramps = Entities(ifc, "IFCRAMP");
+        var container = ramps.Single(ramp => Args(ramp)[6] == "$");
+        var body = ramps.Single(ramp => Args(ramp)[6] != "$");
+        // The container sits at the lowest vertex of the body (millimetres, the default unit), the IfcRamp with the body at identity under it.
+        double[] origin = PlacementOrigin(ifc, Args(container)[5]);
+        Assert.Equal(new[] { dx * 304.8, dy * 304.8, dz * 304.8 }, origin, new DoubleComparer());
+        Assert.Equal(new double[] { 0, 0, 0 }, PlacementOrigin(ifc, Args(body)[5]));
+        // The vertices of the body are taken from that corner: the lowest is the origin, the box ends where it did.
+        var loops = Entities(ifc, "IFCPOLYLOOP").SelectMany(loop => Args(loop)[0].Trim('(', ')').Split(',')).Distinct()
+            .Select(id => Point(ifc, id)).ToList();
+        Assert.Equal(new double[] { 0, 0, 0 }, Enumerable.Range(0, 3).Select(axis => loops.Min(p => p[axis])).ToArray(), new DoubleComparer());
+        Assert.Equal(4 * 304.8, loops.Max(p => p[0]), 6);
+        Assert.Equal(2 * 304.8, loops.Max(p => p[1]), 6);
+    }
+
+    private sealed class DoubleComparer : IEqualityComparer<double>
+    {
+        public bool Equals(double x, double y) => Math.Abs(x - y) < 1e-6;
+        public int GetHashCode(double value) => 0;
+    }
+
     [Fact]
     public void Export_FlightAndLanding_AreAggregatedByTheBodylessRamp()
     {
