@@ -6486,6 +6486,7 @@ public partial class IfcExporter
             CurrentProfile ? directRelationByRelating : null);
         _diag?.WriteLine($"Timing: relations and types done at {exportClock.Elapsed.TotalSeconds:F1}s");
         var systemMembers = WriteDistributionPorts(w, ownerHistId, elemById, exportedIfcElements, CurrentProfile);
+        if (CurrentProfile) AddCircuitBaseEquipment(elemById, exportedIfcElements, systemMembers);
         WriteMepSystems(w, ownerHistId, buildingId, elemById, systemMembers);
         WriteModelGroups(w, ownerHistId, elemById, exportedIfcElements);
         WriteRebarSystemGroups(w, ownerHistId, elemById);
@@ -67199,8 +67200,8 @@ public partial class IfcExporter
     }
 
     /// <summary>
-    /// Systems are written in element id order. Not covered: the base equipment of a system,
-    /// electrical circuits and the name override parameter.
+    /// Systems are written in element id order. Not covered: the base equipment of a system
+    /// and the name override parameter.
     /// </summary>
     private void WriteMepSystems(
         StepWriter w, int ownerHistId, int buildingId, IReadOnlyDictionary<int, Element> elemById,
@@ -67219,6 +67220,23 @@ public partial class IfcExporter
             w.Add("IFCRELASSIGNSTOGROUP",
                 $"{S(IfcGuid.FromMd5($"IfcRelAssignsToGroup:{globalId}"))},{R(ownerHistId)},'','',{StepWriter.List(members.Select(R))},$,{R(systemEntity)}");
         }
+    }
+
+    /// <summary>
+    /// An electrical circuit is a system whose only member is its base equipment, when that is exported; a circuit
+    /// without base equipment, or whose base equipment is not exported, gets no member and so no system.
+    /// </summary>
+    internal static void AddCircuitBaseEquipment(
+        IReadOnlyDictionary<int, Element> elemById,
+        IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products,
+        SortedDictionary<int, SortedSet<int>> membersBySystem)
+    {
+        foreach (var circuit in elemById.Values)
+            if (circuit.SerializedCircuitBaseEquipmentId is { } baseId && products.TryGetValue(baseId, out var baseEquipment))
+            {
+                if (!membersBySystem.TryGetValue(circuit.Id, out var members)) membersBySystem[circuit.Id] = members = [];
+                members.Add(baseEquipment.entityId);
+            }
     }
 
     /// <summary>Writes the distribution ports of the MEP hosts.</summary>

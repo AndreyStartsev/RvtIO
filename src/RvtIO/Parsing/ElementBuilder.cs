@@ -1691,6 +1691,22 @@ internal static partial class ElementBuilder
         return typeName == null || family == null ? null : family + " : " + typeName;
     }
 
+    /// <summary>
+    /// The base equipment of an electrical circuit: the first connector reference of the circuit's own connector
+    /// manager of connection type 4 (a circuit of a panel) with an index of 50000 or more (the circuit's number on
+    /// the panel) to an element other than the circuit; the references of type 1 are its loads. Null when there is none.
+    /// </summary>
+    private static int? CircuitBaseEquipmentId(int circuitId, TfBlockDeserializer.NativeParams np)
+    {
+        for (int k = 0; np.Fields.ContainsKey($"771#{k}:m_nIndex"); k++)
+            for (int i = 0, count = np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs#"); i < count; i++)
+                if (np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:type") == 4
+                    && np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:index") >= 50000
+                    && np.Fields.GetValueOrDefault($"771#{k}:m_arrRefs@{i}:id") is var id && id > 0 && id != circuitId)
+                    return id;
+        return null;
+    }
+
     /// <summary>MEP system membership of ducts (3148) and pipes (3210).</summary>
     internal static void ApplyMepSystemParams(RevitFileInfo info, ParsingState state, Lookup.RevitSystemFamilyNames? names)
     {
@@ -1707,6 +1723,7 @@ internal static partial class ElementBuilder
             {
                 SetParam(e, -1140324, "RBS_SYSTEM_NAME_PARAM", StorageType.String, ownName);
                 e.SerializedMepSystem = (ownName, np.Fields.GetValueOrDefault("3170:m_typeId"));
+                if (e.CategoryId == -2008037) e.SerializedCircuitBaseEquipmentId = CircuitBaseEquipmentId(e.Id, np);
                 continue;
             }
             if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var curveClass)) continue;

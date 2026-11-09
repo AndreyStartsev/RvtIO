@@ -256,6 +256,110 @@ public class IfcExporterMepSystemTests
         Assert.Null(plain.SerializedMepSystem);
     }
 
+    private const int ElectricalCircuitCategory = -2008037;
+
+    // The circuit's own connector manager: connector 0 holds the circuit's reference to itself (type 4) and a load (type 1), the last
+    // connector holds the reference to the panel (type 4, index 50000 + the circuit's number on the panel).
+    private static TfBlockDeserializer.NativeParams CircuitRecord(int circuitId, int panelId, int panelIndex = 50001, int panelType = 4)
+    {
+        var native = new TfBlockDeserializer.NativeParams();
+        native.StringFields["3170:m_strName"] = "";
+        native.Fields["3170:m_typeId"] = -1;
+        Connector(native, 0, 0);
+        native.Fields["771#0:m_arrRefs#"] = 2;
+        native.Fields["771#0:m_arrRefs@0:id"] = circuitId;
+        native.Fields["771#0:m_arrRefs@0:index"] = 9;
+        native.Fields["771#0:m_arrRefs@0:type"] = 4;
+        native.Fields["771#0:m_arrRefs@1:id"] = 467291;
+        native.Fields["771#0:m_arrRefs@1:index"] = 1;
+        native.Fields["771#0:m_arrRefs@1:type"] = 1;
+        Connector(native, 1, 1);
+        native.Fields["771#1:m_arrRefs#"] = 1;
+        native.Fields["771#1:m_arrRefs@0:id"] = panelId;
+        native.Fields["771#1:m_arrRefs@0:index"] = panelIndex;
+        native.Fields["771#1:m_arrRefs@0:type"] = panelType;
+        return native;
+    }
+
+    private static Element ReadCircuit(TfBlockDeserializer.NativeParams native, int category = ElectricalCircuitCategory)
+    {
+        var circuit = new Element { Id = 50, CategoryId = category };
+        var state = new ParsingState();
+        state.NativeParams[50] = native;
+        ElementBuilder.ApplyMepSystemParams(new RevitFileInfo { Elements = [circuit] }, state, null);
+        return circuit;
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_ReadsTheBaseEquipmentOfAnElectricalCircuit()
+    {
+        var circuit = ReadCircuit(CircuitRecord(50, 581483));
+        Assert.Equal(581483, circuit.SerializedCircuitBaseEquipmentId);
+        Assert.Equal(("", -1), circuit.SerializedMepSystem);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_CircuitWithoutAPanelReferenceHasNoBaseEquipment()
+    {
+        // Only its reference to itself and its loads (type 1): no base equipment.
+        var withoutPanel = CircuitRecord(50, 581483);
+        withoutPanel.Fields.Remove("771#1:m_nIndex");
+        Assert.Null(ReadCircuit(withoutPanel).SerializedCircuitBaseEquipmentId);
+        // A type 4 reference below index 50000, a load reference (type 1) at index 50000 and a reference to the circuit itself are not base equipment.
+        Assert.Null(ReadCircuit(CircuitRecord(50, 581483, panelIndex: 49999)).SerializedCircuitBaseEquipmentId);
+        Assert.Null(ReadCircuit(CircuitRecord(50, 581483, panelType: 1)).SerializedCircuitBaseEquipmentId);
+        Assert.Null(ReadCircuit(CircuitRecord(50, 50)).SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ApplyMepSystemParams_OnlyAnElectricalCircuitReadsBaseEquipment()
+    {
+        Assert.Null(ReadCircuit(CircuitRecord(50, 581483), category: -2008013).SerializedCircuitBaseEquipmentId);
+    }
+
+    [Fact]
+    public void ElectricalCircuit_BecomesAnUnnamedIfcSystemWithItsBaseEquipmentAsTheOnlyMember()
+    {
+        var exportId = new Guid("11112222-3333-4444-5555-666677778888");
+        var circuit = new Element { Id = 50, SerializedExportId = exportId, SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483 };
+        var elements = new Dictionary<int, Element> { [50] = circuit };
+        var members = new SortedDictionary<int, SortedSet<int>>();
+        IfcExporter.AddCircuitBaseEquipment(elements, new Dictionary<int, (int, int, string)> { [581483] = (7, 8, "IFCBUILDINGELEMENTPROXY") }, members);
+
+        var types = WriteSystems(elements, members, out var entities);
+
+        Assert.Equal(["IFCSYSTEM", "IFCRELSERVICESBUILDINGS", "IFCRELASSIGNSTOGROUP"], types);
+        string globalId = IfcGuid.ToIfcGuid(exportId);
+        Assert.Equal($"'{globalId}',#20,'','',''", entities[0].Args);
+        Assert.EndsWith(",#20,'','',#1,(#9)", entities[1].Args);
+        Assert.Equal($"'{IfcGuid.FromMd5($"IfcRelAssignsToGroup:{globalId}")}',#20,'','',(#7),$,#1", entities[2].Args);
+    }
+
+    [Fact]
+    public void ElectricalCircuit_WithoutAnExportedBaseEquipmentIsNotWritten()
+    {
+        var withBase = new Element { Id = 50, SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483 };
+        var withoutBase = new Element { Id = 51, SerializedMepSystem = ("", -1) };
+        var elements = new Dictionary<int, Element> { [50] = withBase, [51] = withoutBase, [52] = new Element { Id = 52 } };
+        var members = new SortedDictionary<int, SortedSet<int>>();
+        // The panel of the first circuit is not an exported product.
+        IfcExporter.AddCircuitBaseEquipment(elements, new Dictionary<int, (int, int, string)> { [999] = (7, 8, "IFCBUILDINGELEMENTPROXY") }, members);
+        Assert.Equal(0, members.Count);
+        Assert.Empty(WriteSystems(elements, members, out _));
+    }
+
+    [Fact]
+    public void ElectricalCircuit_DoesNotChangeANamedSystemsMembers()
+    {
+        var system = new Element { Id = 50, SerializedMepSystem = ("Supply 1", 60) };
+        var circuit = new Element { Id = 70, SerializedMepSystem = ("", -1), SerializedCircuitBaseEquipmentId = 581483 };
+        var members = new SortedDictionary<int, SortedSet<int>> { [50] = new SortedSet<int> { 4, 5 } };
+        IfcExporter.AddCircuitBaseEquipment(new Dictionary<int, Element> { [50] = system, [70] = circuit },
+            new Dictionary<int, (int, int, string)> { [581483] = (7, 8, "IFCBUILDINGELEMENTPROXY") }, members);
+        Assert.Equal([4, 5], members[50]);
+        Assert.Equal([7], members[70]);
+    }
+
     [Fact]
     public void Ports_AreWrittenForAFileWithItsOwnSchemaToo()
     {
