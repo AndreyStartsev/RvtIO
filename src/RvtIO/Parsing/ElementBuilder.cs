@@ -2089,8 +2089,16 @@ internal static partial class ElementBuilder
         if (curveClass is 3148 or 3210) apply(-1114132, StorageType.Double, offsetStart, true); // RBS_OFFSET_PARAM
     }
 
+    /// <summary>Flexible duct (3177) and flexible pipe (3180): Length is the arc length of the drive spline.</summary>
+    internal static void ApplyFlexCurveGeometry(TfBlockDeserializer.NativeParams np, ushort curveClass,
+        Action<int, StorageType, object, bool> apply)
+    {
+        if (curveClass is 3177 or 3180 && FlexCurveLength(np) is double length)
+            apply(-1004005, StorageType.Double, length, true); // CURVE_ELEM_LENGTH
+    }
+
     /// <summary>
-    /// Length (feet) of a flexible pipe curve: the arc length of its drive curve, a piecewise cubic
+    /// Length (feet) of a flexible duct or pipe curve: the arc length of its drive curve, a piecewise cubic
     /// Hermite spline through the stored nodes.
     /// </summary>
     internal static double? FlexCurveLength(TfBlockDeserializer.NativeParams np)
@@ -3290,8 +3298,7 @@ internal static partial class ElementBuilder
             }
             if (state.ElemClassIdx.TryGetValue((uint)e.Id, out var mepCurveClass) && mepCurveClass is 3148 or 3210 or 3134 or 598)
                 ApplyMepCurveGeometry(np, mepCurveClass, (pid, st, val, force) => Apply(pid, st, val, force));
-            else if (mepCurveClass == 3180 && FlexCurveLength(np) is double flexLength)
-                Apply(-1004005, StorageType.Double, flexLength, true); // CURVE_ELEM_LENGTH
+            else ApplyFlexCurveGeometry(np, mepCurveClass, (pid, st, val, force) => Apply(pid, st, val, force));
             if (np.DoubleFields.TryGetValue("1709:m_rotation", out double curveDriverRotation) && double.IsFinite(curveDriverRotation))
                 e.CurveDriverRotation = curveDriverRotation;
             if (np.Fields.TryGetValue("1708:m_refLevelId", out int curveDriverLevel))
