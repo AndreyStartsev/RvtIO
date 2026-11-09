@@ -700,9 +700,11 @@ public partial class RvtFileReader
         diag?.WriteLine($"MEP curve types: occurrences with an exact type link={rvtInfo.Elements.Count(e => e.SerializedMepCurveTypeId != null)}, "
             + $"link differs from the general type={rvtInfo.Elements.Count(e => e.SerializedMepCurveTypeId != null && e.SerializedMepCurveTypeId != e.FamilyTypeId)}, "
             + $"types with an own name={rvtInfo.Elements.Count(e => e.ValidatedMepTypeName != null)}");
-        var systemFamilyNames = Lookup.RevitSystemFamilyNames.Load(
-            rvtInfo.Metadata.RevitVersion, _options.SystemFamilyNameLocale ?? rvtInfo.Metadata.SavedLocale);
-        int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, systemFamilyNames);
+        string? systemFamilyLocale = _options.SystemFamilyNameLocale ?? rvtInfo.Metadata.SavedLocale;
+        var systemFamilyNames = Lookup.RevitSystemFamilyNames.Load(rvtInfo.Metadata.RevitVersion, systemFamilyLocale);
+        // an earlier release has no other name than those of the MEP curve families, and only the type roots of those read them
+        int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state,
+            systemFamilyNames ?? Lookup.RevitSystemFamilyNames.LoadMepCurveFamilies(rvtInfo.Metadata.RevitVersion, systemFamilyLocale));
         // the stored lookup entries are in the language the file was saved in, whatever locale the exported names use
         rvtInfo.SerializedLookupNoneText = Lookup.RevitSystemFamilyNames.Load(
             rvtInfo.Metadata.RevitVersion, rvtInfo.Metadata.SavedLocale)?.Get(Lookup.RevitUiText.LookupNone);
