@@ -96,25 +96,62 @@ public class SystemFamilyNameTests
     public void Load_UnknownLocaleOrVersionGivesNoNames(string? version, string? locale) =>
         Assert.Null(RevitSystemFamilyNames.Load(version, locale));
 
-    // The release before the embedded names has the English names of the MEP curve families and nothing else.
+    // The releases before the embedded names have the English names of the curtain wall, the stair and (2021 only) the MEP curve families
+    // and nothing else.
     [Theory]
-    [InlineData("PipeTypes", "Pipe Types")] [InlineData("RectangularDuct", "Rectangular Duct")] [InlineData("RoundDuct", "Round Duct")]
-    [InlineData("PipeInsulation", "Pipe Insulation")] [InlineData("CableTrayWithFittings", "Cable Tray with Fittings")]
-    [InlineData("BasicWall", null)] [InlineData("Floor", null)] [InlineData("AssembledStair", null)]
-    public void LoadMepCurveFamilies_GivesTheMepCurveFamilyNamesOfRevit2021Only(string kind, string? expected)
+    [InlineData("2021", "CurtainWall", "Curtain Wall")] [InlineData("2021", "AssembledStair", "Assembled Stair")]
+    [InlineData("2021", "CastInPlaceStair", "Cast-In-Place Stair")] [InlineData("2021", "PrecastStair", "Precast Stair")]
+    [InlineData("2021", "PipeTypes", "Pipe Types")] [InlineData("2021", "RectangularDuct", "Rectangular Duct")]
+    [InlineData("2021", "RoundDuct", "Round Duct")] [InlineData("2021", "PipeInsulation", "Pipe Insulation")]
+    [InlineData("2021", "CableTrayWithFittings", "Cable Tray with Fittings")]
+    [InlineData("2021", "BasicWall", null)] [InlineData("2021", "Floor", null)] [InlineData("2021", "Railing", null)]
+    [InlineData("2020", "CurtainWall", "Curtain Wall")] [InlineData("2020", "AssembledStair", "Assembled Stair")]
+    [InlineData("2020", "PipeTypes", null)] [InlineData("2020", "BasicWall", null)]
+    public void LoadPreviousReleaseFamilies_GivesTheNamesOfThoseFamiliesOnly(string version, string kind, string? expected)
     {
-        var names = RevitSystemFamilyNames.LoadMepCurveFamilies("2021", "ENU")!;
+        var names = RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "ENU")!;
         Assert.Equal(expected, names.Get(Enum.Parse<SystemFamilyKind>(kind)));
-        Assert.Null(names.StairOccurrenceName);
+        Assert.Equal("Stair", names.StairOccurrenceName);
         Assert.Null(names.Get(RevitUiText.LevelFamily));
         Assert.Null(names.Get(RevitUiText.SupplyAir));
     }
 
     [Theory]
-    [InlineData("2020", "ENU")] [InlineData("2022", "ENU")] [InlineData("2021", "RUS")] [InlineData("2021", "DEU")] [InlineData("2021", null)]
-    [InlineData(null, "ENU")] [InlineData("beta", "ENU")]
-    public void LoadMepCurveFamilies_OtherVersionOrLocaleGivesNoNames(string? version, string? locale) =>
-        Assert.Null(RevitSystemFamilyNames.LoadMepCurveFamilies(version, locale));
+    [InlineData("2019", "ENU")] [InlineData("2022", "ENU")] [InlineData("2021", "RUS")] [InlineData("2020", "RUS")]
+    [InlineData("2021", "DEU")] [InlineData("2021", null)] [InlineData(null, "ENU")] [InlineData("beta", "ENU")]
+    public void LoadPreviousReleaseFamilies_OtherVersionOrLocaleGivesNoNames(string? version, string? locale) =>
+        Assert.Null(RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, locale));
+
+    // A curtain wall and a stair type of a 2020/2021 file are named by the type root's own class, a basic wall type is not.
+    [Theory]
+    [InlineData(2559, null, -2000011, "Curtain Wall")]
+    [InlineData(3742, 0, -2000120, "Assembled Stair")]
+    [InlineData(3742, 1, -2000120, "Cast-In-Place Stair")]
+    [InlineData(3742, 2, -2000120, "Precast Stair")]
+    [InlineData(512, null, -2000011, null)]
+    [InlineData(2559, null, -2000120, null)]
+    [InlineData(3742, null, -2000120, null)]
+    public void ApplyValidatedSystemFamilyNames_PreviousReleaseNamesCurtainWallAndStairTypes(int cls, int? discriminator, int category, string? expected)
+    {
+        var state = new ParsingState();
+        state.SystemTypeRoots[500] = (1, (ushort)cls, discriminator);
+        var type = new Element { Id = 500, CategoryId = category, Name = "Type" };
+        ElementBuilder.ApplyValidatedSystemFamilyNames([type], state, RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU"));
+        Assert.Equal(expected, type.ValidatedSystemFamilyName);
+        Assert.Null(type.FamilyName);
+    }
+
+    // The stair of a 2020/2021 file takes the instance name of the English table; an element of another category does not.
+    [Theory]
+    [InlineData(-2000120, "Stair")] [InlineData(-2000011, null)]
+    public void ApplyValidatedStairOccurrenceNames_PreviousReleaseNamesAStairsRoot(int category, string? expected)
+    {
+        var stair = new Element { Id = 700, CategoryId = category, RootClassName = "Stairs" };
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "ENU"));
+        Assert.Equal(expected, stair.ValidatedStairOccurrenceName);
+        ElementBuilder.ApplyValidatedStairOccurrenceNames([stair], RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "RUS"));
+        Assert.Null(stair.ValidatedStairOccurrenceName);
+    }
 
     // The embedded names apply to every version from 2022 on.
     [Theory]
