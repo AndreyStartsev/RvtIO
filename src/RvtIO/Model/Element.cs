@@ -667,6 +667,12 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal string? ValidatedFloorTypeReferenceName { get; set; }
 
+        /// <summary>The own name of the floor type (its unique HostObjAttr root, validated), set when no Reference parameter
+        /// decides the floor Reference. The current IFC profile prefers it to <see cref="ValidatedFloorTypeReferenceName"/>, which
+        /// ends in a text parameter of a type that carries some.</summary>
+        [JsonIgnore]
+        internal string? ValidatedFloorOwnTypeName { get; set; }
+
         /// <summary>True when <see cref="ValidatedFloorTypeReferenceName"/> came from an
         /// explicit instance/type Reference parameter rather than the terminal type name.
         /// Such a value can create the main product Pset even when the parsed element name
