@@ -9,15 +9,16 @@ namespace RvtIO.Ifc;
 /// numeric ordinals of the stair's component sets, including filtered members.
 /// The current profile repeats a multistory stair on each level of its data cell: copy k (from 2)
 /// is an IfcStair without representation in the storey of that level, moved by the distance between
-/// the two storeys, which aggregates copies of the stair's components and railings over the same
-/// representation items. The GlobalId of the copy of the i-th exported support comes from the i-th
+/// that level and the base level of the stair, which aggregates copies of the stair's components and
+/// railings over the same representation items. The GlobalId of the copy of the i-th exported support comes from the i-th
 /// support of the whole numeric set, exported or not; the copy keeps the Tag of the support it repeats.</summary>
 internal static class StairAggregation
 {
     internal static void Apply(StepWriter writer, IReadOnlyList<Element> elements,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products,
         Dictionary<int, List<int>> storeyContents, int ownerHistory, bool currentProfile = false,
-        IReadOnlyDictionary<int, int>? storeyIds = null, IReadOnlyDictionary<int, int>? storeyPlacements = null)
+        IReadOnlyDictionary<int, int>? storeyIds = null, IReadOnlyDictionary<int, int>? storeyPlacements = null,
+        IReadOnlyDictionary<int, double>? levelElevations = null)
     {
         var candidates = elements.Where(element => element.SerializedStairCore is { Length: > 0 }).ToArray();
         if (candidates.Length == 0) return;
@@ -134,7 +135,7 @@ internal static class StairAggregation
                 foreach (int id in supports)
                     if (products.TryGetValue(id, out var product) && handles.Contains(product.entityId))
                         seeds.Add(product.entityId, GlobalId(supports[position++]));
-                WriteLevelCopies(emittedParent.entityId, levels, parentArgs, handles, seeds);
+                WriteLevelCopies(emittedParent.entityId, parent.SerializedStairBaseLevelId, levels, parentArgs, handles, seeds);
             }
         }
 
@@ -144,13 +145,22 @@ internal static class StairAggregation
                 ? IfcExporter.SplitStepArguments(writer.EntityAt(index).Args)[0][1..^1]
                 : unique[elementId].SerializedExportId is Guid exportId ? IfcGuid.ToIfcGuid(exportId) : IfcGuid.FromElementId(elementId);
 
-        void WriteLevelCopies(int stairId, int[] levels, string[] stairArgs, List<int> handles, Dictionary<int, string> supportSeeds)
+        void WriteLevelCopies(int stairId, int? baseLevel, int[] levels, string[] stairArgs, List<int> handles,
+            Dictionary<int, string> supportSeeds)
         {
             // The stair and its components stand on the placement the storey placements hang from. A copy stands
-            // on a placement that is as far from the storey of its level as that one is from the storey of the stair.
-            if (!Placement(stairArgs[5], out var placement)) return;
-            int home = storeyContents.FirstOrDefault(pair => pair.Value.Contains(stairId)).Key;
-            if (!storeyPlacements!.TryGetValue(home, out int homePlacement) || !Offset(homePlacement, placement[0], out var offset)) return;
+            // on a placement that is as far from the storey of its level as that one is from the base level of the
+            // stair, whichever storey holds the stair: a base level that is not a storey counts with the height its
+            // storey placement would have. A stair without a base level of a known height is not repeated.
+            if (!Placement(stairArgs[5], out var placement) || baseLevel is not int baseLevelId
+                || !storeyContents.Values.Any(held => held.Contains(stairId))) return;
+            double[] offset;
+            if (storeyIds!.TryGetValue(baseLevelId, out int baseStorey))
+            {
+                if (!storeyPlacements!.TryGetValue(baseStorey, out int basePlacement) || !Offset(basePlacement, placement[0], out offset)) return;
+            }
+            else if (levelElevations != null && levelElevations.TryGetValue(baseLevelId, out double elevation)) offset = [0, 0, elevation];
+            else return;
             string stairGuid = stairArgs[0][1..^1], suffix = "";
             for (int copy = 0; copy < levels.Length; copy++)
             {
@@ -158,7 +168,7 @@ internal static class StairAggregation
                 string number = " : " + (copy + 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
                 suffix += number;
                 // A level that is not an exported storey has no placement to repeat the stair under.
-                if (!storeyIds!.TryGetValue(levels[copy], out int storey) || !storeyPlacements.TryGetValue(storey, out int storeyPlacement)
+                if (!storeyIds.TryGetValue(levels[copy], out int storey) || !storeyPlacements!.TryGetValue(storey, out int storeyPlacement)
                     || !storeyContents.TryGetValue(storey, out var contents) || !Offset(storeyPlacement, placement[0], out _)) continue;
                 int point = writer.Add("IFCCARTESIANPOINT",
                     StepWriter.List(offset.Select(value => StepWriter.RealExact(value == 0 ? 0 : -value))));

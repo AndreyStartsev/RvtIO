@@ -84,6 +84,7 @@ public class MultistoryStairCopyTests
     [Theory]
     [InlineData("no_levels")] [InlineData("legacy_profile")] [InlineData("no_storeys")] [InlineData("level_is_not_a_storey")]
     [InlineData("stair_not_in_a_storey")] [InlineData("storey_is_turned")] [InlineData("storey_hangs_elsewhere")]
+    [InlineData("no_base_level")] [InlineData("base_level_is_not_a_level")]
     public void NothingIsRepeatedWithoutAResolvedCopyLevel(string scenario)
     {
         var (writer, elements, products, contents, storeys, placements) = Fixture();
@@ -92,6 +93,8 @@ public class MultistoryStairCopyTests
             case "no_levels": elements[0].SerializedStairCopyLevelIds = []; break;
             case "level_is_not_a_storey": elements[0].SerializedStairCopyLevelIds = [77]; break;
             case "stair_not_in_a_storey": contents[20].Remove(15); break;
+            case "no_base_level": elements[0].SerializedStairBaseLevelId = null; break;
+            case "base_level_is_not_a_level": elements[0].SerializedStairBaseLevelId = 77; break;
             case "storey_is_turned": writer.ReplaceArgs(2, "#2,#901,$"); break;
             case "storey_hangs_elsewhere": writer.ReplaceArgs(3, "#10,#3"); break;
         }
@@ -102,6 +105,69 @@ public class MultistoryStairCopyTests
         Assert.Equal(before + 1, writer.EntityCount);
         Assert.Equal("IFCRELAGGREGATES", writer.EntityAt(before).Type);
         Assert.Empty(contents[21]); Assert.Empty(contents[22]);
+    }
+
+    [Fact]
+    public void ACopyIsMovedByTheDistanceFromTheBaseLevelOfTheStairWhicheverStoreyHoldsTheStair()
+    {
+        // The base level of the stair is 3800 above the lowest storey; its copy levels are 3800 and 7600 above the base level.
+        (string, string, double)[] expected = [
+            ("IFCSTAIR", "'100'", 3800), ("IFCSTAIRFLIGHT", "'200'", 3800), ("IFCSLAB", "'250'", 3800), ("IFCMEMBER", "'300'", 3800),
+            ("IFCRAILING", "'400'", 3800),
+            ("IFCSTAIR", "'100'", 7600), ("IFCSTAIRFLIGHT", "'200'", 7600), ("IFCSLAB", "'250'", 7600), ("IFCMEMBER", "'300'", 7600),
+            ("IFCRAILING", "'400'", 7600)];
+        var onAStorey = Rises(baseLevelIsAStorey: true);
+        // The same model whose base level is not a building storey: the stair is held by the storey below.
+        var belowTheBaseLevel = Rises(baseLevelIsAStorey: false);
+        Assert.Equal(expected, onAStorey);
+        Assert.Equal(onAStorey, belowTheBaseLevel);
+
+        // Every repeated product with its Tag and its height above the product it repeats.
+        static List<(string, string, double)> Rises(bool baseLevelIsAStorey)
+        {
+            var (writer, elements, products, contents, storeys, placements) = Fixture();
+            int point = writer.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+            placements[19] = writer.Add("IFCLOCALPLACEMENT", $"#1,#{writer.Add("IFCAXIS2PLACEMENT3D", $"#{point},$,$")}");
+            storeys[9] = 19;
+            contents[19] = [];
+            if (!baseLevelIsAStorey)
+            {
+                storeys.Remove(10);
+                placements.Remove(20);
+                contents[19] = contents[20];
+                contents.Remove(20);
+            }
+            int before = writer.EntityCount;
+            StairAggregation.Apply(writer, elements, products, contents, 99, true, storeys, placements,
+                new Dictionary<int, double> { [9] = 0, [10] = 3800, [11] = 7600, [12] = 11400 });
+            var entities = Enumerable.Range(0, writer.EntityCount).Select(writer.EntityAt).ToList();
+            var byReference = entities.ToDictionary(entity => "#" + entity.Id);
+            var rises = new List<(string, string, double)>();
+            foreach (var copy in entities.Skip(before).Where(entity => entity.Type is "IFCSTAIR" or "IFCSTAIRFLIGHT" or "IFCSLAB" or "IFCMEMBER" or "IFCRAILING"))
+            {
+                var args = IfcExporter.SplitStepArguments(copy.Args);
+                var original = IfcExporter.SplitStepArguments(entities.First(entity => entity.Type == copy.Type
+                    && IfcExporter.SplitStepArguments(entity.Args)[7] == args[7]).Args);
+                rises.Add((copy.Type, args[7], Height(args[5]) - Height(original[5])));
+            }
+            // A copy stands in the storey of its copy level.
+            var stairs = entities.Skip(before).Where(entity => entity.Type == "IFCSTAIR").Select(entity => entity.Id).ToList();
+            Assert.Equal(2, stairs.Count);
+            Assert.Equal([stairs[0]], contents[21]);
+            Assert.Equal([stairs[1]], contents[22]);
+            return rises;
+
+            // The sum of the heights along the placement chain; an axis the fixture only refers to stands at the origin.
+            double Height(string placement)
+            {
+                double height = 0;
+                for (; placement != "$"; placement = byReference[placement].Args.Split(',')[0])
+                    if (byReference.TryGetValue(byReference[placement].Args.Split(',')[1], out var axis))
+                        height += double.Parse(byReference[axis.Args.Split(',')[0]].Args[1..^1].Split(',')[2],
+                            System.Globalization.CultureInfo.InvariantCulture);
+                return height;
+            }
+        }
     }
 
     [Fact]
@@ -182,7 +248,8 @@ public class MultistoryStairCopyTests
         writer.Add("IFCRAILING", $"'{Railing}',#99,'railing',$,'type',#22,#14,'400',$");          // 23
         List<Element> elements = [
             new() { Id = 100, CategoryId = -2000120, SerializedOwnElementClassId = 3681,
-                SerializedStairCore = [new(200, 3708), new(250, 3686), new(300, 3727)], SerializedStairCopyLevelIds = [11, 12] },
+                SerializedStairCore = [new(200, 3708), new(250, 3686), new(300, 3727)], SerializedStairCopyLevelIds = [11, 12],
+                SerializedStairBaseLevelId = 10 },
             new() { Id = 200, SerializedOwnElementClassId = 3708, SerializedOwningElementId = 100 },
             new() { Id = 250, SerializedOwnElementClassId = 3686, SerializedOwningElementId = 100 },
             new() { Id = 300, SerializedOwnElementClassId = 3727, SerializedOwningElementId = 100 },
