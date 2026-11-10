@@ -1178,7 +1178,8 @@ internal static partial class TfBlockDeserializer
     }
 
     internal sealed record StairComponentIds(int OwnerId, int[] RunsAndLandings,
-        int[] Supports, int[] RegisteredRailings, int MultistoryUpToLevelId);
+        int[] Supports, int[] RegisteredRailings, int MultistoryUpToLevelId,
+        int[]? MultistoryCopyLevelIds = null);
 
     /// <summary>Own BaseRailing prefix through its named stair host. Later flags,
     /// parameter stores and geometry are outside this host-field scope.</summary>
@@ -1223,7 +1224,10 @@ internal static partial class TfBlockDeserializer
     /// <summary>Own StairsElement.m_cellList -> CellList.m_cells -> one
     /// StairsElementGroupHelper. Reads the complete root and FIFO prefix through that
     /// helper, not later unrelated geometry/cells. Native list order is retained but
-    /// is NOT claimed to be GetStairsRuns/GetStairsLandings API enumeration order.</summary>
+    /// is NOT claimed to be GetStairsRuns/GetStairsLandings API enumeration order.
+    /// When the same cell list owns a MultistoryStairsDataCell, the walk continues to it
+    /// for the levels the stair is repeated on, in stored order; a failure there keeps
+    /// the helper result without levels.</summary>
     internal static StairComponentIds? ExtractStairComponentIds(
         byte[] data, int start, uint size, ushort classId)
     {
@@ -1258,8 +1262,14 @@ internal static partial class TfBlockDeserializer
         var cursor = new Cursor { D = data, Pos = start + 14, End = (int)end - 4, RootClassId = classId };
         var queue = new List<(ushort Cls, uint Id)>();
         var root = new NativeParams();
-        int cellIndex = -1, helperIndex = -1, multistoryLevel = 0;
+        int cellIndex = -1, helperIndex = -1, dataCellIndex = -1, multistoryLevel = 0;
         int[]? registeredRailings = null;
+        StairComponentIds? result = null;
+        bool dataCellSchema = Schemas.TryGetValue(2536, out var dataCell) && dataCell.Name == "MultistoryStairsDataCell"
+            && SerializationFields(2536) is { Count: 3 } dataFields
+            && dataFields[0] is { Declaring: 2536, Name: "m_levelIdIndexPairSet", Type: 14, Mods: 0, Ref: 90 }
+            && dataFields[1] is { Declaring: 2536, Name: "m_instancesUpToLevelId", Type: 14, Mods: 0, Ref: 20 }
+            && dataFields[2] is { Declaring: 2536, Name: "m_nextIndex", Type: 4, Mods: 0, Ref: null };
         try
         {
             foreach (var field in fields)
@@ -1291,7 +1301,7 @@ internal static partial class TfBlockDeserializer
                 return null;
             for (int index = 0; index < queue.Count; index++)
             {
-                if (queue.Count > 100_000) return null;
+                if (queue.Count > 100_000) return result;
                 if (index == cellIndex)
                 {
                     uint count = ReadU32(cursor);
@@ -1306,6 +1316,8 @@ internal static partial class TfBlockDeserializer
                             if (helperIndex >= 0) return null;
                             helperIndex = before;
                         }
+                        else if (queue.Count == before + 1 && queue[before].Cls == 2536)
+                            dataCellIndex = helperIndex >= 0 && dataCellIndex < 0 && dataCellSchema ? before : int.MaxValue;
                     }
                     if (helperIndex < 0) return null;
                 }
@@ -1314,7 +1326,23 @@ internal static partial class TfBlockDeserializer
                     ReadField(cursor, helperFields[0], queue, 1, null);
                     ReadField(cursor, helperFields[1], queue, 1, null);
                     int[] runs = ReadIds(cursor), supports = ReadIds(cursor);
-                    return new(owner, runs, supports, registeredRailings, multistoryLevel);
+                    result = new(owner, runs, supports, registeredRailings, multistoryLevel);
+                    if (dataCellIndex < index || dataCellIndex == int.MaxValue) return result;
+                }
+                else if (index == dataCellIndex)
+                {
+                    // Inline pair set: count, then (level id, index) per repeated level.
+                    uint count = ReadU32(cursor);
+                    if (count == uint.MaxValue) count = 0;
+                    if (count > 100_000 || count * 8L + 8 > cursor.End - cursor.Pos) return result;
+                    var levels = new int[(int)count];
+                    for (int item = 0; item < levels.Length; item++)
+                    {
+                        levels[item] = ReadI32(cursor);
+                        ReadI32(cursor);
+                    }
+                    return levels.Any(level => level <= 0) || levels.Distinct().Count() != levels.Length
+                        ? result : result! with { MultistoryCopyLevelIds = levels };
                 }
                 else if (queue[index].Cls is 3678 or 3685 or 677)
                 {
@@ -1327,7 +1355,7 @@ internal static partial class TfBlockDeserializer
                     if (!Schemas.TryGetValue(step, out var schema) || schema.Name != name
                         || (step == 677 ? schema.Base != 678 : schema.Base != 96 || schema.Fields.Count != 0)
                         || !HasExactCurrentStepFields(step, stepFields)
-                        || !StairGraphLayout.TryCurrentHistoryEnd(data, cursor.Pos, cursor.End, out int finish)) return null;
+                        || !StairGraphLayout.TryCurrentHistoryEnd(data, cursor.Pos, cursor.End, out int finish)) return result;
                     cursor.Pos = finish;
                     foreach (var field in stepFields!)
                     {
@@ -1335,7 +1363,7 @@ internal static partial class TfBlockDeserializer
                             or "m_curveHistTableSet" or "m_edgeHistTable" or "m_edgeHistTableReverse") continue;
                         if (field is { Declaring: 677, Name: "m_affectedEdgesTags", Type: 14, Mods: 80, Ref: null })
                         {
-                            if (!StairGraphLayout.TryAffectedTags(data, cursor.Pos, cursor.End, out int tagsEnd, out _)) return null;
+                            if (!StairGraphLayout.TryAffectedTags(data, cursor.Pos, cursor.End, out int tagsEnd, out _)) return result;
                             cursor.Pos = tagsEnd;
                         }
                         else ReadField(cursor, field, queue, 1, null);
@@ -1344,8 +1372,8 @@ internal static partial class TfBlockDeserializer
                 else ReadDeferredObject(cursor, queue[index].Cls, queue);
             }
         }
-        catch (DecodeFail) { return null; }
-        return null;
+        catch (DecodeFail) { return result; }
+        return result;
 
         static int[] ReadIds(Cursor cursor)
         {

@@ -4323,11 +4323,15 @@ internal static partial class ElementBuilder
         IReadOnlyList<Element> elements,
         IReadOnlyDictionary<int, Element> elementsById,
         IReadOnlyDictionary<uint, (int BlockCount, string? TerminalName)> source,
-        IReadOnlyDictionary<uint, TfBlockDeserializer.NativeParams> nativeParams)
+        IReadOnlyDictionary<uint, TfBlockDeserializer.NativeParams> nativeParams,
+        ParsingState? hostState = null)
     {
         const int FloorsCategoryId = -2000032;
+        var occurrences = new Dictionary<int, int>();
         foreach (Element element in elements)
         {
+            occurrences[element.Id] = occurrences.GetValueOrDefault(element.Id) + 1;
+            element.ValidatedFloorOwnTypeName = null;
             element.ValidatedFloorTypeReferenceName = null;
             element.ValidatedFloorTypeReferenceIsExplicit = false;
             element.ValidatedFloorTypeReferenceIsBlocked = false;
@@ -4362,6 +4366,12 @@ internal static partial class ElementBuilder
                 instance.ValidatedFloorTypeReferenceIsExplicit = true;
                 continue;
             }
+
+            // The own SymbolInfo name of the type, kept apart: the legacy profile still names a floor by the terminal string.
+            if (hostState != null
+                && TryGetAgreedHostType(typeElement, occurrences.GetValueOrDefault(typeElement.Id), hostState, out var hostType)
+                && !string.IsNullOrWhiteSpace(hostType.TypeName))
+                instance.ValidatedFloorOwnTypeName = hostType.TypeName;
 
             if (source.TryGetValue(
                     (uint)typeElement.Id, out var typeSource)
@@ -4851,6 +4861,27 @@ internal static partial class ElementBuilder
         return (materials, ceilingTypes);
     }
 
+    /// <summary>The own HostObjAttr validation of a type element: its unique root, class and category agree with it, and its layers are decoded.</summary>
+    private static bool TryGetAgreedHostType(Element element, int occurrences, ParsingState state,
+        out (int BlockCount, ushort ClassId, RawCompoundStructureLayer[]? Layers, string? TypeName) validation)
+    {
+        validation = default;
+        if (element.Id <= 0 || occurrences != 1 || element.IsBlockOnly
+            || !state.SystemTypeRoots.TryGetValue((uint)element.Id, out var root) || root.BlockCount != 1
+            || !state.HostTypeCompoundStructures.TryGetValue((uint)element.Id, out validation)
+            || validation.BlockCount != 1 || validation.ClassId != root.ClassId || validation.Layers == null)
+            return false;
+        return (root.ClassId, element.CategoryId, root.Discriminator) switch
+        {
+            (512, -2000011, _) or (646, -2000038, _) => true,
+            (1915, -2000032, 0) or (1915, -2001300, 1) => true,
+            // RoofAttributes (Basic Roof) and BuildingPadType: HostObjAttr and nothing of their
+            // own.
+            (3452, -2000035, _) or (571, -2001263, _) => true,
+            _ => false,
+        };
+    }
+
     internal static int ApplyHostTypeCompoundStructures(IReadOnlyList<Element> elements, ParsingState state)
     {
         var counts = new Dictionary<int, int>();
@@ -4863,21 +4894,7 @@ internal static partial class ElementBuilder
         int applied = 0;
         foreach (var element in elements)
         {
-            if (element.Id <= 0 || counts[element.Id] != 1 || element.IsBlockOnly
-                || !state.SystemTypeRoots.TryGetValue((uint)element.Id, out var root) || root.BlockCount != 1
-                || !state.HostTypeCompoundStructures.TryGetValue((uint)element.Id, out var validation)
-                || validation.BlockCount != 1 || validation.ClassId != root.ClassId || validation.Layers == null)
-                continue;
-            bool agrees = (root.ClassId, element.CategoryId, root.Discriminator) switch
-            {
-                (512, -2000011, _) or (646, -2000038, _) => true,
-                (1915, -2000032, 0) or (1915, -2001300, 1) => true,
-                // RoofAttributes (Basic Roof) and BuildingPadType: HostObjAttr and nothing of their
-                // own.
-                (3452, -2000035, _) or (571, -2001263, _) => true,
-                _ => false,
-            };
-            if (!agrees) continue;
+            if (!TryGetAgreedHostType(element, counts[element.Id], state, out var validation)) continue;
             element.SerializedHostTypeLayers = validation.Layers;
             if (!string.IsNullOrWhiteSpace(validation.TypeName) && !string.IsNullOrEmpty(element.ValidatedSystemFamilyName))
                 element.ValidatedHostTypeLayerSetName = $"{element.ValidatedSystemFamilyName}:{validation.TypeName}";
@@ -5213,6 +5230,10 @@ internal static partial class ElementBuilder
             .ToDictionary(element => element.Id);
         foreach (var element in elements)
         {
+            element.SerializedFlippedSymbol = element.Id > 0 && counts[element.Id] == 1
+                && state.ComputedFamilySymbols.TryGetValue((uint)element.Id, out var root)
+                && root is { BlockCount: 1, Symbol: { FlippedX: bool flippedX, FlippedY: bool flippedY } }
+                    ? flippedX != flippedY : null;
             if (element.Id <= 0 || counts[element.Id] != 1
                 || !state.ComputedFamilySymbols.TryGetValue((uint)element.Id, out var own)
                 || own.BlockCount != 1 || own.Symbol is not { SymbolId: > 0 } source
@@ -6323,7 +6344,7 @@ internal static partial class ElementBuilder
         {
             ApplyValidatedFloorTypeReferenceNames(
                 rvtInfo.Elements, elemByIdLookup,
-                state.FloorTypeNameSource, state.NativeParams);
+                state.FloorTypeNameSource, state.NativeParams, state);
             ApplyValidatedCeilingTypeReferenceNames(
                 rvtInfo.Elements,
                 state.CeilingTypeNameSource,

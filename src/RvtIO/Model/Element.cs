@@ -235,6 +235,11 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal int? ValidatedOriginalFamilySymbolId { get; set; }
 
+        /// <summary>Hand flip differs from facing flip in the one own FamilyInstance root (a mirrored insert); null when
+        /// the root is not unique or the flags are not read.</summary>
+        [JsonIgnore]
+        internal bool? SerializedFlippedSymbol { get; set; }
+
         /// <summary>One active own computed-symbol cut with paired InstanceInfo transform;
         /// only a unique, non-inplace family with no nested instances is admitted.</summary>
         [JsonIgnore]
@@ -378,6 +383,9 @@ namespace RvtIO.Model
         /// inverse ownership set. Ordering is not an API naming ordinal.</summary>
         [JsonIgnore]
         internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore { get; set; }
+        /// <summary>Levels a multistory stair is repeated on, in stored order.</summary>
+        [JsonIgnore]
+        internal int[]? SerializedStairCopyLevelIds { get; set; }
 
         /// <summary>Single complete own run graph's native style and cached API path
         /// directions, with independent semantic class and reciprocal ElemRec owner.</summary>
@@ -671,6 +679,12 @@ namespace RvtIO.Model
         /// opening Reference properties, never IFC identity fields.</summary>
         [JsonIgnore]
         internal string? ValidatedFloorTypeReferenceName { get; set; }
+
+        /// <summary>The own name of the floor type (its unique HostObjAttr root, validated), set when no Reference parameter
+        /// decides the floor Reference. The current IFC profile prefers it to <see cref="ValidatedFloorTypeReferenceName"/>, which
+        /// ends in a text parameter of a type that carries some.</summary>
+        [JsonIgnore]
+        internal string? ValidatedFloorOwnTypeName { get; set; }
 
         /// <summary>True when <see cref="ValidatedFloorTypeReferenceName"/> came from an
         /// explicit instance/type Reference parameter rather than the terminal type name.

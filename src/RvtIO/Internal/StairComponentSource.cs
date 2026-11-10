@@ -68,6 +68,7 @@ internal static class StairComponentSource
         foreach (var element in elements)
         {
             element.SerializedStairCore = null;
+            element.SerializedStairCopyLevelIds = null;
             element.SerializedOwnElementClassId = null;
             element.OwnClassRootSeededOnce = false;
             element.SerializedOwningElementId = null;
@@ -132,6 +133,7 @@ internal static class StairComponentSource
                     || element.SerializedOwningElementId != parent.Id
                     || element.SerializedOwnElementClassId != typed[child])) continue;
             parent.SerializedStairCore = listed.Select(child => new CoreComponent(child, typed[child])).ToArray();
+            parent.SerializedStairCopyLevelIds = membership.MultistoryCopyLevelIds;
         }
     }
 

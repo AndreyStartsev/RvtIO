@@ -76,6 +76,33 @@ public partial class IfcExporter
         symbol.Geometry?.StoredNodeSummary != null && instance.Geometry?.StoredNodeSummary is { } own
         && (own != (0, 0) || instance.Geometry.StoredSolids > 0);
 
+    private const int DoorOperationTypeParamId = -1001211; // DOOR_OPERATION_TYPE
+
+    private static readonly HashSet<string> DoorStyleOperations = new(StringComparer.Ordinal)
+    {
+        "SINGLE_SWING_LEFT", "SINGLE_SWING_RIGHT", "DOUBLE_DOOR_SINGLE_SWING", "DOUBLE_DOOR_SINGLE_SWING_OPPOSITE_LEFT",
+        "DOUBLE_DOOR_SINGLE_SWING_OPPOSITE_RIGHT", "DOUBLE_SWING_LEFT", "DOUBLE_SWING_RIGHT", "DOUBLE_DOOR_DOUBLE_SWING",
+        "SLIDING_TO_LEFT", "SLIDING_TO_RIGHT", "DOUBLE_DOOR_SLIDING", "FOLDING_TO_LEFT", "FOLDING_TO_RIGHT",
+        "DOUBLE_DOOR_FOLDING", "REVOLVING", "ROLLINGUP",
+    };
+
+    /// <summary>OperationType of the style a door makes: the Operation parameter of the door type when it spells a value of
+    /// the enumeration. A left or right value is the other one for a mirrored door (hand flip differs from facing flip) and
+    /// stays NOTDEFINED when the flips of the door are not read.</summary>
+    internal static string DoorStyleOperationCurrent(Element type, Element door)
+    {
+        if (NonEmptyStringParameter(type, DoorOperationTypeParamId) is not { } text || !DoorStyleOperations.Contains(text))
+            return "NOTDEFINED";
+        bool left = text.EndsWith("_LEFT", StringComparison.Ordinal);
+        if (!left && !text.EndsWith("_RIGHT", StringComparison.Ordinal)) return text;
+        return door.SerializedFlippedSymbol switch
+        {
+            false => text,
+            true => left ? text[..^4] + "RIGHT" : text[..^5] + "LEFT",
+            null => "NOTDEFINED",
+        };
+    }
+
     /// <summary>RVTIO_TYPEKEY_DIAG: one line per proxy, beam, column and furnishing element that is keyed into a type (stderr;
     /// every class with the value "all"), with the stored object counts, surface area and volume of the instance, of its
     /// geometry symbol and of its type element, for judging <see cref="UsesInstanceGeometryOfTypeCurrent"/>.</summary>
