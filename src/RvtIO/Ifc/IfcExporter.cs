@@ -68523,8 +68523,8 @@ public partial class IfcExporter
     /// <summary>
     /// Spaces subsystem: <c>IfcSpace</c> + <c>IfcRelAggregates</c> (storey decomposition, NOT
     /// <c>IfcRelContainedInSpatialStructure</c>) + a private, non-shared <c>IfcSpaceType</c> +
-    /// <c>IfcRelDefinesByType</c> + the one-property <c>Pset_SpaceCommon</c> (<c>Reference</c>
-    /// only).
+    /// <c>IfcRelDefinesByType</c> + <c>Pset_SpaceCommon</c> (<c>Reference</c>; the current profile adds the
+    /// room finishes as coverings).
     /// </summary>
     private Dictionary<int, string> WriteSpaces(
         StepWriter w, int ownerHistId, List<Element> allElements,
@@ -68567,6 +68567,12 @@ public partial class IfcExporter
             int storeyId;
             if (levelElemId is int lvl && storeyIds.TryGetValue(lvl, out int levelStoreyId)) storeyId = levelStoreyId;
             else if (buildingContainerId is int container) storeyId = container;
+            // A space on a Level that is not a project storey stands in the highest storey at or below that level;
+            // it is not written where no storey is that low.
+            else if (CurrentProfile && levelElemId is int offStoreyLevelId && _elementsByIdCurrent is { } elementsById
+                && elementsById.TryGetValue(offStoreyLevelId, out var offStoreyLevel) && offStoreyLevel.CategoryId == -2000240
+                && HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elementsById, 0) is > 0 and int storeyBelowId)
+                storeyId = storeyBelowId;
             else continue;
 
             string? number = RoomStringParam(elem, RoomNumberParam);
@@ -68664,9 +68670,14 @@ public partial class IfcExporter
             string referenceText = $"{longName} {number}";
             int referenceValueId = GetOrAddPropertySingleValue(
                 w, propertySingleValueIds, "Reference", $"IFCIDENTIFIER({S(referenceText)})");
+            var commonValueIds = new List<int> { referenceValueId };
+            if (CurrentProfile)
+                foreach (var (coveringName, finishParamId) in SpaceCoveringParams)
+                    if (RoomStringParam(elem, finishParamId) is { } finish)
+                        commonValueIds.Add(GetOrAddPropertySingleValue(w, propertySingleValueIds, coveringName, $"IFCLABEL({S(finish)})"));
             int psetId = w.Add("IFCPROPERTYSET",
                 $"{S(IfcGuid.FromName($"space-common-pset:{elem.Id}"))},{R(ownerHistId)},"
-                + $"{S("Pset_SpaceCommon")},$,{StepWriter.List(R(referenceValueId))}");
+                + $"{S("Pset_SpaceCommon")},$,{StepWriter.List(commonValueIds.Select(R))}");
             w.Add("IFCRELDEFINESBYPROPERTIES",
                 $"{S(IfcGuid.FromName($"space-common-rel:{elem.Id}"))},{R(ownerHistId)},$,$,"
                 + $"{StepWriter.List(R(spaceEntityId))},{R(psetId)}");
@@ -68715,6 +68726,9 @@ public partial class IfcExporter
     }
 
     private const int SpaceCommentsParamId = -1010106;   // BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS
+    /// <summary>The coverings of Pset_SpaceCommon: the floor, wall and ceiling finish of the room, each written when it has a text.</summary>
+    private static readonly (string Name, int ParamId)[] SpaceCoveringParams =
+        [("FloorCovering", -1006903), ("WallCovering", -1006904), ("CeilingCovering", -1006905)];   // ROOM_FINISH_FLOOR, _WALL, _CEILING
     private const int AreaSchemeIdParam = -1012704;      // RoomElem.m_areaSchemeId
     private const int PhaseCategoryId = -2000112;        // OST_Phases
 

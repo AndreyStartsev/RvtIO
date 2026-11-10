@@ -1568,14 +1568,18 @@ public partial class IfcExporter
     /// room plan gives it (m_cachedCircuitId, less its islands; exact for curved boundaries). Without that plan the plan area of the
     /// room solid stands in, which is the area of its upward or of its downward horizontal faces, whichever is the larger (a
     /// stepped floor or ceiling splits one of the two). Height is the distance from the level of the room to the next
-    /// building storey, GrossVolume area times height. GrossPerimeter exists only when the room was written as an extrusion
+    /// building storey (written also for a room without a plan area), GrossVolume area times height. GrossPerimeter exists only when the room was written as an extrusion
     /// (<see cref="RoomExtrusionPerimeterMetresCurrent"/>).</summary>
     private List<QuantityValue> SpaceQuantitiesCurrent(Element room, double? levelHeight)
     {
         var result = new List<QuantityValue>();
         var boundary = room.SerializedSpaceBoundaryCurrent;
         if ((room.SerializedRoomPlanAreaSquareFeet ?? (boundary != null ? RoomPlanAreaCurrent(boundary) : null)) is not { } planArea)
+        {
+            // The height is the storey's, not the room's: it stands without a plan area.
+            AddIfPositive(result, QuantityKind.Length, "Height", levelHeight);
             return result;
+        }
         double area = planArea * SquareFeetToSquareMetres;
         AddIfPositive(result, QuantityKind.Area, "NetFloorArea", area);
         AddIfPositive(result, QuantityKind.Length, "Height", levelHeight);
