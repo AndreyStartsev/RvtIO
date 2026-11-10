@@ -11,6 +11,8 @@ namespace RvtIO.Ifc;
 /// - an instance of a hosted family in a wall: the placed origin of the symbol, projected on a side face of the wall and moved
 ///   one foot along that face's normal (<see cref="WallSideTestPointCurrent"/>);
 /// - else a work-plane-based instance: the placed origin of the symbol, one foot along the instance's Z;
+/// - else an instance of a hosted family on a floor: the placed origin of the symbol, one foot against the instance's Z
+///   (<see cref="FloorHostTestPointCurrent"/>);
 /// - else the placed centre of the symbol's stored box, moved by at most half a foot towards the elevation of the instance's
 ///   associated level.
 /// A room stored with the instance is kept; this lookup only decides the instances without one.
@@ -133,8 +135,29 @@ public partial class IfcExporter
         ];
     }
 
+    /// <summary>The test point of an instance of a hosted family that stands on a floor: the placed origin of its symbol, one
+    /// foot against the instance's Z, which is under the floor's top for an upright instance. Revit reports the room at this
+    /// point for such instances; the centre of the box, which lies over the floor, gives the room above it instead. Null
+    /// when the family is free of a host or not decoded, the host is no floor, the instance has no placement, or its Z has
+    /// no direction.</summary>
+    internal static double[]? FloorHostTestPointCurrent(Element instance, IReadOnlyDictionary<int, Element> elementsById)
+    {
+        // Only a family known to take a host: a family that takes none stores the floor it stands on as well.
+        if (CompactFamilyInstanceFacts.Get("fi:isFreeFamilySymbol", instance, id => elementsById.GetValueOrDefault(id)) != 0) return null;
+        // shortcut: only hosts of the floors category were compared with Revit; extend when another host kind is measured
+        if (instance.SerializedHostId is not int hostId || hostId <= 0 || !elementsById.TryGetValue(hostId, out var host)
+            || host.CategoryId != FloorsCategoryId || instance.Transform?.BasisZ is not { Length: 3 } axis
+            || PlacedSymbolOriginCurrent(instance, elementsById) is not { } origin)
+            return null;
+        double length = Math.Sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+        return length > 1e-10 && double.IsFinite(length)
+            ? [origin[0] - axis[0] / length, origin[1] - axis[1] / length, origin[2] - axis[2] / length]
+            : null;
+    }
+
     /// <summary>The test point (feet) of an instance: beside its host wall (<see cref="WallSideTestPointCurrent"/>); else, for a
-    /// work-plane-based instance, the placed origin of its symbol and one foot along its Z; else the placed centre of the
+    /// work-plane-based instance, the placed origin of its symbol and one foot along its Z; else, for an instance of a hosted
+    /// family on a floor, one foot against its Z (<see cref="FloorHostTestPointCurrent"/>); else the placed centre of the
     /// stored box of its symbol, moved by at most half a foot towards the elevation of its associated level. An instance
     /// without a decoded placement or symbol box takes the centre of its own box. Null without any box.</summary>
     internal static double[]? RoomTestPointCurrent(Element instance, IReadOnlyDictionary<int, double> levelElevations,
@@ -151,6 +174,7 @@ public partial class IfcExporter
                     ? [origin[0] + axis[0] / length, origin[1] + axis[1] / length, origin[2] + axis[2] / length]
                     : origin;
             }
+            if (FloorHostTestPointCurrent(instance, elementsById) is { } floorPoint) return floorPoint;
         }
         double[]? center = null;
         if (elementsById != null && PlacedSymbolCurrent(instance, elementsById) is { BoundingBoxIsHeaderOutline: true, BoundingBox: { Length: >= 6 } symbolBox })
