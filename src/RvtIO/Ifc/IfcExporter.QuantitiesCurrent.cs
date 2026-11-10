@@ -42,12 +42,13 @@ public partial class IfcExporter
 
     /// <summary>The extrusion a product body was written as: IFCEXTRUDEDAREASOLID over a rectangle, circle or closed
     /// polyline profile. It keeps the depth, profile area, perimeter and the profile extents. <c>Polygon</c> is the polyline
-    /// profile as written, <c>Loop</c> the profile as points in the frame of the product (the loop measured for an opening).</summary>
+    /// profile as written, <c>Loop</c> the profile as points in the frame of the product (the loop measured for an opening),
+    /// <c>OuterArcs</c> the arcs its writer turned into chords of <c>Polygon</c> (null when it passed none on).</summary>
     internal readonly record struct ProfileExtrusion(
         double Depth, double Area, double OuterPerimeter, double ExtentX, double ExtentY, bool Rectangle,
         double[]? AxisX = null, double[]? AxisY = null, double[]? AxisZ = null,
         IReadOnlyList<(double X, double Y)>? Polygon = null, IReadOnlyList<double[]>? Loop = null,
-        double? NominalArea = null, double InnerPerimeter = 0);
+        double? NominalArea = null, double InnerPerimeter = 0, IReadOnlyList<ArcChordsCurrent>? OuterArcs = null);
 
     /// <summary>An orthonormal frame (X, Y, Z axes) in the coordinates of its parent.</summary>
     private readonly record struct FrameCurrent(double[] X, double[] Y, double[] Z)
@@ -161,7 +162,7 @@ public partial class IfcExporter
 
     /// <summary>The extrusion an item of a Body representation is, a mapped item through its representation map; null for any other item.</summary>
     private static ProfileExtrusion? ReadExtrusionItemCurrent(StepWriter w, Dictionary<int, int> indexById, int itemIndex, bool lastOfSeveral,
-        Func<int, bool>? isCuttingItem = null)
+        Func<int, bool>? isCuttingItem = null, bool hollowCircle = false)
     {
         var item = w.EntityAt(itemIndex);
         if (item.Type == "IFCMAPPEDITEM")
@@ -199,7 +200,7 @@ public partial class IfcExporter
         if (solid.Length != 4 || !TryParseStepReal(solid[3], out double depth)
             || !TryEntityId(solid[0], out int profileId) || !indexById.TryGetValue(profileId, out int profileIndex))
             return null;
-        var profile = ReadProfileCurrent(w, indexById, w.EntityAt(profileIndex), depth);
+        var profile = ReadProfileCurrent(w, indexById, w.EntityAt(profileIndex), depth, hollowCircle);
         if (profile is not { } read || Axis3FrameCurrent(w, indexById, solid[1]) is not { } position
             || DirectionOfCurrent(w, indexById, solid[2]) is not { } direction)
             return profile;
@@ -225,7 +226,7 @@ public partial class IfcExporter
     /// An item for which <paramref name="isCuttingItem"/> (by entity id) holds is the solid of a cutting node: the exporter exports no body for it, so it
     /// is not an item of the body here.</summary>
     internal static ProfileExtrusion? ReadBodyExtrusionCurrent(StepWriter w, Dictionary<int, int> indexById, string representationArgument, bool lastOfSeveral = false,
-        Func<int, bool>? isCuttingItem = null)
+        Func<int, bool>? isCuttingItem = null, bool hollowCircle = false)
     {
         if (!TryEntityId(representationArgument, out int shapeId) || !indexById.TryGetValue(shapeId, out int shapeIndex))
             return null;
@@ -249,7 +250,7 @@ public partial class IfcExporter
             if (items.Length == 0 || items.Length != 1 && !lastOfSeveral
                 || !TryEntityId(items[^1], out int itemId) || !indexById.TryGetValue(itemId, out int itemIndex))
                 return null;
-            return ReadExtrusionItemCurrent(w, indexById, itemIndex, lastOfSeveral, isCuttingItem);
+            return ReadExtrusionItemCurrent(w, indexById, itemIndex, lastOfSeveral, isCuttingItem, hollowCircle);
         }
         return null;
     }
@@ -286,6 +287,30 @@ public partial class IfcExporter
             perimeter += Math.Sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
         }
         return (Math.Abs(twiceArea) / 2, perimeter);
+    }
+
+    /// <summary>What the arcs of a written profile outline add to its polygon: the area between each chord and its arc (taken away
+    /// where the arc is concave) and the length of the arc over its chord. The arcs are the ones the writer of the outline turned
+    /// into chords (<see cref="ArcChordsCurrent"/>), never read out of the points; the radius is that of the written chord under
+    /// its share of the angle of the arc.</summary>
+    internal static (double Area, double Length) ArcsOverChordsCurrent(IReadOnlyList<(double X, double Y)> points, IReadOnlyList<ArcChordsCurrent> arcs)
+    {
+        double area = 0, length = 0;
+        foreach (var arc in arcs)
+        {
+            double angle = Math.Abs(arc.Sweep) / arc.Chords;
+            for (int i = 0; i < arc.Chords; i++)
+            {
+                var (ax, ay) = points[(arc.First + i) % points.Count];
+                var (bx, by) = points[(arc.First + i + 1) % points.Count];
+                double chord = Math.Sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+                double radius = chord / (2 * Math.Sin(angle / 2));
+                double segment = radius * radius / 2 * (angle - Math.Sin(angle));
+                area += arc.Sweep > 0 ? segment : -segment;
+                length += radius * angle - chord;
+            }
+        }
+        return (area, length);
     }
 
     private static bool TryAnalyzeHollowRectWithFillets(
@@ -370,7 +395,8 @@ public partial class IfcExporter
         return false;
     }
 
-    private static ProfileExtrusion? ReadProfileCurrent(StepWriter w, Dictionary<int, int> indexById, (int Id, string Type, string Args) profile, double depth)
+    private static ProfileExtrusion? ReadProfileCurrent(StepWriter w, Dictionary<int, int> indexById, (int Id, string Type, string Args) profile, double depth,
+        bool hollowCircle = false)
     {
         var arguments = SplitStepArguments(profile.Args);
         string profileName = arguments.Length > 1 ? arguments[1].Trim('\'') : "";
@@ -381,6 +407,13 @@ public partial class IfcExporter
                 return new ProfileExtrusion(depth, x * y, 2 * (x + y), x, y, true);
             case "IFCCIRCLEPROFILEDEF" when arguments.Length == 4 && TryParseStepReal(arguments[3], out double radius):
                 return new ProfileExtrusion(depth, Math.PI * radius * radius, 2 * Math.PI * radius, 2 * radius, 2 * radius, false);
+            // Read for a slab only (a pile): the quantities of a column, beam or member that is a round tube come from their own rules.
+            case "IFCCIRCLEHOLLOWPROFILEDEF" when hollowCircle && arguments.Length == 5
+                && TryParseStepReal(arguments[3], out double tubeRadius) && TryParseStepReal(arguments[4], out double tubeWall)
+                && tubeWall > 0 && tubeWall < tubeRadius:
+                double boreRadius = tubeRadius - tubeWall;
+                return new ProfileExtrusion(depth, Math.PI * (tubeRadius * tubeRadius - boreRadius * boreRadius), 2 * Math.PI * tubeRadius,
+                    2 * tubeRadius, 2 * tubeRadius, false, InnerPerimeter: 2 * Math.PI * boreRadius);
             case "IFCARBITRARYCLOSEDPROFILEDEF" when arguments.Length == 3 && TryEntityId(arguments[2], out int curveId)
                 && ReadPolylinePointsCurrent(w, indexById, curveId) is { } points:
                 if (TryAnalyzeLProfileWithFillets(points, profileName, out double lArea, out double lPerimeter, out double lNominalArea))
@@ -391,7 +424,8 @@ public partial class IfcExporter
                 }
                 var (closedArea, closedPerimeter) = ComputePolygonMetricsCurrent(points);
                 return new ProfileExtrusion(depth, closedArea, closedPerimeter,
-                    points.Max(p => p.X) - points.Min(p => p.X), points.Max(p => p.Y) - points.Min(p => p.Y), false, Polygon: points);
+                    points.Max(p => p.X) - points.Min(p => p.X), points.Max(p => p.Y) - points.Min(p => p.Y), false, Polygon: points,
+                    OuterArcs: w.PolylineArcs.GetValueOrDefault(curveId));
             case "IFCARBITRARYPROFILEDEFWITHVOIDS" when arguments.Length == 4 && TryEntityId(arguments[2], out int outerCurveId)
                 && ReadPolylinePointsCurrent(w, indexById, outerCurveId) is { } outerPoints:
                 var inners = new List<List<(double X, double Y)>>();
@@ -419,7 +453,7 @@ public partial class IfcExporter
                 }
                 return new ProfileExtrusion(depth, Math.Max(0, outerArea - totalInnerArea), outerP,
                     outerPoints.Max(p => p.X) - outerPoints.Min(p => p.X), outerPoints.Max(p => p.Y) - outerPoints.Min(p => p.Y), false,
-                    Polygon: outerPoints, InnerPerimeter: totalInnerP);
+                    Polygon: outerPoints, InnerPerimeter: totalInnerP, OuterArcs: w.PolylineArcs.GetValueOrDefault(outerCurveId));
             default:
                 return null;
         }
@@ -820,7 +854,7 @@ public partial class IfcExporter
         if (element == null) return none;
         ProfileExtrusion? body = type is "IFCMEMBER" or "IFCCOLUMN" or "IFCBEAM" or "IFCSLAB"
             ? ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6], lastOfSeveral: type == "IFCCOLUMN",
-                isCuttingItem: IsCuttingNodeItemCurrent) : null;
+                isCuttingItem: IsCuttingNodeItemCurrent, hollowCircle: type == "IFCSLAB") : null;
         return type switch
         {
             "IFCDOOR" or "IFCWINDOW" => DoorWindowQuantitiesCurrent(context, element),
@@ -1375,9 +1409,11 @@ public partial class IfcExporter
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", netVolume);
         // The parameter called "Perimeter" (HOST_PERIMETER_COMPUTED) of the floor comes before the profile; its value is the
         // length of every boundary loop of the floor, the loops of its holes included (the parser's parameter is the outer loop).
-        AddIfPositive(result, QuantityKind.Length, "Perimeter",
-            (ExactParameterFeetCurrent(element, null, HostPerimeterComputedParameterId) ?? (prism ?? topFace)?.OuterPerimeter) is { } outerPerimeter
-                ? (outerPerimeter + ((prism ?? topFace)?.InnerPerimeter ?? 0)) * FeetToMetres : null);
+        double? perimeter = (ExactParameterFeetCurrent(element, null, HostPerimeterComputedParameterId) ?? (prism ?? topFace)?.OuterPerimeter) is { } outerPerimeter
+            ? (outerPerimeter + ((prism ?? topFace)?.InnerPerimeter ?? 0)) * FeetToMetres : null;
+        // A round tube profile (a hollow pile) has no chords to count: its perimeter is the circumference of the outer circle, not of the bore.
+        if (perimeter == null && body is { Polygon: null, Rectangle: false, InnerPerimeter: > 0 } tube) perimeter = tube.OuterPerimeter;
+        AddIfPositive(result, QuantityKind.Length, "Perimeter", perimeter);
         // A roof takes the larger side of its body. A foundation (a structural foundation, or a slab of the base slab type) takes the first side of its profile: the body of a pile
         // cap is not extruded upwards, and the reference does not turn a base slab by the angle of its profile, so the world X extent says nothing about it. Any other slab takes the world X
         // extent of its vertical prism (the first loop of the lower end face), and the body only when it has no such prism.
@@ -1413,9 +1449,10 @@ public partial class IfcExporter
     }
 
     /// <summary>Column quantities. A column written as a prism carries its extrusion data:
-    /// Length, CrossSectionArea (the profile), OuterSurfaceArea (the length and perimeter in millimetres, taken as square
-    /// metres) and GrossVolume (the length in millimetres times the area in square metres); otherwise the cross section is the
-    /// computed host area. NetVolume is the computed host volume, else the volume of the solids. A round column whose exact end
+    /// Length, CrossSectionArea (the profile), OuterSurfaceArea (the length times the perimeter) and GrossVolume (the length times
+    /// the area), where the length and the perimeter are numbers of the length unit of the file: a file in millimetres has the two
+    /// 1e6 and 1000 times too large (millimetres taken as square and cubic metres), a file in metres or feet has them right;
+    /// otherwise the cross section is the computed host area. NetVolume is the computed host volume, else the volume of the solids. A round column whose exact end
     /// faces are listed beside a tessellated side (see <see cref="RoundPrismCurrent"/>) has the extrusion data of its circle; a round
     /// column that is a vertical cylinder (see <see cref="RoundCylinderCurrent"/>) takes the volume and surface of the node that carries
     /// its end faces for the solid.</summary>
@@ -1430,11 +1467,13 @@ public partial class IfcExporter
         {
             double length = extrusion.Depth, area = extrusion.Area;
             // The outer surface counts the loops of the holes as well (outer + inner perimeter).
-            double lengthMm = length * 1000, perimeterMm = (extrusion.Perimeter + extrusion.InnerPerimeter) * 1000;
+            // The length and the perimeter count in the length unit of the file, the products are taken as its area and volume.
+            double lengthUnits = _unitFamily == IfcUnitFamily.Millimetre ? 1000 : 1;
+            double fileLength = length * lengthUnits, filePerimeter = (extrusion.Perimeter + extrusion.InnerPerimeter) * lengthUnits;
             AddIfPositive(result, QuantityKind.Length, "Length", length);
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", area);
-            AddIfPositive(result, QuantityKind.Area, "OuterSurfaceArea", lengthMm * perimeterMm);
-            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", lengthMm * area);
+            AddIfPositive(result, QuantityKind.Area, "OuterSurfaceArea", fileLength * filePerimeter);
+            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", fileLength * area);
             // The exporter measures the volume of the solids of the Medium level, which a tube family draws with sharp corners (the length times the
             // nominal area); where the Medium solids cannot be measured the nominal area stands in for them. A family without different
             // Medium solids has the volume of the solid it draws.
@@ -1463,6 +1502,13 @@ public partial class IfcExporter
         if (ExtrusionDataCurrent(body, shells) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area, perimeter = extrusion.Perimeter;
+            // The section of a written profile is measured with the arcs its writer passed on, not with the chords they are written as.
+            if (body is { Polygon: { } outline, OuterArcs: { } outlineArcs, NominalArea: null })
+            {
+                var arcs = ArcsOverChordsCurrent(outline, outlineArcs);
+                area += arcs.Area;
+                perimeter += arcs.Length;
+            }
             AddIfPositive(result, QuantityKind.Length, "Length", length);
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", area);
             AddIfPositive(result, QuantityKind.Area, "OuterSurfaceArea", perimeter * length);

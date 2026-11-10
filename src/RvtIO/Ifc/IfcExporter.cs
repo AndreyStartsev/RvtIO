@@ -186,6 +186,8 @@ public partial class IfcExporter
     /// themselves emitted - i.e. the elements that are the RelatingObject of a real decomposition.
     /// </summary>
     private readonly HashSet<int> _emittedAggregateParentElementIds = new();
+    /// <summary>Elements the storey rule placed by a level that is not a project storey.</summary>
+    private readonly HashSet<int> _offStoreyLevelElementIds = new();
 
     /// <summary>
     /// The exact placement frame each wall's geometry was written in (centre, base z, axis
@@ -380,6 +382,7 @@ public partial class IfcExporter
         ValidateRoomExportPhase(info);
         _geometryUndecoded = info.GeometryUndecoded;
         _usedExportIds.Clear();
+        _offStoreyLevelElementIds.Clear();
         _storeyLevels.Clear();
         _storeyGlobalIds.Clear();
         _recessOpeningEntityIds.Clear();
@@ -4910,7 +4913,8 @@ public partial class IfcExporter
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
             foreach (int systemId in WriteJoistAssemblies(w, exportableElements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
-                         storeyContents, propertySingleValueIds))
+                         storeyContents, propertySingleValueIds,
+                         system => ResolveStorey(system, storeyIds, defaultStoreyId, elemById, buildingId, system.BoundingBox)))
             {
                 // counted with or without a skip log; the log entry is only there to be taken out
                 exportedCount++;
@@ -7240,15 +7244,20 @@ public partial class IfcExporter
         if (element.ValidatedFloorTypeReferenceIsBlocked)
             return null;
 
-        if (element.ValidatedFloorTypeReferenceName == null)
+        if (FloorTypeReferenceName(element, currentProfile) is not { } floorReference)
             return baselineReferenceValue;
 
         // A direct parameter can create the main product property.
         if (baselineReferenceValue == null
             && !element.ValidatedFloorTypeReferenceIsExplicit)
             return null;
-        return element.ValidatedFloorTypeReferenceName;
+        return floorReference;
     }
+
+    /// <summary>The validated floor type Reference: the current profile prefers the own name of the type to the last string of its block, which a
+    /// type with text parameters ends in one of; the legacy profile keeps the last string.</summary>
+    internal static string? FloorTypeReferenceName(Element floor, bool currentProfile) =>
+        currentProfile ? floor.ValidatedFloorOwnTypeName ?? floor.ValidatedFloorTypeReferenceName : floor.ValidatedFloorTypeReferenceName;
 
     /// <summary>A door/window product fills exactly one opening, so that opening is bare.</summary>
     internal static Element? ResolveHostedOpeningPropertySetReferenceElement(
@@ -11124,7 +11133,7 @@ public partial class IfcExporter
             int openingId = CreateOpeningElement(w, openingGlobalId, ownerHistId, openingName,
                 profile.TagId, propertySetReferenceElement, elemById,
                 openingPlacementId, shapeId,
-                propertySingleValueIds, slab.ValidatedFloorTypeReferenceName,
+                propertySingleValueIds, FloorTypeReferenceName(slab, CurrentProfile),
                 slab.ValidatedFloorTypeReferenceIsBlocked,
                 useSlabQuantityTakeOffReference
                     ? slabQuantityTakeOffReferenceValueId
@@ -65021,6 +65030,9 @@ public partial class IfcExporter
             }
             if (!levelIdByProductElementId.TryGetValue(written ? insert.Id : host.Id, out int levelId))
                 continue;
+            // A written insert is identified by its own level, which need not be the level of the storey that contains it
+            // (measured in the current profile only).
+            if (written && currentProfile && RoomIntParam(insert, LevelParamId) is int ownLevel and > 0) levelId = ownLevel;
 
             string openingGlobalId = DoorWindowOpeningGlobalId(insertExportId, levelId, kind, currentProfile);
             if (globalIds.Contains(openingGlobalId)) continue;
@@ -68102,7 +68114,7 @@ public partial class IfcExporter
         if (ifcType == "IFCCURTAINWALL")
             return ResolveValidatedWallTypeName(element, elementsById.GetValueOrDefault(element.FamilyTypeId));
         if (ifcType == "IFCSLAB" && element.CategoryId == -2000032)
-            return Own(element.ValidatedFloorTypeReferenceName, element.ValidatedFloorTypeReferenceIsExplicit,
+            return Own(FloorTypeReferenceName(element, currentProfile), element.ValidatedFloorTypeReferenceIsExplicit,
                 element.ValidatedFloorTypeReferenceIsBlocked);
         if (ifcType == "IFCCOVERING" && element.CategoryId == -2000038)
             return Own(element.ValidatedCeilingTypeReferenceName, element.ValidatedCeilingTypeReferenceIsExplicit,
@@ -69684,10 +69696,10 @@ public partial class IfcExporter
     /// <summary>
     /// The storey of an element, replaying the storey rule: the base-level
     /// parameter of its kind (a nested family instance reads its top-level instance), then any
-    /// stored level reference.
+    /// stored level reference. <paramref name="outline"/> is the box of an element that has no body of its own.
     /// </summary>
     private int ResolveStorey(Element elem, Dictionary<int, int> storeyIds, int defaultStoreyId,
-        IReadOnlyDictionary<int, Element> elemById, int buildingId)
+        IReadOnlyDictionary<int, Element> elemById, int buildingId, double[]? outline = null)
     {
         // The current profile reads STAIRS_BASE_LEVEL_PARAM, which is StairsElement.m_baseLevelId.
         if (CurrentProfile && elem.CategoryId == -2000120 && elem.SerializedStairBaseLevelId is int stairBaseLevelId
@@ -69703,20 +69715,24 @@ public partial class IfcExporter
             _ when elem.NativeMasterSymbolId is > 0 => [-1001350, -1001365, -1001383],
             _ => [],
         };
-        // A building-services element whose level is a Level that is not a project storey stands like a column
-        // on such a level: in the highest storey at or below it, in the building where no storey is that low.
+        // An element whose level is a Level that is not a project storey stands in the highest storey at or below
+        // that level, in the building where no storey is that low.
         Element? offStoreyLevel = null;
         foreach (int parameterId in baseLevelParameters)
             if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
             {
                 if (storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
-                if (CurrentProfile && offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                if (CurrentProfile && offStoreyLevel == null
                     && elemById.TryGetValue(levelId, out var baseLevel) && baseLevel.CategoryId == -2000240)
                     offStoreyLevel = baseLevel;
             }
         // A base level that is not a storey outranks the element's own level parameters below, as one that is a
         // storey does. Among the base-level parameters one on a storey still outranks an earlier one that is not.
-        if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+        if (offStoreyLevel != null)
+        {
+            _offStoreyLevelElementIds.Add(elem.Id);
+            return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+        }
 
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
@@ -69738,11 +69754,15 @@ public partial class IfcExporter
                 if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId)
                 {
                     if (storeyIds.TryGetValue(assocLevelId, out int assocStoreyId)) return assocStoreyId;
-                    if (offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                    if (offStoreyLevel == null
                         && elemById.TryGetValue(assocLevelId, out var assocLevel) && assocLevel.CategoryId == -2000240)
                         offStoreyLevel = assocLevel;
                 }
-            if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+            if (offStoreyLevel != null)
+            {
+                _offStoreyLevelElementIds.Add(elem.Id);
+                return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+            }
         }
         // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
         else foreach (var p in elem.Parameters)
@@ -69762,7 +69782,7 @@ public partial class IfcExporter
         if (CurrentProfile && storeyIds.Count > 0)
         {
             int byBottom = ResolveStoreyByBottomCurrent(
-                (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
+                (outline ?? elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
                 storeyIds, elemById);
             return byBottom != 0 ? byBottom : defaultStoreyId;
         }
@@ -69810,10 +69830,6 @@ public partial class IfcExporter
             }
         return chosen;
     }
-
-    /// <summary>Every category of the duct, pipe, cable tray and conduit range (segments, fittings, accessories, insulation, terminals, sprinklers), and the electrical, lighting, mechanical, plumbing and food service equipment and fixtures.</summary>
-    private static bool IsBuildingServicesCategory(int? categoryId) =>
-        categoryId is <= -2008000 and >= -2008999 or -2001040 or -2001043 or -2001060 or -2001120 or -2001140 or -2001160;
 
     /// <summary>10 cm in feet: the storey rule, how far below a level its storey starts.</summary>
     private const double StoreyExtensionFeet = 10.0 / (12.0 * 2.54);

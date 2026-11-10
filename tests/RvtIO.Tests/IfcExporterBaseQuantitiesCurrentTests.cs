@@ -265,6 +265,21 @@ public class IfcExporterBaseQuantitiesCurrentTests
         return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
     }
 
+    /// <summary>A body that is a vertical extrusion of a round tube profile (a hollow pile): outer radius and wall in the units of the writer.</summary>
+    private static int AddHollowCircleBody(StepWriter w, double radius, double wall, double depth)
+    {
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.)");
+        int profilePlacement = w.Add("IFCAXIS2PLACEMENT2D", $"#{origin},$");
+        int profile = w.Add("IFCCIRCLEHOLLOWPROFILEDEF", $".AREA.,$,#{profilePlacement},{StepWriter.Real(radius)},{StepWriter.Real(wall)}");
+        int point3 = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{point3},$,$");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int context = w.Add("IFCGEOMETRICREPRESENTATIONCONTEXT", $"$,'Model',3,1.E-05,#{position},$");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#{context},'Body','SweptSolid',(#{solid})");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
     private static int AddProduct(StepWriter w, string type, string guid, int owner, int placement, int? shape = null) =>
         w.Add(type, $"'{guid}',#{owner},'P',$,$,#{placement},{(shape is { } id ? "#" + id : "$")},'1'");
 
@@ -1111,6 +1126,26 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.DoesNotContain(Quantities(w, "IFCQUANTITYLENGTH"), q => q.Name == "Perimeter");
     }
 
+    [Theory]
+    [InlineData("IFCSLAB", true)]
+    [InlineData("IFCCOLUMN", false)]
+    public void Pass_HollowCircleBody_GivesOnlyASlabTheCircumferenceAndTheDiameter(string type, bool expected)
+    {
+        var (w, owner, placement) = NewWriter();
+        int product = AddProduct(w, type, "WZGD7y6S5209$mGLi_sPlj", owner, placement, AddHollowCircleBody(w, 0.4, 0.06, 7));
+
+        Apply(w, owner, new() { [33] = new Element { Id = 33, Geometry = HalfDiscPrism(3, 6) } }, new() { [product] = 33 });
+
+        var lengths = Quantities(w, "IFCQUANTITYLENGTH");
+        Assert.Equal(expected, lengths.Any(q => q.Name == "Perimeter"));
+        if (!expected) return;
+        // the circumference of the outer circle only, and the diameter
+        Assert.Equal(2 * Math.PI * 0.4, lengths.Single(q => q.Name == "Perimeter").Value, 9);
+        Assert.Equal(0.8, lengths.Single(q => q.Name == "Width").Value, 9);
+        // the body is read, so the slab gets GrossVolume too: the area of its top surface times the depth of the extrusion
+        Assert.Equal(Math.PI * 9 / 2 * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "GrossVolume").Value, 9);
+    }
+
     [Fact]
     public void Pass_Slab_CurvedSideThatIsNoVerticalCylinder_GivesNoGrossVolume()
     {
@@ -1899,6 +1934,20 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.StartsWith($"'{IfcGuid.FromMd5("IfcElementQuantity:BaseQuantities:GZGD7y6S5209$mGLi_sPlj")}'", Assert.Single(Args(w, "IFCELEMENTQUANTITY")));
     }
 
+    [Theory]
+    [InlineData("autodesk.unit.unit:meters-1.0.1", 0.3048)]
+    [InlineData("autodesk.unit.unit:feet-1.0.1", 1)]
+    public void Export_Column_InAMetreOrFootFile_MultipliesTheLengthOfTheFileUnitWithoutTheMillimetreSlip(string lengthUnit, double unitsPerFoot)
+    {
+        string ifc = ExportBeam(new IfcExporter(), lengthUnit: lengthUnit, column: true);
+
+        double length = QuantityIn(ifc, "LENGTH", "Length"), area = QuantityIn(ifc, "AREA", "CrossSectionArea");
+        Assert.Equal(10 * unitsPerFoot, length, 9);
+        Assert.Equal(0.4 * 0.6 * unitsPerFoot * unitsPerFoot, area, 9);
+        Assert.Equal(length * 2 * (0.4 + 0.6) * unitsPerFoot, QuantityIn(ifc, "AREA", "OuterSurfaceArea"), 9);
+        Assert.Equal(length * area, QuantityIn(ifc, "VOLUME", "GrossVolume"), 9);
+    }
+
     [Fact]
     public void Pass_Beam_UsesConsistentUnitsAndAddsTheSurfaces()
     {
@@ -1913,6 +1962,149 @@ public class IfcExporterBaseQuantitiesCurrentTests
             ("CrossSectionArea", area), ("OuterSurfaceArea", perimeter * length), ("GrossSurfaceArea", perimeter * length + 2 * area),
             ("NetSurfaceArea", 2 * (1 * 2 + 1 * 5 + 2 * 5) * SquareFeet));
         AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * length), ("NetVolume", 10 * CubicFeet));
+    }
+
+    /// <summary>A beam whose Body the exporter writes as the extrusion of a prism (feet, along z) over the outline; the end face the
+    /// profile is taken from holds the circular edges of the outline, when they are known.</summary>
+    private static (StepWriter W, int Owner, int Beam) BeamOverOutline((double X, double Y)[] outline, double height,
+        IReadOnlyList<RvtIO.Internal.Arc>? arcs, bool lowerFaceTurned = false)
+    {
+        var (w, owner, placement) = NewWriter();
+        var geometry = PrismOver(outline, height);
+        geometry.Faces[0].MeshArcs = arcs;
+        if (lowerFaceTurned) geometry.Faces[0].OuterVertices!.Reverse();
+        Assert.True(new IfcExporter().TryCreateOthersCurrentProductSweptSolid(w, geometry, 1, IfcExporter.OthersCurrentAxesZ, "P", out int shape, out _));
+        Assert.Single(Args(w, "IFCARBITRARYCLOSEDPROFILEDEF"));
+        return (w, owner, AddProduct(w, "IFCBEAM", "IZGD7y6S5209$mGLi_sPlj", owner, placement, shape));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void Pass_BeamWithArcsInItsProfile_MeasuresTheSectionWithTheArcsNotTheirChords(bool arcsKnown, bool lowerFaceTurned)
+    {
+        // An angle section (legs a, thickness t) with a concave root fillet r and a convex rounded heel R, each a quarter turn of 8 chords.
+        const double a = 1, t = 0.1, r = 0.06, R = 0.04, height = 10, feet = 0.3048;
+        var outline = new List<(double X, double Y)> { (R, 0), (a, 0), (a, t), (t + r, t) };
+        for (int k = 1; k <= 8; k++)
+            outline.Add((t + r + r * Math.Cos(-Math.PI / 2 - k * Math.PI / 16), t + r + r * Math.Sin(-Math.PI / 2 - k * Math.PI / 16)));
+        outline.AddRange([(t, a), (0, a), (0, R)]);
+        for (int k = 1; k < 8; k++)
+            outline.Add((R + R * Math.Cos(Math.PI + k * Math.PI / 16), R + R * Math.Sin(Math.PI + k * Math.PI / 16)));
+        // The two circular edges as the file stores them: the fillet runs against the outline, the heel with it.
+        RvtIO.Internal.Arc[] arcs =
+        [
+            new([t + r, t + r, 0], [1, 0, 0], [0, 1, 0], r, Math.PI, 3 * Math.PI / 2),
+            new([R, R, 0], [1, 0, 0], [0, 1, 0], R, Math.PI, 3 * Math.PI / 2),
+        ];
+        var (w, owner, beam) = BeamOverOutline(outline.ToArray(), height, arcsKnown ? arcs : null, lowerFaceTurned);
+        var element = new Element { Id = 17, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
+
+        Apply(w, owner, new() { [17] = element }, new() { [beam] = 17 });
+
+        // With the arcs the quarter circles themselves; without them the same points are a polygon and nothing else.
+        double quarterDisc = arcsKnown ? Math.PI / 4 : 4 * Math.Sin(Math.PI / 16);
+        double quarterArc = arcsKnown ? Math.PI / 2 : 16 * Math.Sin(Math.PI / 32);
+        double area = (a * t + (a - t) * t + (1 - quarterDisc) * (r * r - R * R)) * SquareFeet;
+        double perimeter = (4 * a - (2 - quarterArc) * (r + R)) * feet, depth = height * feet;
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", area), ("OuterSurfaceArea", perimeter * depth), ("GrossSurfaceArea", perimeter * depth + 2 * area),
+            ("NetSurfaceArea", 2 * (1 * 2 + 1 * 5 + 2 * 5) * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * depth), ("NetVolume", 10 * CubicFeet));
+    }
+
+    [Theory]
+    [InlineData(Math.PI / 20, 5)]
+    [InlineData(Math.PI / 10, 6)]
+    public void Pass_BeamWithAShallowArcInItsProfile_MeasuresAnArcWrittenAsOneOrTwoChords(double sweep, int writtenPoints)
+    {
+        // A plate with one corner cut off whose upper side, from (c, h) to (b, h), is an arc that bulges out.
+        const double b = 1, h = 0.5, c = 0.2, height = 10, feet = 0.3048;
+        double radius = (b - c) / (2 * Math.Sin(sweep / 2));
+        var arc = new RvtIO.Internal.Arc([(b + c) / 2, h - radius * Math.Cos(sweep / 2), 0], [1, 0, 0], [0, 1, 0], radius,
+            Math.PI / 2 - sweep / 2, Math.PI / 2 + sweep / 2);
+        var (w, owner, beam) = BeamOverOutline([(0, 0), (b, 0), (b, h), (c, h), (0, h - c)], height, [arc]);
+        Assert.Equal(writtenPoints + 1, IfcExporter.SplitStepArguments(Assert.Single(Args(w, "IFCPOLYLINE"))[1..^1]).Length);
+        var element = new Element { Id = 17, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
+
+        Apply(w, owner, new() { [17] = element }, new() { [beam] = 17 });
+
+        double area = (b * h - c * c / 2 + radius * radius / 2 * (sweep - Math.Sin(sweep))) * SquareFeet;
+        double perimeter = (b + h + radius * sweep + c * Math.Sqrt(2) + h - c) * feet, depth = height * feet;
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", area), ("OuterSurfaceArea", perimeter * depth), ("GrossSurfaceArea", perimeter * depth + 2 * area),
+            ("NetSurfaceArea", 2 * (1 * 2 + 1 * 5 + 2 * 5) * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * depth), ("NetVolume", 10 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_BeamWithAnArcClosedByAStraightSide_AddsNoArcToTheOutlineAsWritten()
+    {
+        // A half disc held as four chords. Its straight side joins the two ends of the arc as well, and the chords of the arc are
+        // written over that side: the way the arc was laid is not a known one, so the section is the polygon as written.
+        const double radius = 0.5, height = 10, feet = 0.3048;
+        var outline = Enumerable.Range(0, 5).Select(k => (radius * Math.Cos(k * Math.PI / 4), radius * Math.Sin(k * Math.PI / 4))).ToArray();
+        var (w, owner, beam) = BeamOverOutline(outline, height, [new([0, 0, 0], [1, 0, 0], [0, 1, 0], radius, 0, Math.PI)]);
+        Assert.Empty(w.PolylineArcs);
+        var element = new Element { Id = 17, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
+
+        Apply(w, owner, new() { [17] = element }, new() { [beam] = 17 });
+
+        double area = radius * radius / 2 * (16 * Math.Sin(Math.PI / 16) - 4 * Math.Sin(Math.PI / 4)) * SquareFeet;
+        double perimeter = 2 * radius * (4 * Math.Sin(Math.PI / 8) + 16 * Math.Sin(Math.PI / 32)) * feet, depth = height * feet;
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", area), ("OuterSurfaceArea", perimeter * depth), ("GrossSurfaceArea", perimeter * depth + 2 * area),
+            ("NetSurfaceArea", 2 * (1 * 2 + 1 * 5 + 2 * 5) * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * depth), ("NetVolume", 10 * CubicFeet));
+    }
+
+    [Fact]
+    public void Pass_BeamWithARegularPolygonProfile_MeasuresThePolygon()
+    {
+        var (w, owner, placement) = NewWriter();
+        // A regular polygon of 32 straight sides: equal short chords on one circle, and no arc anywhere.
+        const double radius = 0.1, depth = 3;
+        const int sides = 32;
+        var points = Enumerable.Range(0, sides)
+            .Select(k => (X: radius * Math.Cos(2 * Math.PI * k / sides), Y: radius * Math.Sin(2 * Math.PI * k / sides)))
+            .Select(p => w.Add("IFCCARTESIANPOINT", $"({StepWriter.Real(p.X)},{StepWriter.Real(p.Y)})")).ToList();
+        int polyline = w.Add("IFCPOLYLINE", $"({string.Join(",", points.Append(points[0]).Select(id => "#" + id))})");
+        int profile = w.Add("IFCARBITRARYCLOSEDPROFILEDEF", $".AREA.,'P',#{polyline}");
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{origin},$,$");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#1,'Body','SweptSolid',(#{solid})");
+        int shape = w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+        int beam = AddProduct(w, "IFCBEAM", "IZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var element = new Element { Id = 17, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
+
+        Apply(w, owner, new() { [17] = element }, new() { [beam] = 17 });
+
+        double area = sides * radius * radius / 2 * Math.Sin(2 * Math.PI / sides);
+        double perimeter = sides * 2 * radius * Math.Sin(Math.PI / sides);
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", area), ("OuterSurfaceArea", perimeter * depth), ("GrossSurfaceArea", perimeter * depth + 2 * area),
+            ("NetSurfaceArea", 2 * (1 * 2 + 1 * 5 + 2 * 5) * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * depth), ("NetVolume", 10 * CubicFeet));
+    }
+
+    [Fact]
+    public void ArcsOverChords_MeasuresTheArcsItIsGivenAndNoOther()
+    {
+        // 32 equal sides on the unit circle: nothing by themselves, the circle once they are the chords of one arc.
+        var polygon = Enumerable.Range(0, 32).Select(k => (Math.Cos(k * Math.PI / 16), Math.Sin(k * Math.PI / 16))).ToList();
+        Assert.Equal((0.0, 0.0), IfcExporter.ArcsOverChordsCurrent(polygon, []));
+
+        var (area, length) = IfcExporter.ArcsOverChordsCurrent(polygon, [new(0, 32, 2 * Math.PI)]);
+        Assert.Equal(Math.PI - 16 * Math.Sin(Math.PI / 16), area, 12);
+        Assert.Equal(2 * Math.PI - 64 * Math.Sin(Math.PI / 32), length, 12);
+
+        // A concave arc of four chords that runs over the first point: its segments are taken away, its length still added.
+        var (concaveArea, concaveLength) = IfcExporter.ArcsOverChordsCurrent(polygon, [new(30, 4, -Math.PI / 4)]);
+        Assert.Equal(2 * Math.Sin(Math.PI / 16) - Math.PI / 8, concaveArea, 12);
+        Assert.Equal(Math.PI / 4 - 8 * Math.Sin(Math.PI / 32), concaveLength, 12);
     }
 
     /// <summary>A space placed in a storey (the storey has a placement of its own, the space is placed relative to it).</summary>
@@ -2221,7 +2413,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
 
-    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false)
+    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false,
+        string? lengthUnit = null, bool column = false)
     {
         var beam = new Element
         {
@@ -2250,7 +2443,18 @@ public class IfcExporterBaseQuantitiesCurrentTests
             beam.CurveDriverLineLength = 10;
             beam.CurveDriverLineZ = (0, 5);
         }
-        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded };
+        if (column)
+        {
+            // the same box standing: 0.4 x 0.6 ft, 10 ft tall
+            beam.CategoryId = -2001330;
+            beam.Category = "OST_StructuralColumns";
+            beam.BoundingBox = beam.Geometry.BoundingBox = [1.8, 0, 3.7, 2.2, 0.6, 13.7];
+            beam.Geometry.Faces = Box(0.4, 0.6, 10).Faces.Select(face => new GeoFace
+            {
+                OuterVertices = face.OuterVertices!.Select(p => new[] { p[0] + 1.8, p[1], p[2] + 3.7 }).ToList(),
+            }).ToList();
+        }
+        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded, SerializedLengthUnit = lengthUnit };
         info.Elements.Add(beam);
         string path = Path.Combine(Path.GetTempPath(), $"revitreader-base-quantities-{Guid.NewGuid():N}.ifc");
         try
