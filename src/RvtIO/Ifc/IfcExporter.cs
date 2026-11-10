@@ -186,6 +186,8 @@ public partial class IfcExporter
     /// themselves emitted - i.e. the elements that are the RelatingObject of a real decomposition.
     /// </summary>
     private readonly HashSet<int> _emittedAggregateParentElementIds = new();
+    /// <summary>Elements the storey rule placed by a level that is not a project storey.</summary>
+    private readonly HashSet<int> _offStoreyLevelElementIds = new();
 
     /// <summary>
     /// The exact placement frame each wall's geometry was written in (centre, base z, axis
@@ -380,6 +382,7 @@ public partial class IfcExporter
         ValidateRoomExportPhase(info);
         _geometryUndecoded = info.GeometryUndecoded;
         _usedExportIds.Clear();
+        _offStoreyLevelElementIds.Clear();
         _storeyLevels.Clear();
         _storeyGlobalIds.Clear();
         _recessOpeningEntityIds.Clear();
@@ -615,9 +618,7 @@ public partial class IfcExporter
         {
             foreach (var lvl in levelElems)
             {
-                double elevFt = GetElevation(lvl);
-                double elevM = Math.Round(elevFt * FeetToMetres, 4); // round to 0.1mm
-                if (Math.Abs(elevM) < 1e-6) elevM = 0.0; // avoid -0.
+                double elevM = StoreyElevationMetres(lvl);
                 int lvlPtId = w.Add("IFCCARTESIANPOINT", StepWriter.List(D(0), D(0), D(elevM)));
                 int lvlAxisId = w.Add("IFCAXIS2PLACEMENT3D", $"{R(lvlPtId)},$,$");
                 int lvlPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(bldgLocalPlacementId)},{R(lvlAxisId)}");
@@ -1736,6 +1737,11 @@ public partial class IfcExporter
             if (CurrentProfile && elem.CategoryId == -2009000 && elem.TypeId > 0
                 && ifcType == "IFCBUILDINGELEMENTPROXY")
                 ifcType = "IFCREINFORCINGMESH";
+            // A roof soffit is a covering with no predefined type, a gutter a flow segment.
+            if (CurrentProfile && elem.CategoryId == RoofSoffitCategoryId && ifcType == "IFCBUILDINGELEMENTPROXY")
+                ifcType = "IFCCOVERING";
+            if (CurrentProfile && elem.CategoryId == GutterCategoryId && ifcType == "IFCBUILDINGELEMENTPROXY")
+                ifcType = "IFCFLOWSEGMENT";
             // The current profile writes a wall's openings only
             // beside a wall exported as an extrusion with an axis; the openings of a plain IfcWall
             // are cut into its Brep.
@@ -1835,6 +1841,7 @@ public partial class IfcExporter
             int shapeId = 0;
             List<(int ShapeId, bool IsLanding)>? rampPartBodies = null;
             var rampLayout = RampLayout.Single;
+            int rampAxisId = 0;
             int elemPlacementId = 0;
             if (bbox == null || bbox.Length < 6)
             {
@@ -4362,6 +4369,11 @@ public partial class IfcExporter
                     // A beam is extruded along the axes of the family-instance export: its structural
                     // axis, then x and y.
                 }
+                else if (rampLayout == RampLayout.Monolithic
+                    && TryWriteRampBodyAtMinimumCurrent(w, geoForBrep, bodySubCtxId, out shapeId, out bodyWriteOutcome, out rampAxisId))
+                {
+                    // The container of a monolithic ramp sits at the lowest vertex of its body.
+                }
                 else
                 {
                     var facetedShape = CreateFacetedBrepWithOutcome(
@@ -4369,7 +4381,7 @@ public partial class IfcExporter
                     shapeId = facetedShape.ShapeId;
                     bodyWriteOutcome = facetedShape.Outcome;
                 }
-                elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
+                elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(rampAxisId > 0 ? rampAxisId : axisId)}");
                 withFaces++;
             }
             else if (ifcType is "IFCWALLSTANDARDCASE" or "IFCWALL")
@@ -4558,7 +4570,7 @@ public partial class IfcExporter
                 "IFCREINFORCINGMESH" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},$,$,$,$,$,$,$,$,$",
                 "IFCCOVERING" =>
-                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.{ResolveCoveringOccurrencePredefinedType(elem, referenceElementType, elementIdOccurrenceCounts)}.",
+                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile && elem.CategoryId == RoofSoffitCategoryId ? "$" : $".{ResolveCoveringOccurrencePredefinedType(elem, referenceElementType, elementIdOccurrenceCounts)}.")}",
                 "IFCRAILING" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile && elem.NativeMasterSymbolId is not > 0 ? "$" : ".NOTDEFINED.")}",
                 "IFCSTAIR" =>
@@ -4881,7 +4893,19 @@ public partial class IfcExporter
             exportedCount++;
         }
 
-        StairAggregation.Apply(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, CurrentProfile);
+        // A multistory stair is repeated from its base level, which may be a project level that is not a storey:
+        // the height the storey placement of every project level has or would have.
+        Dictionary<int, double>? stairLevelElevations = null;
+        if (CurrentProfile)
+        {
+            stairLevelElevations = [];
+            foreach (var projectLevel in info.Elements)
+                if (IsProjectLevel(projectLevel) && projectLevel.Parameters.Any(parameter => parameter.Id == -1007102
+                        && parameter.StorageType == StorageType.Double && parameter.Value is double feet && double.IsFinite(feet)))
+                    stairLevelElevations[projectLevel.Id] = StoreyElevationMetres(projectLevel);
+        }
+        StairAggregation.Apply(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, CurrentProfile, storeyIds, storeyPlacements,
+            stairLevelElevations);
         var stairBodyParts = CurrentProfile
             ? StairAggregation.SplitLegacyBodies(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, axisId, _usedExportIds)
             : [];
@@ -4889,7 +4913,8 @@ public partial class IfcExporter
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
             foreach (int systemId in WriteJoistAssemblies(w, exportableElements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
-                         storeyContents, propertySingleValueIds))
+                         storeyContents, propertySingleValueIds,
+                         system => ResolveStorey(system, storeyIds, defaultStoreyId, elemById, buildingId, system.BoundingBox)))
             {
                 // counted with or without a skip log; the log entry is only there to be taken out
                 exportedCount++;
@@ -7219,15 +7244,20 @@ public partial class IfcExporter
         if (element.ValidatedFloorTypeReferenceIsBlocked)
             return null;
 
-        if (element.ValidatedFloorTypeReferenceName == null)
+        if (FloorTypeReferenceName(element, currentProfile) is not { } floorReference)
             return baselineReferenceValue;
 
         // A direct parameter can create the main product property.
         if (baselineReferenceValue == null
             && !element.ValidatedFloorTypeReferenceIsExplicit)
             return null;
-        return element.ValidatedFloorTypeReferenceName;
+        return floorReference;
     }
+
+    /// <summary>The validated floor type Reference: the current profile prefers the own name of the type to the last string of its block, which a
+    /// type with text parameters ends in one of; the legacy profile keeps the last string.</summary>
+    internal static string? FloorTypeReferenceName(Element floor, bool currentProfile) =>
+        currentProfile ? floor.ValidatedFloorOwnTypeName ?? floor.ValidatedFloorTypeReferenceName : floor.ValidatedFloorTypeReferenceName;
 
     /// <summary>A door/window product fills exactly one opening, so that opening is bare.</summary>
     internal static Element? ResolveHostedOpeningPropertySetReferenceElement(
@@ -11103,7 +11133,7 @@ public partial class IfcExporter
             int openingId = CreateOpeningElement(w, openingGlobalId, ownerHistId, openingName,
                 profile.TagId, propertySetReferenceElement, elemById,
                 openingPlacementId, shapeId,
-                propertySingleValueIds, slab.ValidatedFloorTypeReferenceName,
+                propertySingleValueIds, FloorTypeReferenceName(slab, CurrentProfile),
                 slab.ValidatedFloorTypeReferenceIsBlocked,
                 useSlabQuantityTakeOffReference
                     ? slabQuantityTakeOffReferenceValueId
@@ -64547,6 +64577,9 @@ public partial class IfcExporter
     /// </summary>
     internal const int InstanceAsTypeSubElementIndex = 2048;
 
+    /// <summary>Sub-element of the ExportId that names the type of a gutter.</summary>
+    internal const int GutterTypeSubElementIndex = 1;
+
     /// <summary>
     /// The door sub-element rule: the sub-element of the symbol that names its door or window
     /// style.
@@ -64997,6 +65030,9 @@ public partial class IfcExporter
             }
             if (!levelIdByProductElementId.TryGetValue(written ? insert.Id : host.Id, out int levelId))
                 continue;
+            // A written insert is identified by its own level, which need not be the level of the storey that contains it
+            // (measured in the current profile only).
+            if (written && currentProfile && RoomIntParam(insert, LevelParamId) is int ownLevel and > 0) levelId = ownLevel;
 
             string openingGlobalId = DoorWindowOpeningGlobalId(insertExportId, levelId, kind, currentProfile);
             if (globalIds.Contains(openingGlobalId)) continue;
@@ -65617,6 +65653,8 @@ public partial class IfcExporter
     private const int StructuralColumnCategoryId = -2001330;
     private const int FloorCategoryId = -2000032;
     private const int RoofCategoryId = -2000035;
+    private const int RoofSoffitCategoryId = -2001393;
+    private const int GutterCategoryId = -2001391;
     private const int CurtainSystemCategoryId = -2000090;
     private const int MassExteriorWallCategoryId = -2003413;
     private const int MassInteriorWallCategoryId = -2003412;
@@ -67631,6 +67669,7 @@ public partial class IfcExporter
                 ("IFCFURNISHINGELEMENT", -2001100) => "IFCSYSTEMFURNITUREELEMENTTYPE", // OST_FurnitureSystems
                 ("IFCFLOWSEGMENT", -2008000) => "IFCDUCTSEGMENTTYPE", // OST_DuctCurves
                 ("IFCFLOWSEGMENT", -2008044 or -2008050) => "IFCPIPESEGMENTTYPE", // OST_PipeCurves, OST_FlexPipeCurves
+                ("IFCFLOWSEGMENT", GutterCategoryId) when currentProfile => "IFCPIPESEGMENTTYPE",
                 ("IFCFLOWSEGMENT", -2008130) => "IFCCABLECARRIERSEGMENTTYPE", // OST_CableTray
                 ("IFCFLOWFITTING", -2008049) => "IFCPIPEFITTINGTYPE", // OST_PipeFitting
                 ("IFCFLOWFITTING", -2008126 or -2008128) => "IFCCABLECARRIERFITTINGTYPE", // OST_CableTrayFitting, OST_ConduitFitting
@@ -67688,6 +67727,8 @@ public partial class IfcExporter
             if (currentProfile && originalSymbolId == 0 && product.ifcType is "IFCBEAM" or "IFCCOLUMN" or "IFCBUILDINGELEMENTPROXY" or "IFCFURNISHINGELEMENT"
                 && UsesInstanceGeometryOfTypeCurrent(instElem, canonicalType))
                 ownerId = instElem.Id;
+            // Each gutter has a type of its own.
+            if (typeClass == "IFCPIPESEGMENTTYPE" && instElem.CategoryId == GutterCategoryId) ownerId = instElem.Id;
             if (TypeKeyDiagnostics(product.ifcType))
                 DiagnosticSink.WriteLine($"TKD {product.ifcType} element={elementId} type={typeElemId} symbol={originalSymbolId} own={ownerId}"
                     + $" instance[{DescribeStoredGeometry(instElem)}] symbol[{DescribeStoredGeometry(originalSymbolId > 0 ? elemById[originalSymbolId] : null)}]"
@@ -67755,10 +67796,13 @@ public partial class IfcExporter
             var typeElem = elemById[typeElemId];
             // The current profile makes a window style from the original family symbol
             // (createWindowStyle), and tags it by it.
-            string tagArg = S((typeClass == "IFCPLATETYPE" ? firstMemberElementId[key]
+            bool gutterType = typeClass == "IFCPIPESEGMENTTYPE" && ownerId > 0 && elemById[ownerId].CategoryId == GutterCategoryId;
+            string tagArg = S((typeClass == "IFCPLATETYPE" || gutterType ? firstMemberElementId[key]
                     : currentProfile && typeClass == "IFCWINDOWSTYLE" && originalSymbolId > 0 ? originalSymbolId : typeElemId)
                 .ToString(CultureInfo.InvariantCulture));
-            string nameArg = S(typeClass == "IFCTYPEPRODUCT" ? TypeObjectName(typeElem, currentProfile) : TypeObjectNameParts(typeElem, currentProfile).Full);
+            string nameArg = S(typeClass == "IFCTYPEPRODUCT" ? TypeObjectName(typeElem, currentProfile)
+                : gutterType ? $"{FixedSystemFamilyName(elemById[ownerId])}:{TypeObjectNameParts(typeElem, currentProfile).Full}:{typeElemId.ToString(CultureInfo.InvariantCulture)}"
+                : TypeObjectNameParts(typeElem, currentProfile).Full);
             string identityKey = originalSymbolId == 0
                 ? typeElemId.ToString(CultureInfo.InvariantCulture)
                 : $"{typeElemId.ToString(CultureInfo.InvariantCulture)}:symbol:{originalSymbolId.ToString(CultureInfo.InvariantCulture)}";
@@ -67798,8 +67842,9 @@ public partial class IfcExporter
                 string trailingArgs = TypeClassesWithPredefinedType.Contains(typeClass)
                     ? $",.{predefinedTypes[key]}."
                     : typeClass == "IFCFURNITURETYPE" ? ",$" : "";
+                // The ElementType of a gutter type repeats its name.
                 typeEntityId = w.Add(typeClass,
-                    $"{guidArg},{R(ownerHistId)},{nameArg},$,$,{hasPropertySetsArg},$,{tagArg},$" + trailingArgs);
+                    $"{guidArg},{R(ownerHistId)},{nameArg},$,$,{hasPropertySetsArg},$,{tagArg},{(gutterType ? nameArg : "$")}" + trailingArgs);
             }
 
             // The GlobalId rule uses the original symbol's own ExportId for mapped types, except
@@ -67817,7 +67862,8 @@ public partial class IfcExporter
             {
                 if (elemById[ownerId].SerializedExportId is { } ownerExportId)
                     exactTypeGuids[typeEntityId] = IfcGuid.ToIfcGuid(ElementExportIds.SubElementId(
-                        currentProfile ? elemById[ownerId].SerializedHandleExportId ?? ownerExportId : ownerExportId, InstanceAsTypeSubElementIndex));
+                        currentProfile ? elemById[ownerId].SerializedHandleExportId ?? ownerExportId : ownerExportId,
+                        gutterType ? GutterTypeSubElementIndex : InstanceAsTypeSubElementIndex));
             }
             else if (guidSourceId > 0 && elemById[guidSourceId] is { } source
                 && source.SerializedExportId is { } exportId
@@ -67896,6 +67942,7 @@ public partial class IfcExporter
             ("IFCSLABTYPE", -2000032) => "FLOOR",
             ("IFCSLABTYPE", -2000920) => "LANDING",
             ("IFCCOVERINGTYPE", -2000038) => "CEILING",
+            ("IFCPIPESEGMENTTYPE", GutterCategoryId) => "GUTTER",
             ("IFCMEMBERTYPE", -2000171) => "MULLION",
             ("IFCPLATETYPE", -2000170) => "CURTAIN_PANEL",
             ("IFCPIPESEGMENTTYPE", -2008050) => "FLEXIBLESEGMENT",
@@ -68069,7 +68116,7 @@ public partial class IfcExporter
         if (ifcType == "IFCCURTAINWALL")
             return ResolveValidatedWallTypeName(element, elementsById.GetValueOrDefault(element.FamilyTypeId));
         if (ifcType == "IFCSLAB" && element.CategoryId == -2000032)
-            return Own(element.ValidatedFloorTypeReferenceName, element.ValidatedFloorTypeReferenceIsExplicit,
+            return Own(FloorTypeReferenceName(element, currentProfile), element.ValidatedFloorTypeReferenceIsExplicit,
                 element.ValidatedFloorTypeReferenceIsBlocked);
         if (ifcType == "IFCCOVERING" && element.CategoryId == -2000038)
             return Own(element.ValidatedCeilingTypeReferenceName, element.ValidatedCeilingTypeReferenceIsExplicit,
@@ -68478,8 +68525,8 @@ public partial class IfcExporter
     /// <summary>
     /// Spaces subsystem: <c>IfcSpace</c> + <c>IfcRelAggregates</c> (storey decomposition, NOT
     /// <c>IfcRelContainedInSpatialStructure</c>) + a private, non-shared <c>IfcSpaceType</c> +
-    /// <c>IfcRelDefinesByType</c> + the one-property <c>Pset_SpaceCommon</c> (<c>Reference</c>
-    /// only).
+    /// <c>IfcRelDefinesByType</c> + <c>Pset_SpaceCommon</c> (<c>Reference</c>; the current profile adds the
+    /// room finishes as coverings).
     /// </summary>
     private Dictionary<int, string> WriteSpaces(
         StepWriter w, int ownerHistId, List<Element> allElements,
@@ -68522,6 +68569,12 @@ public partial class IfcExporter
             int storeyId;
             if (levelElemId is int lvl && storeyIds.TryGetValue(lvl, out int levelStoreyId)) storeyId = levelStoreyId;
             else if (buildingContainerId is int container) storeyId = container;
+            // A space on a Level that is not a project storey stands in the highest storey at or below that level;
+            // it is not written where no storey is that low.
+            else if (CurrentProfile && levelElemId is int offStoreyLevelId && _elementsByIdCurrent is { } elementsById
+                && elementsById.TryGetValue(offStoreyLevelId, out var offStoreyLevel) && offStoreyLevel.CategoryId == -2000240
+                && HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elementsById, 0) is > 0 and int storeyBelowId)
+                storeyId = storeyBelowId;
             else continue;
 
             string? number = RoomStringParam(elem, RoomNumberParam);
@@ -68619,9 +68672,14 @@ public partial class IfcExporter
             string referenceText = $"{longName} {number}";
             int referenceValueId = GetOrAddPropertySingleValue(
                 w, propertySingleValueIds, "Reference", $"IFCIDENTIFIER({S(referenceText)})");
+            var commonValueIds = new List<int> { referenceValueId };
+            if (CurrentProfile)
+                foreach (var (coveringName, finishParamId) in SpaceCoveringParams)
+                    if (RoomStringParam(elem, finishParamId) is { } finish)
+                        commonValueIds.Add(GetOrAddPropertySingleValue(w, propertySingleValueIds, coveringName, $"IFCLABEL({S(finish)})"));
             int psetId = w.Add("IFCPROPERTYSET",
                 $"{S(IfcGuid.FromName($"space-common-pset:{elem.Id}"))},{R(ownerHistId)},"
-                + $"{S("Pset_SpaceCommon")},$,{StepWriter.List(R(referenceValueId))}");
+                + $"{S("Pset_SpaceCommon")},$,{StepWriter.List(commonValueIds.Select(R))}");
             w.Add("IFCRELDEFINESBYPROPERTIES",
                 $"{S(IfcGuid.FromName($"space-common-rel:{elem.Id}"))},{R(ownerHistId)},$,$,"
                 + $"{StepWriter.List(R(spaceEntityId))},{R(psetId)}");
@@ -68670,6 +68728,9 @@ public partial class IfcExporter
     }
 
     private const int SpaceCommentsParamId = -1010106;   // BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS
+    /// <summary>The coverings of Pset_SpaceCommon: the floor, wall and ceiling finish of the room, each written when it has a text.</summary>
+    private static readonly (string Name, int ParamId)[] SpaceCoveringParams =
+        [("FloorCovering", -1006903), ("WallCovering", -1006904), ("CeilingCovering", -1006905)];   // ROOM_FINISH_FLOOR, _WALL, _CEILING
     private const int AreaSchemeIdParam = -1012704;      // RoomElem.m_areaSchemeId
     private const int PhaseCategoryId = -2000112;        // OST_Phases
 
@@ -69651,10 +69712,10 @@ public partial class IfcExporter
     /// <summary>
     /// The storey of an element, replaying the storey rule: the base-level
     /// parameter of its kind (a nested family instance reads its top-level instance), then any
-    /// stored level reference.
+    /// stored level reference. <paramref name="outline"/> is the box of an element that has no body of its own.
     /// </summary>
     private int ResolveStorey(Element elem, Dictionary<int, int> storeyIds, int defaultStoreyId,
-        IReadOnlyDictionary<int, Element> elemById, int buildingId)
+        IReadOnlyDictionary<int, Element> elemById, int buildingId, double[]? outline = null)
     {
         // The current profile reads STAIRS_BASE_LEVEL_PARAM, which is StairsElement.m_baseLevelId.
         if (CurrentProfile && elem.CategoryId == -2000120 && elem.SerializedStairBaseLevelId is int stairBaseLevelId
@@ -69670,20 +69731,24 @@ public partial class IfcExporter
             _ when elem.NativeMasterSymbolId is > 0 => [-1001350, -1001365, -1001383],
             _ => [],
         };
-        // A building-services element whose level is a Level that is not a project storey stands like a column
-        // on such a level: in the highest storey at or below it, in the building where no storey is that low.
+        // An element whose level is a Level that is not a project storey stands in the highest storey at or below
+        // that level, in the building where no storey is that low.
         Element? offStoreyLevel = null;
         foreach (int parameterId in baseLevelParameters)
             if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
             {
                 if (storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
-                if (CurrentProfile && offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                if (CurrentProfile && offStoreyLevel == null
                     && elemById.TryGetValue(levelId, out var baseLevel) && baseLevel.CategoryId == -2000240)
                     offStoreyLevel = baseLevel;
             }
         // A base level that is not a storey outranks the element's own level parameters below, as one that is a
         // storey does. Among the base-level parameters one on a storey still outranks an earlier one that is not.
-        if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+        if (offStoreyLevel != null)
+        {
+            _offStoreyLevelElementIds.Add(elem.Id);
+            return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+        }
 
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
@@ -69705,11 +69770,15 @@ public partial class IfcExporter
                 if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId)
                 {
                     if (storeyIds.TryGetValue(assocLevelId, out int assocStoreyId)) return assocStoreyId;
-                    if (offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                    if (offStoreyLevel == null
                         && elemById.TryGetValue(assocLevelId, out var assocLevel) && assocLevel.CategoryId == -2000240)
                         offStoreyLevel = assocLevel;
                 }
-            if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+            if (offStoreyLevel != null)
+            {
+                _offStoreyLevelElementIds.Add(elem.Id);
+                return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+            }
         }
         // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
         else foreach (var p in elem.Parameters)
@@ -69729,7 +69798,7 @@ public partial class IfcExporter
         if (CurrentProfile && storeyIds.Count > 0)
         {
             int byBottom = ResolveStoreyByBottomCurrent(
-                (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
+                (outline ?? elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
                 storeyIds, elemById);
             return byBottom != 0 ? byBottom : defaultStoreyId;
         }
@@ -69777,10 +69846,6 @@ public partial class IfcExporter
             }
         return chosen;
     }
-
-    /// <summary>Every category of the duct, pipe, cable tray and conduit range (segments, fittings, accessories, insulation, terminals, sprinklers), and the electrical, lighting, mechanical, plumbing and food service equipment and fixtures.</summary>
-    private static bool IsBuildingServicesCategory(int? categoryId) =>
-        categoryId is <= -2008000 and >= -2008999 or -2001040 or -2001043 or -2001060 or -2001120 or -2001140 or -2001160;
 
     /// <summary>10 cm in feet: the storey rule, how far below a level its storey starts.</summary>
     private const double StoreyExtensionFeet = 10.0 / (12.0 * 2.54);
@@ -69862,6 +69927,13 @@ public partial class IfcExporter
             .OrderBy(GetElevation)
             .ThenBy(element => element.Id)
             .ToList();
+    }
+
+    /// <summary>The height of the storey placement of a level, in metres.</summary>
+    private static double StoreyElevationMetres(Element level)
+    {
+        double metres = Math.Round(GetElevation(level) * FeetToMetres, 4); // round to 0.1mm
+        return Math.Abs(metres) < 1e-6 ? 0.0 : metres; // avoid -0.
     }
 
     private static double GetElevation(Element level)

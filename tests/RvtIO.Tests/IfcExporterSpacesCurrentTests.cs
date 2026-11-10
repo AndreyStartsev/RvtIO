@@ -112,6 +112,52 @@ public class IfcExporterSpacesCurrentTests
     }
 
     [Fact]
+    public void SpaceOnALevelThatIsNotAStorey_StandsInTheHighestStoreyAtOrBelow_AndIsNotWrittenBelowTheLowest()
+    {
+        string ifc = Export(new RevitFileInfo
+        {
+            Elements =
+            [
+                Level(900, "Ground"), Level(901, "First", elevation: 10),
+                Level(902, "Landing", elevation: 12, buildingStory: false), Level(903, "Pit", elevation: -3, buildingStory: false),
+                Room(100, "Stair", "1", levelId: 902), Room(200, "Sump", "2", levelId: 903), Room(300, "Hall", "3"),
+            ],
+        });
+
+        var spaces = Ids(ifc, "IFCSPACE").ToDictionary(id => Args(ifc, id, "IFCSPACE")[2]);
+        Assert.Equal(["'1'", "'3'"], spaces.Keys.Order().ToArray());
+        int first = Ids(ifc, "IFCBUILDINGSTOREY").Single(id => Args(ifc, id, "IFCBUILDINGSTOREY")[2] == "'First'");
+        var relation = Ids(ifc, "IFCRELCONTAINEDINSPATIALSTRUCTURE").Select(id => Args(ifc, id, "IFCRELCONTAINEDINSPATIALSTRUCTURE"))
+            .Single(a => a[5] == $"#{first}");
+        Assert.Equal($"(#{spaces["'1'"]})", relation[4]);
+    }
+
+    [Fact]
+    public void RoomFinishes_BecomeTheCoveringsOfPsetSpaceCommon_WhenTheyHaveAText()
+    {
+        var room = Room(100, "Hall", "1");
+        room.Parameters.Add(new Parameter { Id = -1006903, StorageType = StorageType.String, Value = "Screed" });   // floor finish
+        room.Parameters.Add(new Parameter { Id = -1006904, StorageType = StorageType.String, Value = "" });         // wall finish, empty
+        room.Parameters.Add(new Parameter { Id = -1006905, StorageType = StorageType.String, Value = "Plaster" });  // ceiling finish
+        string ifc = Export(new RevitFileInfo { Elements = [Level(900), room, Room(200, "Store", "2")] });
+
+        string[] Properties(string number)
+        {
+            int space = Ids(ifc, "IFCSPACE").Single(id => Args(ifc, id, "IFCSPACE")[2] == number);
+            var psets = Ids(ifc, "IFCRELDEFINESBYPROPERTIES").Select(id => Args(ifc, id, "IFCRELDEFINESBYPROPERTIES"))
+                .Where(a => a[4] == $"(#{space})").Select(a => int.Parse(a[5][1..])).Where(id => Ids(ifc, "IFCPROPERTYSET").Contains(id))
+                .Select(id => Args(ifc, id, "IFCPROPERTYSET"));
+            return Regex.Matches(psets.Single(a => a[2] == "'Pset_SpaceCommon'")[4], @"#(\d+)")
+                .Select(match => Args(ifc, int.Parse(match.Groups[1].Value), "IFCPROPERTYSINGLEVALUE")).Select(a => $"{a[0]}={a[2]}").ToArray();
+        }
+
+        Assert.Equal(
+            ["'Reference'=IFCIDENTIFIER('Hall 1')", "'FloorCovering'=IFCLABEL('Screed')", "'CeilingCovering'=IFCLABEL('Plaster')"],
+            Properties("'1'"));
+        Assert.Equal(["'Reference'=IFCIDENTIFIER('Store 2')"], Properties("'2'"));
+    }
+
+    [Fact]
     public void AreaScheme_BecomesAnIfcGroupOfItsAreas()
     {
         var scheme = new Element { Id = 15979, CategoryId = AreaSchemeCategoryId, Name = "Gross Building",
@@ -176,22 +222,23 @@ public class IfcExporterSpacesCurrentTests
 
     private static Element Phase(int id) => new() { Id = id, CategoryId = PhaseCategoryId, Name = $"Phase {id}" };
 
-    private static Element Level(int id) => new()
+    private static Element Level(int id, string name = "Level 1", double elevation = 0, bool buildingStory = true) => new()
     {
-        Id = id, Name = "Level 1", IsNativeLevel = true, SerializedFamilyId = -1, SerializedUnplacedOwnerId = -1,
+        Id = id, Name = name, CategoryId = -2000240, IsNativeLevel = true, SerializedFamilyId = -1, SerializedUnplacedOwnerId = -1,
         SerializedOwnerDbViewId = -1,
         Parameters =
         [
-            new Parameter { Id = -1007102, Definition = new Definition { Name = "LEVEL_ELEV" }, StorageType = StorageType.Double, Value = 0.0 },
-            new Parameter { Id = -1007111, StorageType = StorageType.Integer, Value = 1 },
+            new Parameter { Id = -1007102, Definition = new Definition { Name = "LEVEL_ELEV" }, StorageType = StorageType.Double, Value = elevation },
+            new Parameter { Id = -1007111, StorageType = StorageType.Integer, Value = buildingStory ? 1 : 0 },
         ],
     };
 
-    private static Element Room(int id, string name, string number, string? comments = null, int categoryId = RoomCategoryId)
+    private static Element Room(int id, string name, string number, string? comments = null, int categoryId = RoomCategoryId,
+        int levelId = 900)
     {
         var parameters = new List<Parameter>
         {
-            new() { Id = -1006916, StorageType = StorageType.ElementId, Value = 900 },
+            new() { Id = -1006916, StorageType = StorageType.ElementId, Value = levelId },
             new() { Id = -1006901, StorageType = StorageType.String, Value = number },
         };
         if (comments != null) parameters.Add(new Parameter { Id = -1010106, StorageType = StorageType.String, Value = comments });

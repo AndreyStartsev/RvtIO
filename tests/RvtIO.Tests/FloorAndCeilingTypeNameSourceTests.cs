@@ -1,3 +1,4 @@
+using RvtIO.Ifc;
 using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -245,6 +246,54 @@ public class ElementBuilderFloorTypeNameSourceTests
         Assert.Equal("Type suffix", instance.ValidatedFloorTypeReferenceName);
         Assert.True(instance.ValidatedFloorTypeReferenceIsExplicit);
         Assert.False(instance.ValidatedFloorTypeReferenceIsBlocked);
+    }
+
+    [Theory]
+    [InlineData("agreeing", "Own type name")]
+    [InlineData("two-blocks", null)]
+    [InlineData("other-class", null)]
+    [InlineData("no-layers", null)]
+    [InlineData("other-discriminator", null)]
+    [InlineData("block-only", null)]
+    public void FloorReferenceValidation_OwnTypeNameNeedsTheValidationOfTheHostTypes(string mode, string? expectedOwnName)
+    {
+        var type = Floor(200, 0, "Existing floor type name");
+        var instance = Floor(300, type.Id, "Existing instance name");
+        type.IsBlockOnly = mode == "block-only";
+        var elements = new List<Element> { type, instance };
+        var state = new ParsingState();
+        state.SystemTypeRoots[(uint)type.Id] = (mode == "two-blocks" ? 2 : 1, 1915, mode == "other-discriminator" ? 1 : 0);
+        state.HostTypeCompoundStructures[(uint)type.Id] = (mode == "two-blocks" ? 2 : 1, (ushort)(mode == "other-class" ? 646 : 1915),
+            mode == "no-layers" ? null : [new RawCompoundStructureLayer(0, 0, 0, 1, 0, 0, 0)], "Own type name");
+
+        ElementBuilder.ApplyValidatedFloorTypeReferenceNames(
+            elements, elements.ToDictionary(element => element.Id),
+            new Dictionary<uint, (int BlockCount, string? TerminalName)>
+            {
+                // the block of a type with text parameters ends in the last of them
+                [(uint)type.Id] = (1, "Terminal string"),
+            },
+            new Dictionary<uint, TfBlockDeserializer.NativeParams>
+            {
+                [(uint)instance.Id] = FloorNativeParams(type.Id),
+            },
+            state);
+
+        Assert.Equal(expectedOwnName, instance.ValidatedFloorOwnTypeName);
+        Assert.Equal("Terminal string", instance.ValidatedFloorTypeReferenceName);
+        Assert.False(instance.ValidatedFloorTypeReferenceIsExplicit);
+    }
+
+    [Fact]
+    public void FloorReferenceValidation_OwnTypeNameIsForTheCurrentProfileOnly()
+    {
+        var floor = Floor(300, 0, "Floor");
+        floor.ValidatedFloorTypeReferenceName = "Terminal string";
+        floor.ValidatedFloorOwnTypeName = "Own type name";
+        Assert.Equal("Own type name", IfcExporter.FloorTypeReferenceName(floor, currentProfile: true));
+        Assert.Equal("Terminal string", IfcExporter.FloorTypeReferenceName(floor, currentProfile: false));
+        floor.ValidatedFloorOwnTypeName = null;
+        Assert.Equal("Terminal string", IfcExporter.FloorTypeReferenceName(floor, currentProfile: true));
     }
 
     [Fact]

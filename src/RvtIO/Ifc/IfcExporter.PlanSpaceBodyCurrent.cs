@@ -19,7 +19,7 @@ public partial class IfcExporter
         var ring = outline.Select(point => new[] { point.X, point.Y, lowerOffset }).ToList();
         var extrusion = new OthersCurrentExtrusion
         {
-            Axis = [0, 0, 1], LengthFt = storeyHeightMetres / FeetToMetres, Regions = [(ring, [])], FirstSourceLoop = ring,
+            Axis = [0, 0, 1], LengthFt = storeyHeightMetres / FeetToMetres, Regions = [(ring, [], null)], FirstSourceLoop = ring,
         };
         var checkpoint = w.CreateCheckpoint();
         int solidId = WriteOthersCurrentSolid(w, extrusion, [], string.Empty, 0, 0, 0, originOverride: [0, 0, lowerOffset]);

@@ -34,10 +34,68 @@ public partial class IfcExporter
         bool shapeInName, Dictionary<int, int> storeyIds, int defaultStoreyId, Dictionary<int, List<int>> storeyContents)
     {
         var data = elem.RebarBars!;
-        if (data.Bars.Count == 0 || data.Bars.Any(bar => bar.Count == 0)) return false;
+        if (data.Items != null)
+            return WriteRebarContainer(w, elem, data, elemById, ownerHistId, axisId, parentPlacementId, bodySubCtxId, propertySingleValueIds, storeyIds, defaultStoreyId, storeyContents);
         string? barTypeName = data.BarTypeName;
-        if (string.IsNullOrEmpty(barTypeName)) return false;
+        if (data.Bars.Count == 0 || data.Bars.Any(bar => bar.Count == 0) || string.IsNullOrEmpty(barTypeName)) return false;
+        // For shape driven bars of Revit 2026 files the shape follows the type
+        string typeLabel = shapeInName && data.SystemId == 0 && data.ShapeName != null ? $"{barTypeName} : Shape {data.ShapeName}" : barTypeName;
+        string elemName = $"{RebarFamilyLabel}:{typeLabel}:{elem.Id.ToString(CultureInfo.InvariantCulture)}";
+        string objectType = data.SystemId > 0 ? barTypeName : $"{RebarFamilyLabel}:{barTypeName}";
+        // RebarInSystem: the sub-element index is the number of bars plus 3; a Rebar has none
+        int entityId = WriteRebarBar(w, elem, data, ownerHistId, axisId, parentPlacementId, bodySubCtxId, elemName, objectType, data.SystemId > 0 ? data.Bars.Count + 3 : 0);
+        ExportQuantityTakeOffPropertySet(w, elem, entityId, ownerHistId, barTypeName, propertySingleValueIds);
+        PlaceRebarInStorey(elem, data, elemById, entityId, storeyIds, defaultStoreyId, storeyContents);
+        // No group of their system is written for the bars of an assembly
+        if (data.SystemId > 0 && !data.InAssembly)
+        {
+            if (!_rebarSystemMembers.TryGetValue(data.SystemId, out var members)) _rebarSystemMembers[data.SystemId] = members = [];
+            members.Add(entityId);
+        }
+        return true;
+    }
 
+    /// <summary>The bars of each RebarContainer by container element id: the label of its group and its items, in the order of the container.</summary>
+    private readonly Dictionary<int, (string Label, List<int> Members)> _rebarContainerMembers = new();
+
+    /// <summary>RebarContainerType's family label, the first part of the name of every item of a container.</summary>
+    private const string ContainerFamilyLabel = "Structural Rebar Container";
+
+    /// <summary>Writes the items of a RebarContainer, each an IfcReinforcingBar of one swept disk (name "Structural Rebar Container:type:container id: index",
+    /// GlobalId of the sub-element index + 4 of the container), with one Pset_QuantityTakeOff (Reference = the container type) for all of them; the
+    /// group of the container is written with the groups of the reinforcement systems. False (nothing written) when no item can be written.</summary>
+    private bool WriteRebarContainer(StepWriter w, Element elem, RebarBars data, IReadOnlyDictionary<int, Element> elemById, int ownerHistId, int axisId,
+        int parentPlacementId, int bodySubCtxId, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
+        Dictionary<int, int> storeyIds, int defaultStoreyId, Dictionary<int, List<int>> storeyContents)
+    {
+        string? typeName = data.BarTypeName;
+        if (string.IsNullOrEmpty(typeName)) return false;
+        string label = $"{ContainerFamilyLabel}:{typeName}";
+        var members = new List<int>();
+        foreach (var item in data.Items!)
+        {
+            if (item.Bars.Count == 0 || item.Bars.Any(bar => bar.Count == 0) || string.IsNullOrEmpty(item.BarTypeName)) continue;
+            int entityId = WriteRebarBar(w, elem, item, ownerHistId, axisId, parentPlacementId, bodySubCtxId,
+                $"{label}:{elem.Id.ToString(CultureInfo.InvariantCulture)}: {item.ItemIndex.ToString(CultureInfo.InvariantCulture)}", label, item.ItemIndex + 4,
+                IfcGuid.FromName($"rebar-container-item:{elem.Id}:{item.ItemIndex}"));
+            PlaceRebarInStorey(elem, item, elemById, entityId, storeyIds, defaultStoreyId, storeyContents);
+            members.Add(entityId);
+        }
+        if (members.Count == 0) return false;
+        int valueId = GetOrAddPropertySingleValue(w, propertySingleValueIds, "Reference", $"IFCIDENTIFIER({S(typeName)})");
+        int psetId = w.Add("IFCPROPERTYSET",
+            $"{S(IfcGuid.FromName($"qto-pset:{elem.Id}"))},{R(ownerHistId)},{S("Pset_QuantityTakeOff")},$,{StepWriter.List(R(valueId))}");
+        w.Add("IFCRELDEFINESBYPROPERTIES",
+            $"{S(IfcGuid.FromName($"qto-rel:{elem.Id}"))},{R(ownerHistId)},$,$,{StepWriter.List(members.Select(R))},{R(psetId)}");
+        _rebarContainerMembers[elem.Id] = (label, members);
+        return true;
+    }
+
+    /// <summary>One IfcReinforcingBar of <paramref name="data"/> (its swept disks, placement and quantities), without property set and storey.
+    /// <paramref name="fallbackGlobalId"/> is its GlobalId when the element has no usable export id (the items of a container share their element).</summary>
+    private int WriteRebarBar(StepWriter w, Element elem, RebarBars data, int ownerHistId, int axisId, int parentPlacementId, int bodySubCtxId,
+        string elemName, string objectType, int subElementIndex, string? fallbackGlobalId = null)
+    {
         var items = new List<string>();
         double firstBarLengthFt = 0;
         foreach (var bar in data.Bars)
@@ -59,41 +117,30 @@ public partial class IfcExporter
         double nominalMm = data.NominalDiameter * FeetToMillimetres;
         double area = Math.PI * Math.Pow(nominalMm / 2000, 2);
 
-        // For shape driven bars of Revit 2026 files the shape follows the type
-        string typeLabel = shapeInName && data.SystemId == 0 && data.ShapeName != null ? $"{barTypeName} : Shape {data.ShapeName}" : barTypeName;
-        string elemName = $"{RebarFamilyLabel}:{typeLabel}:{elem.Id.ToString(CultureInfo.InvariantCulture)}";
-        string objectType = data.SystemId > 0 ? barTypeName : $"{RebarFamilyLabel}:{barTypeName}";
-        // RebarInSystem: the sub-element index is the number of bars plus 3; a Rebar has none
-        string globalId = ResolveExactElementGlobalId(elem, _usedExportIds, data.SystemId > 0 ? data.Bars.Count + 3 : 0, CurrentProfile)
-            ?? IfcGuid.FromElementId(elem.Id);
-        int entityId = w.Add("IFCREINFORCINGBAR",
+        string globalId = ResolveExactElementGlobalId(elem, _usedExportIds, subElementIndex, CurrentProfile) ?? fallbackGlobalId ?? IfcGuid.FromElementId(elem.Id);
+        return w.Add("IFCREINFORCINGBAR",
             $"{S(globalId)},{R(ownerHistId)},{S(elemName)},{S("")},{S(objectType)},{R(placementId)},{R(shapeId)},{S(elem.Id.ToString(CultureInfo.InvariantCulture))},"
             + $"{S("")},{D(nominalMm)},{D(area)},{D(barLengthMm)},.NOTDEFINED.,$");
-        ExportQuantityTakeOffPropertySet(w, elem, entityId, ownerHistId, barTypeName, propertySingleValueIds);
-        // A bar has no level of its own (Element.m_assocLevelId = -1), so the storey is the one that holds the bottom of its bounding box;
-        // a project without a storey puts them in the building. A member of an assembly is contained too: the assemblies that hold bars
-        // (parts assemblies) are not written, so nothing aggregates them. Aggregate them instead when those assemblies are written.
-        // The reference puts the assembly in the highest storey at or below the bottom of the Part that hosts the bar, so its bars follow that rule.
+    }
+
+    /// <summary>Contains a bar in a storey. A bar has no level of its own (Element.m_assocLevelId = -1), so the storey is the one that holds the bottom of its
+    /// bounding box; a project without a storey puts them in the building. A member of an assembly is contained too: the assemblies that hold bars
+    /// (parts assemblies) are not written, so nothing aggregates them. Aggregate them instead when those assemblies are written.
+    /// The assembly goes to the highest storey at or below the bottom of the Part that hosts the bar, so its bars follow that rule.</summary>
+    private void PlaceRebarInStorey(Element elem, RebarBars data, IReadOnlyDictionary<int, Element> elemById, int entityId,
+        Dictionary<int, int> storeyIds, int defaultStoreyId, Dictionary<int, List<int>> storeyContents)
+    {
+        int storeyId = 0;
+        if (data.InAssembly && storeyIds.Count > 0 && HostPartBottom(elem, elemById) is double partBottomFt)
+            storeyId = ResolveStoreyAtOrBelow(partBottomFt, storeyIds, elemById);
+        if (storeyId == 0)
         {
-            int storeyId = 0;
-            if (data.InAssembly && storeyIds.Count > 0 && HostPartBottom(elem, elemById) is double partBottomFt)
-                storeyId = ResolveStoreyAtOrBelow(partBottomFt, storeyIds, elemById);
-            if (storeyId == 0)
-            {
-                double bottomFt = data.Bars.SelectMany(bar => bar).Min(piece => piece.MinZ()) - data.ModelDiameter / 2;
-                int byBottom = storeyIds.Count > 0 ? ResolveStoreyByBottomCurrent(bottomFt, storeyIds, elemById) : 0;
-                storeyId = byBottom != 0 ? byBottom : defaultStoreyId;
-            }
-            if (!storeyContents.TryGetValue(storeyId, out var contents)) storeyContents[storeyId] = contents = [];
-            contents.Add(entityId);
+            double bottomFt = data.Bars.SelectMany(bar => bar).Min(piece => piece.MinZ()) - data.ModelDiameter / 2;
+            int byBottom = storeyIds.Count > 0 ? ResolveStoreyByBottomCurrent(bottomFt, storeyIds, elemById) : 0;
+            storeyId = byBottom != 0 ? byBottom : defaultStoreyId;
         }
-        // The reference writes no group of their system for the bars of an assembly
-        if (data.SystemId > 0 && !data.InAssembly)
-        {
-            if (!_rebarSystemMembers.TryGetValue(data.SystemId, out var members)) _rebarSystemMembers[data.SystemId] = members = [];
-            members.Add(entityId);
-        }
-        return true;
+        if (!storeyContents.TryGetValue(storeyId, out var contents)) storeyContents[storeyId] = contents = [];
+        contents.Add(entityId);
     }
 
     /// <summary>The bottom of the first Part on the host chain of a bar (the bar is hosted by a held instance, that by the Part); null without one.</summary>
@@ -167,7 +214,7 @@ public partial class IfcExporter
         return w.Add("IFCSWEPTDISKSOLID", $"{R(composite)},{D(radiusMm)},$,0.,{D(endParameter)}");
     }
 
-    /// <summary>The IfcGroup of every RebarSystem that has bars, with the IfcRelAssignsToGroup that relates them.</summary>
+    /// <summary>The IfcGroup of every RebarSystem and every RebarContainer that has bars, with the IfcRelAssignsToGroup that relates them.</summary>
     private void WriteRebarSystemGroups(StepWriter w, int ownerHistId, IReadOnlyDictionary<int, Element> elemById)
     {
         foreach (var (systemId, members) in _rebarSystemMembers.OrderBy(pair => pair.Key))
@@ -180,18 +227,31 @@ public partial class IfcExporter
                 $"{S(IfcGuid.FromMd5($"IfcRelAssignsToGroup:{globalId}"))},{R(ownerHistId)},{S("")},{S("")},{StepWriter.List(members.Select(R))},$,{R(group)}");
         }
         _rebarSystemMembers.Clear();
+        // the group of a container is named by its type and carries the GlobalId of the container itself
+        foreach (var (containerId, (label, members)) in _rebarContainerMembers.OrderBy(pair => pair.Key))
+        {
+            if (!elemById.TryGetValue(containerId, out var container) || ExportFlagIsNo(container, elemById)) continue;
+            string globalId = ResolveExactElementGlobalId(container, _usedExportIds, handleBased: CurrentProfile) ?? IfcGuid.FromName($"rebar-container:{container.Id}");
+            int group = w.Add("IFCGROUP", $"{S(globalId)},{R(ownerHistId)},{S(label)},{S("")},{S(label)}");
+            w.Add("IFCRELASSIGNSTOGROUP",
+                $"{S(IfcGuid.FromMd5($"IfcRelAssignsToGroup:{globalId}"))},{R(ownerHistId)},{S("")},{S("")},{StepWriter.List(members.Select(R))},$,{R(group)}");
+        }
+        _rebarContainerMembers.Clear();
     }
 
     /// <summary>JoistSystem's family label, the first part of the name of every beam system.</summary>
     private const string BeamSystemFamilyLabel = "Structural Beam System";
 
     /// <summary>The IfcElementAssembly (BEAM_GRID, no representation) of every beam system whose beams were exported, and the
-    /// IfcRelAggregates to those beams. The beams leave the storey and the assembly takes their place.
+    /// IfcRelAggregates to those beams. The beams leave their storeys and the assembly stands in the storey of its first beam.
+    /// Where that beam is on a level that is not a project storey, the assembly stands where the storey rule puts the beam system
+    /// itself: it has no body, so that is measured by its own outline (a system without an outline stays with its first beam).
     /// The assembly is not registered as an exported element: it gets no material or type relation (the later passes read that list).
     /// Returns the ids of the beam systems written.</summary>
     private List<int> WriteJoistAssemblies(StepWriter w, IReadOnlyList<Element> elements, int ownerHistId, int parentPlacementId, int axisId,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> exported, IReadOnlyDictionary<int, int> exportedStoreyIds,
-        Dictionary<int, List<int>> storeyContents, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds)
+        Dictionary<int, List<int>> storeyContents, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
+        Func<Element, int> storeyOfSystem)
     {
         var written = new List<int>();
         foreach (var elem in elements.Where(e => e.JoistSystem != null).OrderBy(e => e.Id))
@@ -199,6 +259,7 @@ public partial class IfcExporter
             var data = elem.JoistSystem!;
             var memberIds = data.BeamIds.Where(exported.ContainsKey).Distinct().ToList();
             if (string.IsNullOrEmpty(data.TypeName) || memberIds.Count == 0 || !exportedStoreyIds.TryGetValue(memberIds[0], out int storeyId)) continue;
+            if (elem.BoundingBox is { Length: >= 6 } && _offStoreyLevelElementIds.Contains(memberIds[0])) storeyId = storeyOfSystem(elem);
             string objectType = $"{BeamSystemFamilyLabel}:{data.TypeName}";
             string globalId = ResolveExactElementGlobalId(elem, _usedExportIds, handleBased: CurrentProfile) ?? IfcGuid.FromElementId(elem.Id);
             string tag = elem.Id.ToString(CultureInfo.InvariantCulture);

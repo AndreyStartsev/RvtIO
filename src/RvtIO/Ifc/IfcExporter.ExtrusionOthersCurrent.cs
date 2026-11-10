@@ -23,8 +23,9 @@ public partial class IfcExporter
     {
         public required double[] Axis { get; init; }
         public required double LengthFt { get; init; }
-        /// <summary>One region per profile: the outer loop and the loops of its holes (feet, as the decoded face holds them).</summary>
-        public required List<(List<double[]> Outer, List<List<double[]>> Inner)> Regions { get; init; }
+        /// <summary>One region per profile: the outer loop and the loops of its holes (feet, as the decoded face holds them), and the arcs
+        /// of the outer loop when its circular edges were resampled (<c>TryResampleArcsCurrent</c>).</summary>
+        public required List<(List<double[]> Outer, List<List<double[]>> Inner, IReadOnlyList<ArcChordsCurrent>? OuterArcs)> Regions { get; init; }
         public IReadOnlyList<double[]>? FirstSourceLoop { get; init; }
         /// <summary>The corners of the outer loop of the first region when its circular edges were resampled (<c>ResampleArcsCurrent</c>); the
         /// origin of the frame is their mean, the samples of an arc do not count.</summary>
@@ -214,7 +215,7 @@ public partial class IfcExporter
             if (pairs.Count > 1 && pairs.Any(pair => Math.Abs(pair.Length - pairs[0].Length) * 304.8 > OthersCurrentZero))
                 continue;
 
-            var regions = new List<(List<double[]>, List<List<double[]>>)>();
+            var regions = new List<(List<double[]>, List<List<double[]>>, IReadOnlyList<ArcChordsCurrent>?)>();
             List<double[]>? firstCorners = null;
             foreach (var (lower, _, _) in pairs)
                 foreach (var region in lower.Regions.Where(region => region.OuterVertices is { Count: >= 3 } outer && OthersCurrentFinite(outer)))
@@ -222,12 +223,14 @@ public partial class IfcExporter
                     var outerLoop = region.OuterVertices!.Select(p => p.Take(3).ToArray()).ToList();
                     var innerLoops = (region.InnerVertices ?? []).Where(inner => inner.Count >= 3 && OthersCurrentFinite(inner))
                         .Select(inner => inner.Select(p => p.Take(3).ToArray()).ToList()).ToList();
-                    if (TryResampleArcsCurrent(outerLoop, innerLoops, region.MeshArcs, out var resampledOuter, out var resampledInner, out var corners))
+                    IReadOnlyList<ArcChordsCurrent>? outerArcs = null;
+                    if (TryResampleArcsCurrent(outerLoop, innerLoops, region.MeshArcs, out var resampledOuter, out var resampledInner, out var corners,
+                        out var arcs))
                     {
                         if (regions.Count == 0) firstCorners = corners;
-                        (outerLoop, innerLoops) = (resampledOuter, resampledInner);
+                        (outerLoop, innerLoops, outerArcs) = (resampledOuter, resampledInner, arcs);
                     }
-                    regions.Add((outerLoop, innerLoops));
+                    regions.Add((outerLoop, innerLoops, outerArcs));
                 }
             if (regions.Count == 0) continue;
             if (pairs.Any(pair => pair.Base.Regions.Any(OthersCurrentHasShortCurve))) return null;
@@ -408,7 +411,7 @@ public partial class IfcExporter
     }
 
     /// <summary>The Body of a product as one IfcProductDefinitionShape of the SweptSolid, else false.</summary>
-    private bool TryCreateOthersCurrentProductSweptSolid(
+    internal bool TryCreateOthersCurrentProductSweptSolid(
         StepWriter w, GeometryData geo, int subCtxId, double[][] axes, string profileName,
         out int shapeId, out BodyRepresentationWriteOutcome outcome)
     {
@@ -524,7 +527,8 @@ public partial class IfcExporter
     }
 
     private int WriteOthersCurrentProfile(
-        StepWriter w, IReadOnlyList<GeoFace> solidFaces, double[] axis, (List<double[]> Outer, List<List<double[]>> Inner) region,
+        StepWriter w, IReadOnlyList<GeoFace> solidFaces, double[] axis,
+        (List<double[]> Outer, List<List<double[]>> Inner, IReadOnlyList<ArcChordsCurrent>? OuterArcs) region,
         double[] origin, double[] x, double[] y, string profileName, double[] offset)
     {
         (double X, double Y) Project(double[] p)
@@ -572,6 +576,11 @@ public partial class IfcExporter
         }
 
         int outerCurve = OthersCurrentPolyline(w, outer.Select(Project).ToList());
+        // The arcs of the outline go with its polyline, at the points of the outline as written: a loop turned the other way
+        // keeps its first point, so an arc then starts where it ended.
+        if (region.OuterArcs is { Count: > 0 } arcs)
+            w.PolylineArcs[outerCurve] = ReferenceEquals(outer, region.Outer) ? arcs
+                : arcs.Select(arc => arc with { First = (2 * outer.Count - arc.First - arc.Chords) % outer.Count }).ToList();
         if (inner.Count == 0) return w.Add("IFCARBITRARYCLOSEDPROFILEDEF", $".AREA.,{name},{R(outerCurve)}");
         var innerCurves = inner.Select(loop => OthersCurrentPolyline(w, loop.Select(Project).ToList())).ToList();
         return w.Add("IFCARBITRARYPROFILEDEFWITHVOIDS",
@@ -584,9 +593,9 @@ public partial class IfcExporter
     {
         double[] axis = extrusion.Axis;
         double[] offset = [offX, offY, offZ];
-        List<(List<double[]> Outer, List<List<double[]>> Inner)> regions = extrusion.Regions
+        List<(List<double[]> Outer, List<List<double[]>> Inner, IReadOnlyList<ArcChordsCurrent>? OuterArcs)> regions = extrusion.Regions
             .Select(region => (region.Outer.Select(p => OthersCurrentAdd(p, offset)).ToList(),
-                region.Inner.Select(loop => loop.Select(p => OthersCurrentAdd(p, offset)).ToList()).ToList())).ToList();
+                region.Inner.Select(loop => loop.Select(p => OthersCurrentAdd(p, offset)).ToList()).ToList(), region.OuterArcs)).ToList();
         var (x, y) = OthersCurrentFrame(axis);
 
         // Polygonal caps do not preserve a curved side's boundary; only serialized complete circles are reproduced here

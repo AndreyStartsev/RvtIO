@@ -83,6 +83,21 @@ public class StairComponentMembershipTests
         Assert.Null(Decode(block));
     }
 
+    [Fact]
+    public void AStepThatCannotBeReadAfterTheHelperKeepsTheMembership()
+    {
+        byte[] block = Block();
+        var plain = Decode(block)!;
+        // The cells after the helper become a history step, whose bytes are not one, and a multistory data cell.
+        BitConverter.GetBytes((ushort)3678).CopyTo(block, CellListStart + 14);
+        BitConverter.GetBytes((ushort)2536).CopyTo(block, CellListStart + 20);
+        var read = Decode(block);
+        Assert.NotNull(read);
+        Assert.Equal(plain.RunsAndLandings, read.RunsAndLandings);
+        Assert.Equal(plain.Supports, read.Supports);
+        Assert.Null(read.MultistoryCopyLevelIds);
+    }
+
     [Theory]
     [InlineData(-1)] [InlineData(int.MaxValue)]
     public void InvalidStartFailsClosed(int start)
