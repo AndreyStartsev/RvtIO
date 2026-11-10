@@ -104,7 +104,9 @@ public class SystemFamilyNameTests
     [InlineData("2021", "PipeTypes", "Pipe Types")] [InlineData("2021", "RectangularDuct", "Rectangular Duct")]
     [InlineData("2021", "RoundDuct", "Round Duct")] [InlineData("2021", "PipeInsulation", "Pipe Insulation")]
     [InlineData("2021", "CableTrayWithFittings", "Cable Tray with Fittings")]
-    [InlineData("2021", "BasicWall", null)] [InlineData("2021", "Floor", null)] [InlineData("2021", "Railing", null)]
+    [InlineData("2021", "Floor", "Floor")] [InlineData("2021", "FoundationSlab", "Foundation Slab")] [InlineData("2021", "Pad", "Pad")]
+    [InlineData("2021", "BasicWall", null)] [InlineData("2021", "Railing", null)] [InlineData("2021", "BasicRoof", null)]
+    [InlineData("2020", "Floor", "Floor")] [InlineData("2020", "FoundationSlab", "Foundation Slab")]
     [InlineData("2020", "CurtainWall", "Curtain Wall")] [InlineData("2020", "AssembledStair", "Assembled Stair")]
     [InlineData("2020", "PipeTypes", null)] [InlineData("2020", "BasicWall", null)]
     public void LoadPreviousReleaseFamilies_GivesTheNamesOfThoseFamiliesOnly(string version, string kind, string? expected)
@@ -131,26 +133,34 @@ public class SystemFamilyNameTests
         Assert.Equal("Rectangular Duct", saved.Get(SystemFamilyKind.RectangularDuct));
         Assert.Null(saved.Get(SystemFamilyKind.CurtainWall));
         Assert.Null(saved.Get(SystemFamilyKind.AssembledStair));
+        Assert.Null(saved.Get(SystemFamilyKind.Floor));
         Assert.Null(saved.StairOccurrenceName);
 
         var requested = RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "RUS", "ENU")!;
         Assert.Equal("Curtain Wall", requested.Get(SystemFamilyKind.CurtainWall));
+        Assert.Equal("Foundation Slab", requested.Get(SystemFamilyKind.FoundationSlab));
         Assert.Equal("Stair", requested.StairOccurrenceName);
         Assert.Null(requested.Get(SystemFamilyKind.RectangularDuct));
 
         Assert.Null(RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2020", "ENU", null));
     }
 
-    // A curtain wall and a stair type of a 2020/2021 file are named by the type root's own class, a basic wall type is not.
+    // A curtain wall, stair, floor, foundation slab and pad type of a 2020/2021 file are named by the type root's own class (and, for a floor
+    // and a stair, its stored kind), a basic wall type is not.
     [Theory]
     [InlineData(2559, null, -2000011, "Curtain Wall")]
     [InlineData(3742, 0, -2000120, "Assembled Stair")]
     [InlineData(3742, 1, -2000120, "Cast-In-Place Stair")]
     [InlineData(3742, 2, -2000120, "Precast Stair")]
+    [InlineData(1915, 0, -2000032, "Floor")]
+    [InlineData(1915, 1, -2001300, "Foundation Slab")]
+    [InlineData(571, null, -2001263, "Pad")]
+    [InlineData(1915, 1, -2000032, null)]
+    [InlineData(1915, null, -2000032, null)]
     [InlineData(512, null, -2000011, null)]
     [InlineData(2559, null, -2000120, null)]
     [InlineData(3742, null, -2000120, null)]
-    public void ApplyValidatedSystemFamilyNames_PreviousReleaseNamesCurtainWallAndStairTypes(int cls, int? discriminator, int category, string? expected)
+    public void ApplyValidatedSystemFamilyNames_PreviousReleaseNamesCurtainWallStairAndSlabTypes(int cls, int? discriminator, int category, string? expected)
     {
         var state = new ParsingState();
         state.SystemTypeRoots[500] = (1, (ushort)cls, discriminator);
