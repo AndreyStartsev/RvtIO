@@ -46,7 +46,8 @@ internal sealed class WideNativeParams
 
     private const string SplineNodeKeyPrefix = "snode:";
 
-    private const string RoomPhaseKey = "room:m_phaseId";
+    // the key of the Revit 2022 table: the field is a captured key (TfBlockDeserializer.RoomRuleFieldKeys), so KeyOf names it this way
+    private const string RoomPhaseKey = "3471:m_phaseId";
 
     /// <summary>The own field of a system type root that decides its system family (Floor / Foundation Slab, stair construction method ...),
     /// the ones <see cref="TfBlockDeserializer.TryExtractSystemTypeRoot"/> reads; they are not keyed by the Revit 2022 capture list.</summary>

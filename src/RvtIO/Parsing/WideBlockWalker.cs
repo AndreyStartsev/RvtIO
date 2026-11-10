@@ -439,7 +439,13 @@ internal sealed class WideBlockWalker
                 return;
             }
             // an inline structure: the keys of its fields are their own
+            int structAt = c.Pos;
             ReadObject(c, reference, depth + 1);
+            // a keyed XYZ field (SpatialElementCalculationPointRegenData.m_position) is captured as its three doubles
+            if (key != null && _classes[reference].Name == "XYZ" && c.Pos - structAt == 24)
+                for (int i = 0; i < 3; i++)
+                    walk.Captures.Add(new(key + "@" + i, CaptureKind.Real, 0, BitConverter.ToDouble(c.D, structAt + 8 * i), null, c.AtRoot && depth == 0,
+                        c.QueueIndex, declaring.Name, f.Name));
             // a keyed ForgeTypeId field (ParamDef.m_groupTypeId, m_typeId) is captured as the text of its single string
             if (key != null && _classes[reference].Name == "ForgeTypeId" && walk.Records is [.., (var recordClass, _, var forge)] && recordClass == reference
                 && forge.GetValueOrDefault("m_typeId") is string forgeText)
