@@ -152,6 +152,75 @@ public class WideBlockWalkerTests
         Assert.Equal(42L, record.Values["m_value"]);
     }
 
+    [Fact]
+    public void Walk_ThatStopsInTheRootFields_NamesTheFieldAndTheRootClass()
+    {
+        var block = DerivedBlock(withStore: true);
+        // the payload ends inside the text of m_name: tag 2, m_pStore 6, m_id 8, m_flag 1, text length 4, then 3 of the 8 text bytes
+        var walk = Walker().Run(block, 0, 24, DerivedId);
+        Assert.Equal("end of payload", walk.Error);
+        Assert.Equal("Derived.m_name", walk.StopField);
+        Assert.Equal(-1, walk.StopQueueIndex);
+        Assert.Equal("Derived", walk.StopClass);
+    }
+
+    [Fact]
+    public void Walk_ThatStopsInAQueuedObject_NamesItsFieldItsIndexAndItsClass()
+    {
+        var block = DerivedBlock(withStore: true);
+        var walk = Walker().Run(block, 0, block.Length - 2, DerivedId);
+        Assert.Equal("end of payload", walk.Error);
+        Assert.Equal("Store.m_value", walk.StopField);
+        Assert.Equal(0, walk.StopQueueIndex);
+        Assert.Equal("Store", walk.StopClass);
+    }
+
+    [Fact]
+    public void Walk_WithoutAnError_OrStoppedBeforeAnyField_HasNoStopField()
+    {
+        var block = DerivedBlock(withStore: true);
+        var exact = Walker().Run(block, 0, block.Length, DerivedId);
+        Assert.Null(exact.StopField);
+        Assert.Equal(-1, exact.StopQueueIndex);
+        Assert.Null(exact.StopClass);
+
+        var unknown = Walker().Run(block, 0, block.Length, 999);
+        Assert.Equal("class 999 has no schema", unknown.Error);
+        Assert.Null(unknown.StopField);
+        Assert.Equal(-1, unknown.StopQueueIndex);
+        Assert.Null(unknown.StopClass);
+    }
+
+    // nested: every item holds a field of its own, which must not be named as the stop of the array around it
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public void Walk_StepBudget_StopsACountedArrayOfFieldlessItems_AndTheDefaultChangesNothing(bool limited, bool nested)
+    {
+        const int emptyId = 1, holderId = 2, pairId = 3;
+        var schema = new SchemaDocument
+        {
+            Classes =
+            [
+                new(emptyId, "Empty", 0, 1, [], []),
+                new(holderId, "Holder", 0, 1, [Field("m_items", 14, 80, nested ? pairId : emptyId)], []),
+                new(pairId, "Pair", 0, 1, [Field("a", 14, 0, emptyId)], []),
+            ],
+        };
+        // 1000 items that take no byte: the payload ends right behind the count
+        var block = Block(holderId, w => w.Write(1000u));
+        var walker = new WideBlockWalker(schema, (_, _) => null, []);
+        if (limited) walker.StepBudget = 100;
+
+        var walk = walker.Run(block, 0, block.Length, holderId);
+
+        Assert.Equal(limited ? "step budget" : null, walk.Error);
+        Assert.Equal(!limited, walk.Exact);
+        Assert.Equal(limited ? "Holder.m_items" : null, walk.StopField);
+    }
+
 
     private sealed class Test2025Fixture
     {

@@ -43,6 +43,12 @@ internal sealed class WideBlockWalker
         public readonly List<int> QueueCountAtStart = [];
         /// <summary>Queue index of the first object that held an extensible storage entity without stored values, which the walk passes; -1 when none.</summary>
         public int EmptyEntityAt = -1;
+        /// <summary>For a walk that stopped with an error: "Declaring.field" of the field that was being read; null when it stopped before any field.</summary>
+        public string? StopField;
+        /// <summary>For a walk that stopped with an error: the index of the queued object that was being read, -1 in the root fields.</summary>
+        public int StopQueueIndex = -1;
+        /// <summary>For a walk that stopped with an error: the name of the class of the object that was being read (the root class at the root).</summary>
+        public string? StopClass;
 
         /// <summary>For a walk that stopped with an error behind an extensible storage entity (<see cref="EmptyEntityAt"/>): the walk cut to the
         /// objects that were queued when that object started. The payloads of its entities lie in the stream before the objects queued
@@ -79,6 +85,10 @@ internal sealed class WideBlockWalker
     private readonly ConcurrentDictionary<(int, string), string?> _keys = new();
     private readonly bool[] _isIdentifier;
     private readonly int _idWidth;
+
+    /// <summary>The most objects and scalars one walk reads (the error is "step budget" beyond it), so that a misaligned walk does not
+    /// loop over millions of items without bytes.</summary>
+    internal long StepBudget { get; set; } = long.MaxValue;
 
     /// <param name="keyOf">The capture key of a scalar field (null: not captured); a fixed array adds "@index".</param>
     /// <param name="recordClassNames">Classes whose objects are returned as <see cref="Walk.Records"/>.</param>
@@ -144,7 +154,14 @@ internal sealed class WideBlockWalker
         catch (Fail failure)
         {
             walk.Error = failure.Message;
-            if (tailValid != null && walk.RootRead && failedAt >= 0 && Resume(ctx, failedAt, tailValid)) walk.Error = null;
+            walk.StopField = ctx.Field == null ? null : ctx.Declaring!.Name + "." + ctx.Field.Name;
+            walk.StopQueueIndex = ctx.QueueIndex;
+            walk.StopClass = Class(ctx.QueueIndex < 0 ? classId : walk.Queue[ctx.QueueIndex])?.Name;
+            if (tailValid != null && walk.RootRead && failedAt >= 0 && Resume(ctx, failedAt, tailValid))
+            {
+                walk.Error = walk.StopField = walk.StopClass = null;
+                walk.StopQueueIndex = -1;
+            }
         }
         walk.Position = ctx.Pos;
         return walk;
@@ -157,6 +174,8 @@ internal sealed class WideBlockWalker
         {
             failedAt = qi;
             ctx.QueueIndex = qi;
+            ctx.Declaring = null;
+            ctx.Field = null;
             walk.QueueStart.Add(ctx.Pos);
             walk.QueueCountAtStart.Add(walk.Queue.Count);
             ReadObject(ctx, walk.Queue[qi], 1);
@@ -229,6 +248,9 @@ internal sealed class WideBlockWalker
         public bool AtRoot = true;
         public int QueueIndex = -1;
         public string? RootField;
+        public SchemaClass? Declaring;
+        public SchemaField? Field;
+        public long Steps;
     }
 
     private static int Take(Context c, int n)
@@ -244,6 +266,7 @@ internal sealed class WideBlockWalker
     private void ReadObject(Context c, int classId, int depth)
     {
         if (depth > 40) throw new Fail("depth");
+        if (++c.Steps > StepBudget) throw new Fail("step budget");
         Dictionary<string, object?>? record = _recordClasses.Contains(classId) ? new() : null;
         if (record != null && c.AtRoot) record[RootFieldKey] = c.RootField;
         foreach (var (declaring, field) in Chain(classId)) ReadField(c, declaring, field, depth, record);
@@ -253,6 +276,8 @@ internal sealed class WideBlockWalker
     private void ReadField(Context c, SchemaClass declaring, SchemaField f, int depth, Dictionary<string, object?>? record)
     {
         int hi = f.Mods >> 4;
+        c.Declaring = declaring;
+        c.Field = f;
         string? key = KeyOf(declaring, f);
         if (hi == 6)
         {
@@ -297,6 +322,7 @@ internal sealed class WideBlockWalker
     private void Scalar(Context c, SchemaClass declaring, SchemaField f, string? key, int depth, Dictionary<string, object?>? record, object? unused)
     {
         var walk = c.Walk;
+        if (++c.Steps > StepBudget) throw new Fail("step budget");
         void Note(CaptureKind kind, long i, double d, string? s)
         {
             if (key != null) walk.Captures.Add(new(key, kind, i, d, s, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
@@ -440,7 +466,11 @@ internal sealed class WideBlockWalker
             }
             // an inline structure: the keys of its fields are their own
             int structAt = c.Pos;
+            // a stop behind this structure belongs to the field that holds it, not to the last field of the structure
+            var (outerClass, outerField) = (c.Declaring, c.Field);
             ReadObject(c, reference, depth + 1);
+            c.Declaring = outerClass;
+            c.Field = outerField;
             // a keyed XYZ field (SpatialElementCalculationPointRegenData.m_position) is captured as its three doubles
             if (key != null && _classes[reference].Name == "XYZ" && c.Pos - structAt == 24)
                 for (int i = 0; i < 3; i++)

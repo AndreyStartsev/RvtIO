@@ -110,6 +110,14 @@ rvtio downgrade project2026.rvt --target-profile project2025.rvt --check --repor
 
 Limits: the plan is computed from the bytes of the two files. This version cannot write a converted file, and no application opened a converted file as part of this change. The tested source release is 2026; a source of a newer release, a source whose saving release differs from the release of its class table, and a profile that is not older than the source are refused with exit code 5 and one line on standard error. A file that cannot be read, or whose partition stream is damaged, exits with code 2; a wrong command line, including an empty or unusable path, exits with code 1. Without `--check` the command refuses to run.
 
+### Measure how much of a file is decoded
+
+```powershell
+rvtio coverage project.rvt --report coverage.json
+```
+
+`coverage` counts, per channel and class, the records of the partition streams that the class schema of the file walks to their last byte, and lists every stream of the file. It writes nothing but the report. `--top <n>` sets how many classes with records that are not walked to the end are printed (default 15, `0` for none). The exit code is 0 when the file was measured, 1 for a wrong command line and 2 when the file cannot be read. What is counted, the reasons a walk stops and the report format are described in [the coverage report](docs/coverage-report.md).
+
 ## Library
 
 Open a project, list wall instances through `FilteredElementCollector`, and export the document to IFC:

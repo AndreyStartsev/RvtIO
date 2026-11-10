@@ -86,7 +86,8 @@ internal static class PagedGzipStream
                 output.Write(buffer, 0, count);
             }
         }
-        catch (SharpZipBaseException)
+        // the inflater indexes its code tables with unchecked lengths of a corrupt dynamic header
+        catch (Exception exception) when (exception is SharpZipBaseException or IndexOutOfRangeException)
         {
             return null;
         }
