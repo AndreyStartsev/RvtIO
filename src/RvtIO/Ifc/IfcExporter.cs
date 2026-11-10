@@ -65020,6 +65020,9 @@ public partial class IfcExporter
             }
             if (!levelIdByProductElementId.TryGetValue(written ? insert.Id : host.Id, out int levelId))
                 continue;
+            // A written insert is identified by its own level, which need not be the level of the storey that contains it
+            // (measured in the current profile only).
+            if (written && currentProfile && RoomIntParam(insert, LevelParamId) is int ownLevel and > 0) levelId = ownLevel;
 
             string openingGlobalId = DoorWindowOpeningGlobalId(insertExportId, levelId, kind, currentProfile);
             if (globalIds.Contains(openingGlobalId)) continue;
