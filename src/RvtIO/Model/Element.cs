@@ -632,6 +632,11 @@ namespace RvtIO.Model
         /// keyed Declaring:Name; a field the record did not hold is absent.</summary>
         internal Dictionary<string, int>? NativeListFields { get; set; }
 
+        /// <summary>Values of the schema fields the room of a family instance is found from
+        /// (<see cref="RvtIO.Parsing.TfBlockDeserializer.RoomRuleFieldKeys"/>), keyed Declaring:Name; a field the record did not hold is
+        /// absent.</summary>
+        internal Dictionary<string, double>? NativeRoomFields { get; set; }
+
         /// <summary>Tf class tag of the element's record (the class the record is an instance of, by its schema name); null when the
         /// record was not walked.</summary>
         internal int? NativeRecordClass { get; set; }

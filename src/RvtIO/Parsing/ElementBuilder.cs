@@ -3075,6 +3075,12 @@ internal static partial class ElementBuilder
             foreach (string key in TfBlockDeserializer.ListFactFieldKeys)
                 if (np.Fields.TryGetValue(key, out int listFieldValue) && (familyInstanceRecord || !key.StartsWith("37:", StringComparison.Ordinal)))
                     (e.NativeListFields ??= new())[key] = listFieldValue;
+            foreach (string key in TfBlockDeserializer.RoomRuleFieldKeys)
+            {
+                if (np.Fields.TryGetValue(key, out int roomRuleInt)) (e.NativeRoomFields ??= new())[key] = roomRuleInt;
+                else if (np.DoubleFields.TryGetValue(key, out double roomRuleReal) && double.IsFinite(roomRuleReal))
+                    (e.NativeRoomFields ??= new())[key] = roomRuleReal;
+            }
             if (TfBlockDeserializer.CaptureAllFields)
             {
                 e.DebugNativeFields = new Dictionary<string, object>();

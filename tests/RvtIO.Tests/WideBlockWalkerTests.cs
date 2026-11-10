@@ -74,6 +74,26 @@ public class WideBlockWalkerTests
     }
 
     [Fact]
+    public void RoomPhase_IsReadWhenTheFieldIsACapturedKey()
+    {
+        const int roomId = 3;
+        var schema = new SchemaDocument
+        {
+            Classes =
+            [
+                new(IdentifierId, "Identifier", 0, 2, [Field("m_id64", 11)], []),
+                new(ElementIdId, "ElementId", 0, 1, [Field("m_id", 14, 0, IdentifierId)], []),
+                new(roomId, "RoomElem", 0, 1, [Field("m_phaseId", 14, 0, ElementIdId)], []),
+            ],
+        };
+        var fields = new WideNativeParams(schema);
+        var block = Block(roomId, w => w.Write(5L));
+        var walk = fields.Walker.Run(block, 0, block.Length, roomId);
+        Assert.True(walk.Exact, walk.Error);
+        Assert.Equal(5, fields.RoomPhase(walk, roomId));
+    }
+
+    [Fact]
     public void Walk_NullPointerQueuesNothing()
     {
         var block = DerivedBlock(withStore: false);

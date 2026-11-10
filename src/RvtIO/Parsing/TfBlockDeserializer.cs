@@ -223,6 +223,16 @@ internal static partial class TfBlockDeserializer
         "1990:m_dbViewId", "1990:m_dbDrawingId", "1990:m_viewportOrientation", "1990:m_clipping", "1990:m_detailNumber",
     ];
 
+    /// <summary>Inputs of the room of a family instance (IfcExporter.InstanceRoomsCurrent): the Y flip of the instance, the origin
+    /// of its symbol, the level, vertical extent and phase of a room and the computation offset of a level. Kept in
+    /// <see cref="Element.NativeRoomFields"/>.</summary>
+    internal static readonly string[] RoomRuleFieldKeys =
+    [
+        "1794:m_flippedY", "1829:m_origin@0", "1829:m_origin@1", "1829:m_origin@2",
+        "3471:m_upperOffset", "3471:m_height", "3471:m_lowerOffset", "3471:m_upperLevelId", "3471:m_levelId", "3471:m_phaseId",
+        "2299:m_roomComputationElevationOffset",
+    ];
+
     /// <summary>Schema fields read by derived parameter rules (ElementBuilder.ApplyCurveDriverLevelParams).</summary>
     private static readonly string[] DerivedInputRuleKeys =
     [
@@ -281,6 +291,7 @@ internal static partial class TfBlockDeserializer
         "37:m_cellList",
         // HVAC zones: the default zone flag of a ZoneElement and the zone of a space (RoomElem).
         "4215:m_bDefault", "3471:m_zoneElementId",
+        .. RoomRuleFieldKeys,
         .. ListFactFieldKeys,
     ];
 
