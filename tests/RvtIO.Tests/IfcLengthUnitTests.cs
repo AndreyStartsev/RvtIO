@@ -159,7 +159,46 @@ public class IfcLengthUnitFamilyTests
     [InlineData("autodesk.unit.unit:feetFractionalInches-1.0.0", IfcUnitFamily.Foot)]
     [InlineData("autodesk.unit.unit:feet-1.0.1", IfcUnitFamily.Foot)]
     [InlineData("autodesk.unit.unit:meters-1.0.0", IfcUnitFamily.Metre)]
+    [InlineData("autodesk.unit.unit:metersCentimeters-1.0.0", IfcUnitFamily.Metre)]
+    [InlineData("autodesk.unit.unit:usSurveyFeet-1.0.0", IfcUnitFamily.Foot)]
     [InlineData("autodesk.unit.unit:centimeters-1.0.1", IfcUnitFamily.Millimetre)]
+    [InlineData("autodesk.unit.unit:decimeters-1.0.1", IfcUnitFamily.Millimetre)]
+    [InlineData("autodesk.unit.unit:inches-1.0.1", IfcUnitFamily.Millimetre)]
     public void Family_FollowsTheStoredLengthUnit(string? unit, IfcUnitFamily expected) =>
         Assert.Equal(expected, IfcLengthUnitChoice.Family(unit));
+
+    [Theory]
+    [InlineData("autodesk.unit.unit:millimeters-1.0.1", true)]
+    [InlineData("autodesk.unit.unit:metersCentimeters-1.0.0", true)]
+    [InlineData("autodesk.unit.unit:usSurveyFeet-1.0.0", true)]
+    [InlineData("autodesk.unit.unit:centimeters-1.0.1", false)]
+    [InlineData("autodesk.unit.unit:fractionalInches-1.0.0", false)]
+    [InlineData(null, false)]
+    public void OwnFamily_IsNullForAUnitWithoutAFamilyAndForAnUnreadableOption(string? unit, bool own) =>
+        Assert.Equal(own, IfcLengthUnitChoice.OwnFamily(unit) != null);
+
+    [Theory]
+    [InlineData(IfcProfile.Current, "autodesk.unit.unit:metersCentimeters-1.0.0", "=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);", "metersCentimeters-1.0.0 -> Metre")]
+    [InlineData(IfcProfile.Current, "autodesk.unit.unit:centimeters-1.0.1", "=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);", "centimeters-1.0.1 has no unit family of its own; using the default Millimetre")]
+    [InlineData(IfcProfile.Current, null, "=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);", "stored option unreadable (")]
+    [InlineData(IfcProfile.Legacy, "autodesk.unit.unit:centimeters-1.0.1", "=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);", "centimeters-1.0.1 -> Millimetre")]
+    [InlineData(IfcProfile.Legacy, "autodesk.unit.unit:metersCentimeters-1.0.0", "=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);", "metersCentimeters-1.0.0 -> Millimetre")]
+    public void Export_DeclaresTheFamilyOfTheStoredUnitAndNamesTheDefaultInTheDiagnostics(IfcProfile profile, string? unit, string declared, string diagnostic)
+    {
+        var info = new RevitFileInfo { SerializedLengthUnit = unit };
+        info.Elements.Add(new Element { Id = 10, CategoryId = -2000240, Category = "OST_Levels", Name = "Level 1" });
+        string path = Path.Combine(Path.GetTempPath(), $"revitreader-length-unit-{Guid.NewGuid():N}.ifc");
+        var diagnostics = new StringWriter();
+        try
+        {
+            new IfcExporter { Profile = profile, DiagnosticOutput = diagnostics }.Export(info, path);
+            Assert.Contains(declared, File.ReadAllText(path));
+            string line = Assert.Single(diagnostics.ToString().Split(Environment.NewLine), text => text.StartsWith("IFC length unit:", StringComparison.Ordinal));
+            Assert.Contains(diagnostic, line);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }

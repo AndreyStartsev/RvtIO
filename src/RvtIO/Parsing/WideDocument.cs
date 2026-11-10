@@ -95,6 +95,7 @@ internal static class WideDocument
         [5] = "autodesk.unit.unit:fractionalInches-1.0.0",
         [6] = "autodesk.unit.unit:inches-1.0.1",
         [9] = "autodesk.unit.unit:metersCentimeters-1.0.1",
+        [605] = "autodesk.unit.unit:usSurveyFeet-1.0.0",
     };
 
     /// <summary>The Length unit of a UnitsElem block of the Revit 2020 layout: AUnits.m_formatOptionsArr holds one FormatOptions per UnitType

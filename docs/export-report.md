@@ -80,7 +80,9 @@ A complete input also has skipped elements: the exporters leave out element type
 
 ### Reasons of an IFC export
 
-`terrain-or-group-topography`, `block-only-record`, `group-template`, `record-outside-exact-element-table`, `owned-by-family-nonspatial`, `rebar-product-not-written`, `only-unfilled-faces`, `type-element`, `non-physical-category`, `no-project-phase-reference`, `level-is-not-a-project-level`, `wall-not-visible`, `curtain-panel-wall`, `curtain-child-without-bounds`, `opening-of-hidden-wall`, `no-ifc-class-for-category`, `opening-of-wall-without-body-openings`, `stacked-wall-container`, `no-geometry-or-location`, `hosted-element-without-host`, `no-geometry-or-bounds`, `phantom-storey-wall`, `unplaced-owner-proxy`, `open-surface-hosted-cutter-proxy`, `geometryless-product`.
+`terrain-or-group-topography`, `block-only-record`, `group-template`, `record-outside-exact-element-table`, `owned-by-family-nonspatial`, `rebar-product-not-written`, `only-unfilled-faces`, `type-element`, `non-physical-category`, `no-project-phase-reference`, `level-is-not-a-project-level`, `wall-not-visible`, `curtain-panel-wall`, `curtain-child-without-bounds`, `opening-of-hidden-wall`, `no-ifc-class-for-category`, `opening-of-wall-without-body-openings`, `stacked-wall-container`, `no-geometry-or-location`, `hosted-element-without-host`, `no-geometry-or-bounds`, `phantom-storey-wall`, `unplaced-owner-proxy`, `open-surface-hosted-cutter-proxy`, `geometryless-product`, `export-to-ifc-flag-no`, `reveal-sweep`, `product-without-body`, `wall-without-solid`, `product-without-bounds`, `invalid-bounds`, `bounds-under-one-centimetre`, `container-without-written-parts`, `non-primary-design-option`, `outside-export-phase`.
+
+A level, a room and the topography that is written as the site are listed as skipped although the IFC holds a storey, a space or the site for them: the list counts product entities of elements, and these are written as the spatial structure.
 
 ### Reasons of a JSON export
 

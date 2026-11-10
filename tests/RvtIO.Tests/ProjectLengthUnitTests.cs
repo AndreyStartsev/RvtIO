@@ -53,6 +53,8 @@ public class ProjectLengthUnitTests
     [InlineData(3L, IfcUnitFamily.Foot)]
     [InlineData(4L, IfcUnitFamily.Foot)]
     [InlineData(6L, IfcUnitFamily.Millimetre)]
+    [InlineData(9L, IfcUnitFamily.Metre)]      // metres and centimetres
+    [InlineData(605L, IfcUnitFamily.Foot)]     // US survey feet
     public void DisplayUnitLayout_ReadsTheFirstOptionAsLength(long displayUnit, IfcUnitFamily expected)
     {
         string? unit = WideDocument.LegacyLengthUnit(LegacyRecords(displayUnit), out string? issue);

@@ -38,14 +38,20 @@ internal static class IfcLengthUnitChoice
         return null;
     }
 
-    /// <summary>Feet and feet-and-fractional-inches are written as FOOT, meters as METRE, millimeters as MILLI METRE;
-    /// every other option, and an unreadable one (the documented default), is written as MILLI METRE.</summary>
-    internal static IfcUnitFamily Family(string? storedLengthUnit) =>
-        storedLengthUnit == null ? IfcUnitFamily.Millimetre
+    /// <summary>The family the stored unit is written in, as Revit's own IFC export declares it: feet, feet-and-fractional-inches
+    /// and US survey feet as FOOT, meters and meters-and-centimeters as METRE, millimeters as MILLI METRE. Null for every
+    /// other unit (centimeters and inches among them, which have no family here) and for an unreadable option.</summary>
+    internal static IfcUnitFamily? OwnFamily(string? storedLengthUnit) =>
+        storedLengthUnit == null ? null
         : UnitSchemaEvaluator.DisplayNameKey(storedLengthUnit) switch
         {
-            UnitPrefix + "feet" or UnitPrefix + "feetFractionalInches" => IfcUnitFamily.Foot,
-            UnitPrefix + "meters" => IfcUnitFamily.Metre,
-            _ => IfcUnitFamily.Millimetre,
+            UnitPrefix + "feet" or UnitPrefix + "feetFractionalInches" or UnitPrefix + "usSurveyFeet" => IfcUnitFamily.Foot,
+            UnitPrefix + "meters" or UnitPrefix + "metersCentimeters" => IfcUnitFamily.Metre,
+            UnitPrefix + "millimeters" => IfcUnitFamily.Millimetre,
+            _ => null,
         };
+
+    /// <summary>The family of the stored unit (<see cref="OwnFamily"/>); a unit without one and an unreadable option are
+    /// written as MILLI METRE, the documented default.</summary>
+    internal static IfcUnitFamily Family(string? storedLengthUnit) => OwnFamily(storedLengthUnit) ?? IfcUnitFamily.Millimetre;
 }
