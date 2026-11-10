@@ -618,9 +618,7 @@ public partial class IfcExporter
         {
             foreach (var lvl in levelElems)
             {
-                double elevFt = GetElevation(lvl);
-                double elevM = Math.Round(elevFt * FeetToMetres, 4); // round to 0.1mm
-                if (Math.Abs(elevM) < 1e-6) elevM = 0.0; // avoid -0.
+                double elevM = StoreyElevationMetres(lvl);
                 int lvlPtId = w.Add("IFCCARTESIANPOINT", StepWriter.List(D(0), D(0), D(elevM)));
                 int lvlAxisId = w.Add("IFCAXIS2PLACEMENT3D", $"{R(lvlPtId)},$,$");
                 int lvlPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(bldgLocalPlacementId)},{R(lvlAxisId)}");
@@ -4895,7 +4893,19 @@ public partial class IfcExporter
             exportedCount++;
         }
 
-        StairAggregation.Apply(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, CurrentProfile);
+        // A multistory stair is repeated from its base level, which may be a project level that is not a storey:
+        // the height the storey placement of every project level has or would have.
+        Dictionary<int, double>? stairLevelElevations = null;
+        if (CurrentProfile)
+        {
+            stairLevelElevations = [];
+            foreach (var projectLevel in info.Elements)
+                if (IsProjectLevel(projectLevel) && projectLevel.Parameters.Any(parameter => parameter.Id == -1007102
+                        && parameter.StorageType == StorageType.Double && parameter.Value is double feet && double.IsFinite(feet)))
+                    stairLevelElevations[projectLevel.Id] = StoreyElevationMetres(projectLevel);
+        }
+        StairAggregation.Apply(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, CurrentProfile, storeyIds, storeyPlacements,
+            stairLevelElevations);
         var stairBodyParts = CurrentProfile
             ? StairAggregation.SplitLegacyBodies(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, axisId, _usedExportIds)
             : [];
@@ -69901,6 +69911,13 @@ public partial class IfcExporter
             .OrderBy(GetElevation)
             .ThenBy(element => element.Id)
             .ToList();
+    }
+
+    /// <summary>The height of the storey placement of a level, in metres.</summary>
+    private static double StoreyElevationMetres(Element level)
+    {
+        double metres = Math.Round(GetElevation(level) * FeetToMetres, 4); // round to 0.1mm
+        return Math.Abs(metres) < 1e-6 ? 0.0 : metres; // avoid -0.
     }
 
     private static double GetElevation(Element level)
