@@ -42,12 +42,13 @@ public partial class IfcExporter
 
     /// <summary>The extrusion a product body was written as: IFCEXTRUDEDAREASOLID over a rectangle, circle or closed
     /// polyline profile. It keeps the depth, profile area, perimeter and the profile extents. <c>Polygon</c> is the polyline
-    /// profile as written, <c>Loop</c> the profile as points in the frame of the product (the loop measured for an opening).</summary>
+    /// profile as written, <c>Loop</c> the profile as points in the frame of the product (the loop measured for an opening),
+    /// <c>OuterArcs</c> the arcs its writer turned into chords of <c>Polygon</c> (null when it passed none on).</summary>
     internal readonly record struct ProfileExtrusion(
         double Depth, double Area, double OuterPerimeter, double ExtentX, double ExtentY, bool Rectangle,
         double[]? AxisX = null, double[]? AxisY = null, double[]? AxisZ = null,
         IReadOnlyList<(double X, double Y)>? Polygon = null, IReadOnlyList<double[]>? Loop = null,
-        double? NominalArea = null, double InnerPerimeter = 0);
+        double? NominalArea = null, double InnerPerimeter = 0, IReadOnlyList<ArcChordsCurrent>? OuterArcs = null);
 
     /// <summary>An orthonormal frame (X, Y, Z axes) in the coordinates of its parent.</summary>
     private readonly record struct FrameCurrent(double[] X, double[] Y, double[] Z)
@@ -288,6 +289,30 @@ public partial class IfcExporter
         return (Math.Abs(twiceArea) / 2, perimeter);
     }
 
+    /// <summary>What the arcs of a written profile outline add to its polygon: the area between each chord and its arc (taken away
+    /// where the arc is concave) and the length of the arc over its chord. The arcs are the ones the writer of the outline turned
+    /// into chords (<see cref="ArcChordsCurrent"/>), never read out of the points; the radius is that of the written chord under
+    /// its share of the angle of the arc.</summary>
+    internal static (double Area, double Length) ArcsOverChordsCurrent(IReadOnlyList<(double X, double Y)> points, IReadOnlyList<ArcChordsCurrent> arcs)
+    {
+        double area = 0, length = 0;
+        foreach (var arc in arcs)
+        {
+            double angle = Math.Abs(arc.Sweep) / arc.Chords;
+            for (int i = 0; i < arc.Chords; i++)
+            {
+                var (ax, ay) = points[(arc.First + i) % points.Count];
+                var (bx, by) = points[(arc.First + i + 1) % points.Count];
+                double chord = Math.Sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+                double radius = chord / (2 * Math.Sin(angle / 2));
+                double segment = radius * radius / 2 * (angle - Math.Sin(angle));
+                area += arc.Sweep > 0 ? segment : -segment;
+                length += radius * angle - chord;
+            }
+        }
+        return (area, length);
+    }
+
     private static bool TryAnalyzeHollowRectWithFillets(
         IReadOnlyList<(double X, double Y)> outer,
         IReadOnlyList<List<(double X, double Y)>> inners,
@@ -399,7 +424,8 @@ public partial class IfcExporter
                 }
                 var (closedArea, closedPerimeter) = ComputePolygonMetricsCurrent(points);
                 return new ProfileExtrusion(depth, closedArea, closedPerimeter,
-                    points.Max(p => p.X) - points.Min(p => p.X), points.Max(p => p.Y) - points.Min(p => p.Y), false, Polygon: points);
+                    points.Max(p => p.X) - points.Min(p => p.X), points.Max(p => p.Y) - points.Min(p => p.Y), false, Polygon: points,
+                    OuterArcs: w.PolylineArcs.GetValueOrDefault(curveId));
             case "IFCARBITRARYPROFILEDEFWITHVOIDS" when arguments.Length == 4 && TryEntityId(arguments[2], out int outerCurveId)
                 && ReadPolylinePointsCurrent(w, indexById, outerCurveId) is { } outerPoints:
                 var inners = new List<List<(double X, double Y)>>();
@@ -427,7 +453,7 @@ public partial class IfcExporter
                 }
                 return new ProfileExtrusion(depth, Math.Max(0, outerArea - totalInnerArea), outerP,
                     outerPoints.Max(p => p.X) - outerPoints.Min(p => p.X), outerPoints.Max(p => p.Y) - outerPoints.Min(p => p.Y), false,
-                    Polygon: outerPoints, InnerPerimeter: totalInnerP);
+                    Polygon: outerPoints, InnerPerimeter: totalInnerP, OuterArcs: w.PolylineArcs.GetValueOrDefault(outerCurveId));
             default:
                 return null;
         }
@@ -1476,6 +1502,13 @@ public partial class IfcExporter
         if (ExtrusionDataCurrent(body, shells) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area, perimeter = extrusion.Perimeter;
+            // The section of a written profile is measured with the arcs its writer passed on, not with the chords they are written as.
+            if (body is { Polygon: { } outline, OuterArcs: { } outlineArcs, NominalArea: null })
+            {
+                var arcs = ArcsOverChordsCurrent(outline, outlineArcs);
+                area += arcs.Area;
+                perimeter += arcs.Length;
+            }
             AddIfPositive(result, QuantityKind.Length, "Length", length);
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", area);
             AddIfPositive(result, QuantityKind.Area, "OuterSurfaceArea", perimeter * length);
