@@ -1834,6 +1834,20 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.StartsWith($"'{IfcGuid.FromMd5("IfcElementQuantity:BaseQuantities:GZGD7y6S5209$mGLi_sPlj")}'", Assert.Single(Args(w, "IFCELEMENTQUANTITY")));
     }
 
+    [Theory]
+    [InlineData("autodesk.unit.unit:meters-1.0.1", 0.3048)]
+    [InlineData("autodesk.unit.unit:feet-1.0.1", 1)]
+    public void Export_Column_InAMetreOrFootFile_MultipliesTheLengthOfTheFileUnitWithoutTheMillimetreSlip(string lengthUnit, double unitsPerFoot)
+    {
+        string ifc = ExportBeam(new IfcExporter(), lengthUnit: lengthUnit, column: true);
+
+        double length = QuantityIn(ifc, "LENGTH", "Length"), area = QuantityIn(ifc, "AREA", "CrossSectionArea");
+        Assert.Equal(10 * unitsPerFoot, length, 9);
+        Assert.Equal(0.4 * 0.6 * unitsPerFoot * unitsPerFoot, area, 9);
+        Assert.Equal(length * 2 * (0.4 + 0.6) * unitsPerFoot, QuantityIn(ifc, "AREA", "OuterSurfaceArea"), 9);
+        Assert.Equal(length * area, QuantityIn(ifc, "VOLUME", "GrossVolume"), 9);
+    }
+
     [Fact]
     public void Pass_Beam_UsesConsistentUnitsAndAddsTheSurfaces()
     {
@@ -2156,7 +2170,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
 
-    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false)
+    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false,
+        string? lengthUnit = null, bool column = false)
     {
         var beam = new Element
         {
@@ -2185,7 +2200,18 @@ public class IfcExporterBaseQuantitiesCurrentTests
             beam.CurveDriverLineLength = 10;
             beam.CurveDriverLineZ = (0, 5);
         }
-        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded };
+        if (column)
+        {
+            // the same box standing: 0.4 x 0.6 ft, 10 ft tall
+            beam.CategoryId = -2001330;
+            beam.Category = "OST_StructuralColumns";
+            beam.BoundingBox = beam.Geometry.BoundingBox = [1.8, 0, 3.7, 2.2, 0.6, 13.7];
+            beam.Geometry.Faces = Box(0.4, 0.6, 10).Faces.Select(face => new GeoFace
+            {
+                OuterVertices = face.OuterVertices!.Select(p => new[] { p[0] + 1.8, p[1], p[2] + 3.7 }).ToList(),
+            }).ToList();
+        }
+        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded, SerializedLengthUnit = lengthUnit };
         info.Elements.Add(beam);
         string path = Path.Combine(Path.GetTempPath(), $"revitreader-base-quantities-{Guid.NewGuid():N}.ifc");
         try
