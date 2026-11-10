@@ -68520,6 +68520,12 @@ public partial class IfcExporter
             int storeyId;
             if (levelElemId is int lvl && storeyIds.TryGetValue(lvl, out int levelStoreyId)) storeyId = levelStoreyId;
             else if (buildingContainerId is int container) storeyId = container;
+            // A space on a Level that is not a project storey stands in the highest storey at or below that level;
+            // it is not written where no storey is that low.
+            else if (CurrentProfile && levelElemId is int offStoreyLevelId && _elementsByIdCurrent is { } elementsById
+                && elementsById.TryGetValue(offStoreyLevelId, out var offStoreyLevel) && offStoreyLevel.CategoryId == -2000240
+                && HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elementsById, 0) is > 0 and int storeyBelowId)
+                storeyId = storeyBelowId;
             else continue;
 
             string? number = RoomStringParam(elem, RoomNumberParam);
