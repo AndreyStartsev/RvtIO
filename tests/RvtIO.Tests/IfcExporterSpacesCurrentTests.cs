@@ -133,6 +133,31 @@ public class IfcExporterSpacesCurrentTests
     }
 
     [Fact]
+    public void RoomFinishes_BecomeTheCoveringsOfPsetSpaceCommon_WhenTheyHaveAText()
+    {
+        var room = Room(100, "Hall", "1");
+        room.Parameters.Add(new Parameter { Id = -1006903, StorageType = StorageType.String, Value = "Screed" });   // floor finish
+        room.Parameters.Add(new Parameter { Id = -1006904, StorageType = StorageType.String, Value = "" });         // wall finish, empty
+        room.Parameters.Add(new Parameter { Id = -1006905, StorageType = StorageType.String, Value = "Plaster" });  // ceiling finish
+        string ifc = Export(new RevitFileInfo { Elements = [Level(900), room, Room(200, "Store", "2")] });
+
+        string[] Properties(string number)
+        {
+            int space = Ids(ifc, "IFCSPACE").Single(id => Args(ifc, id, "IFCSPACE")[2] == number);
+            var psets = Ids(ifc, "IFCRELDEFINESBYPROPERTIES").Select(id => Args(ifc, id, "IFCRELDEFINESBYPROPERTIES"))
+                .Where(a => a[4] == $"(#{space})").Select(a => int.Parse(a[5][1..])).Where(id => Ids(ifc, "IFCPROPERTYSET").Contains(id))
+                .Select(id => Args(ifc, id, "IFCPROPERTYSET"));
+            return Regex.Matches(psets.Single(a => a[2] == "'Pset_SpaceCommon'")[4], @"#(\d+)")
+                .Select(match => Args(ifc, int.Parse(match.Groups[1].Value), "IFCPROPERTYSINGLEVALUE")).Select(a => $"{a[0]}={a[2]}").ToArray();
+        }
+
+        Assert.Equal(
+            ["'Reference'=IFCIDENTIFIER('Hall 1')", "'FloorCovering'=IFCLABEL('Screed')", "'CeilingCovering'=IFCLABEL('Plaster')"],
+            Properties("'1'"));
+        Assert.Equal(["'Reference'=IFCIDENTIFIER('Store 2')"], Properties("'2'"));
+    }
+
+    [Fact]
     public void AreaScheme_BecomesAnIfcGroupOfItsAreas()
     {
         var scheme = new Element { Id = 15979, CategoryId = AreaSchemeCategoryId, Name = "Gross Building",

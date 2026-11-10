@@ -1907,6 +1907,19 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void Pass_Space_WithoutAPlanArea_HasTheHeightOfItsStoreyOnly()
+    {
+        var (w, owner, storey, space) = SpaceInStorey();
+        var room = new Element { Id = 17, CategoryId = -2000160 };
+
+        Apply(w, owner, new() { [17] = room }, new() { [space] = 17 }, new() { [storey] = 3.05 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Height", 3.05));
+        Assert.Empty(Quantities(w, "IFCQUANTITYAREA"));
+        Assert.Empty(Quantities(w, "IFCQUANTITYVOLUME"));
+    }
+
+    [Fact]
     public void RoomExtrusionPerimeter_Box_IsTheOuterLoopOfTheBottomFace() =>
         Assert.Equal(12 * 0.3048, IfcExporter.RoomExtrusionPerimeterMetresCurrent(Box(3, 3, 4))!.Value, 12);
 
