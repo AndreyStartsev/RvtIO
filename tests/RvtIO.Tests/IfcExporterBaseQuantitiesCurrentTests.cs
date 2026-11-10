@@ -1576,6 +1576,30 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", 0.25 * side), ("NetVolume", 3.2 * 0.202 * 2.7));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Pass_ArcWall_TheLayersOfItsTypeLeaveNetVolumeAsItIsWithoutThem(bool withTypeLayers)
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 3.2, 0.202, 2.7);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        double length = 3.2 / 0.3048, thickness = 0.202 / 0.3048, height = 2.7 / 0.3048;
+        // The solid is 0.202 m thick, the layers of the type add up to 0.25 m: the gross quantities follow the layers,
+        // the net volume of the arc wall stays the footprint of the solid width times the height.
+        var element = new Element { Id = 11, CategoryId = -2000011, SerializedSystemTypeId = 12, Geometry = Box(length, thickness, height),
+            Location = new LocationCurve { CurveType = "Arc", Length = 3.2 / 0.3048 } };
+        var elements = new Dictionary<int, Element> { [11] = element };
+        if (withTypeLayers) elements[12] = WallTypeWithLayers(12, 0.1, 0.15);
+
+        Apply(w, owner, elements, new() { [wall] = 11 });
+
+        double width = withTypeLayers ? 0.25 : 0.202, side = 3.2 * 2.7;
+        Assert.Equal(width, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Width").Value, 9);
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("GrossFootprintArea", 3.2 * width), ("GrossSideArea", side), ("NetSideArea", side));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", width * side), ("NetVolume", 1.74528));
+    }
+
     [Fact]
     public void Pass_SimpleRectangularWall_TypeWithoutUsableLayersKeepsTheProfileWidth()
     {

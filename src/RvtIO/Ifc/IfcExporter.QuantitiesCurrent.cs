@@ -1052,15 +1052,18 @@ public partial class IfcExporter
         // not from the face trimmed at the joins; any other wall from the extrusion loops.
         double? curveLength = element.Location is { Length: > 0 } loc ? loc.Length * FeetToMetres
             : ExactParameterFeetCurrent(element, null, CurveElemLengthParamId) * FeetToMetres;
-        double footprint = (simple || element.Location?.CurveType == "Arc" || element.Location == null)
-            && curveLength != null && width > 1e-9 ? width * curveLength.Value
-            : topArea > 1e-12 ? topArea : body.Area;
-        if (element.Location?.CurveType == "Arc" && shells is [{ Closed: true } shell]
-            && shell.Faces.Select(RebuiltHorizontalCurveLoopAreaCurrent).FirstOrDefault(area => area != null) is { } rebuiltArea)
-            footprint = rebuiltArea * SquareFeetToSquareMetres;
+        double? rebuiltArea = element.Location?.CurveType == "Arc" && shells is [{ Closed: true } shell]
+            ? shell.Faces.Select(RebuiltHorizontalCurveLoopAreaCurrent).FirstOrDefault(area => area != null) * SquareFeetToSquareMetres
+            : null;
+        double Footprint(double across) => rebuiltArea
+            ?? ((simple || element.Location?.CurveType == "Arc" || element.Location == null)
+                && curveLength != null && across > 1e-9 ? across * curveLength.Value
+                : topArea > 1e-12 ? topArea : body.Area);
+        double footprint = Footprint(width);
+        // The net volume of an arc wall is measured on its solid: the footprint of the profile width, not of the layers of the type.
         double? netVolume = element.Location?.CurveType == "Arc" && body.Depth > 1e-9
             && !shells.Any(shell => shell.SourceMeasured)
-            ? footprint * (zRange ?? body.Depth)
+            ? Footprint(body.ExtentY) * (zRange ?? body.Depth)
             : SolidTotalsCurrent(shells)?.Volume;
         AddIfPositive(result, QuantityKind.Area, "GrossFootprintArea", footprint);
         if (body.Depth > 1e-9 && width > 1e-9 && sideArea > 1e-12)
