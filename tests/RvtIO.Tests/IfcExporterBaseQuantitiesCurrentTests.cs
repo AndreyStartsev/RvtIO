@@ -265,6 +265,21 @@ public class IfcExporterBaseQuantitiesCurrentTests
         return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
     }
 
+    /// <summary>A body that is a vertical extrusion of a round tube profile (a hollow pile): outer radius and wall in the units of the writer.</summary>
+    private static int AddHollowCircleBody(StepWriter w, double radius, double wall, double depth)
+    {
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.)");
+        int profilePlacement = w.Add("IFCAXIS2PLACEMENT2D", $"#{origin},$");
+        int profile = w.Add("IFCCIRCLEHOLLOWPROFILEDEF", $".AREA.,$,#{profilePlacement},{StepWriter.Real(radius)},{StepWriter.Real(wall)}");
+        int point3 = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{point3},$,$");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int context = w.Add("IFCGEOMETRICREPRESENTATIONCONTEXT", $"$,'Model',3,1.E-05,#{position},$");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#{context},'Body','SweptSolid',(#{solid})");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
     private static int AddProduct(StepWriter w, string type, string guid, int owner, int placement, int? shape = null) =>
         w.Add(type, $"'{guid}',#{owner},'P',$,$,#{placement},{(shape is { } id ? "#" + id : "$")},'1'");
 
@@ -1111,6 +1126,26 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.DoesNotContain(Quantities(w, "IFCQUANTITYLENGTH"), q => q.Name == "Perimeter");
     }
 
+    [Theory]
+    [InlineData("IFCSLAB", true)]
+    [InlineData("IFCCOLUMN", false)]
+    public void Pass_HollowCircleBody_GivesOnlyASlabTheCircumferenceAndTheDiameter(string type, bool expected)
+    {
+        var (w, owner, placement) = NewWriter();
+        int product = AddProduct(w, type, "WZGD7y6S5209$mGLi_sPlj", owner, placement, AddHollowCircleBody(w, 0.4, 0.06, 7));
+
+        Apply(w, owner, new() { [33] = new Element { Id = 33, Geometry = HalfDiscPrism(3, 6) } }, new() { [product] = 33 });
+
+        var lengths = Quantities(w, "IFCQUANTITYLENGTH");
+        Assert.Equal(expected, lengths.Any(q => q.Name == "Perimeter"));
+        if (!expected) return;
+        // the circumference of the outer circle only, and the diameter
+        Assert.Equal(2 * Math.PI * 0.4, lengths.Single(q => q.Name == "Perimeter").Value, 9);
+        Assert.Equal(0.8, lengths.Single(q => q.Name == "Width").Value, 9);
+        // the body is read, so the slab gets GrossVolume too: the area of its top surface times the depth of the extrusion
+        Assert.Equal(Math.PI * 9 / 2 * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "GrossVolume").Value, 9);
+    }
+
     [Fact]
     public void Pass_Slab_CurvedSideThatIsNoVerticalCylinder_GivesNoGrossVolume()
     {
@@ -1899,6 +1934,20 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.StartsWith($"'{IfcGuid.FromMd5("IfcElementQuantity:BaseQuantities:GZGD7y6S5209$mGLi_sPlj")}'", Assert.Single(Args(w, "IFCELEMENTQUANTITY")));
     }
 
+    [Theory]
+    [InlineData("autodesk.unit.unit:meters-1.0.1", 0.3048)]
+    [InlineData("autodesk.unit.unit:feet-1.0.1", 1)]
+    public void Export_Column_InAMetreOrFootFile_MultipliesTheLengthOfTheFileUnitWithoutTheMillimetreSlip(string lengthUnit, double unitsPerFoot)
+    {
+        string ifc = ExportBeam(new IfcExporter(), lengthUnit: lengthUnit, column: true);
+
+        double length = QuantityIn(ifc, "LENGTH", "Length"), area = QuantityIn(ifc, "AREA", "CrossSectionArea");
+        Assert.Equal(10 * unitsPerFoot, length, 9);
+        Assert.Equal(0.4 * 0.6 * unitsPerFoot * unitsPerFoot, area, 9);
+        Assert.Equal(length * 2 * (0.4 + 0.6) * unitsPerFoot, QuantityIn(ifc, "AREA", "OuterSurfaceArea"), 9);
+        Assert.Equal(length * area, QuantityIn(ifc, "VOLUME", "GrossVolume"), 9);
+    }
+
     [Fact]
     public void Pass_Beam_UsesConsistentUnitsAndAddsTheSurfaces()
     {
@@ -2364,7 +2413,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
 
-    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false)
+    private static string ExportBeam(IfcExporter exporter, int? structuralType = null, bool geometryUndecoded = false, bool driveCurve = false,
+        string? lengthUnit = null, bool column = false)
     {
         var beam = new Element
         {
@@ -2393,7 +2443,18 @@ public class IfcExporterBaseQuantitiesCurrentTests
             beam.CurveDriverLineLength = 10;
             beam.CurveDriverLineZ = (0, 5);
         }
-        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded };
+        if (column)
+        {
+            // the same box standing: 0.4 x 0.6 ft, 10 ft tall
+            beam.CategoryId = -2001330;
+            beam.Category = "OST_StructuralColumns";
+            beam.BoundingBox = beam.Geometry.BoundingBox = [1.8, 0, 3.7, 2.2, 0.6, 13.7];
+            beam.Geometry.Faces = Box(0.4, 0.6, 10).Faces.Select(face => new GeoFace
+            {
+                OuterVertices = face.OuterVertices!.Select(p => new[] { p[0] + 1.8, p[1], p[2] + 3.7 }).ToList(),
+            }).ToList();
+        }
+        var info = new RevitFileInfo { GeometryUndecoded = geometryUndecoded, SerializedLengthUnit = lengthUnit };
         info.Elements.Add(beam);
         string path = Path.Combine(Path.GetTempPath(), $"revitreader-base-quantities-{Guid.NewGuid():N}.ifc");
         try
