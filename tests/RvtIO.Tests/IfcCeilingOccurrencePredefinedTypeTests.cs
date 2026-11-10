@@ -81,7 +81,7 @@ public class IfcCeilingOccurrencePredefinedTypeTests
     [Theory]
     [InlineData(IfcProfile.Current, "IFCCOVERING", "$")]
     [InlineData(IfcProfile.Legacy, "IFCBUILDINGELEMENTPROXY", "$")]
-    public void RoofSoffitIsACoveringWithoutAPredefinedTypeInTheCurrentProfile(IfcProfile profile, string productClass, string lastArgument)
+    public void RoofSoffitIsACoveringWithoutAPredefinedTypeAndItsTypeIsNotDefinedInTheCurrentProfile(IfcProfile profile, string productClass, string lastArgument)
     {
         var info = new RevitFileInfo();
         info.Elements.Add(WithTypeLink(IfcExporterCoveringCommonPropertySetTests.Product(100, 200, -2001393, "OST_RoofSoffit", "Soffit")));
@@ -98,7 +98,8 @@ public class IfcCeilingOccurrencePredefinedTypeTests
             if (profile == IfcProfile.Current)
             {
                 var type = Assert.Single(Regex.Matches(ifc, @"#\d+=IFCCOVERINGTYPE\(([^\r\n]*)\);"));
-                Assert.EndsWith(",'200',$,$", type.Groups[1].Value);
+                // PredefinedType is optional on IfcCovering and required on IfcCoveringType.
+                Assert.EndsWith(",'200',$,.NOTDEFINED.", type.Groups[1].Value);
             }
             else Assert.DoesNotContain("IFCCOVERING", ifc);
         }

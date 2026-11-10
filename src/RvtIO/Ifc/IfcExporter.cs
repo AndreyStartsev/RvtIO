@@ -67816,7 +67816,7 @@ public partial class IfcExporter
             else
             {
                 string trailingArgs = TypeClassesWithPredefinedType.Contains(typeClass)
-                    ? predefinedTypes[key].Length == 0 ? ",$" : $",.{predefinedTypes[key]}."
+                    ? $",.{predefinedTypes[key]}."
                     : typeClass == "IFCFURNITURETYPE" ? ",$" : "";
                 // The ElementType of a gutter type repeats its name.
                 typeEntityId = w.Add(typeClass,
@@ -67912,9 +67912,6 @@ public partial class IfcExporter
             return "ROOF";
         if (type.CategoryId == null || type.CategoryId != occurrence.CategoryId)
             return "NOTDEFINED";
-        // No predefined type: the empty value is written as $.
-        if (currentProfile && typeClass == "IFCCOVERINGTYPE" && type.CategoryId == RoofSoffitCategoryId)
-            return "";
         string value = (typeClass, type.CategoryId) switch
         {
             ("IFCWALLTYPE", -2000011) when type.SerializedBasicWallTypeFunction is >= 0 and <= 5 => "STANDARD",
