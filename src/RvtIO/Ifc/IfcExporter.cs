@@ -64995,7 +64995,10 @@ public partial class IfcExporter
                     continue;
                 if (cutLoopCount > 0) kind = DoorWindowOpeningKind.Extrusion;
             }
-            if (!levelIdByProductElementId.TryGetValue(written ? insert.Id : host.Id, out int levelId))
+            // A written insert is identified by its own level, which need not be the level of the storey that contains it
+            // (measured in the current profile only).
+            int levelId = written && currentProfile ? RoomIntParam(insert, LevelParamId) ?? 0 : 0;
+            if (levelId <= 0 && !levelIdByProductElementId.TryGetValue(written ? insert.Id : host.Id, out levelId))
                 continue;
 
             string openingGlobalId = DoorWindowOpeningGlobalId(insertExportId, levelId, kind, currentProfile);

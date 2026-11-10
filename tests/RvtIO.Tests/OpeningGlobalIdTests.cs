@@ -164,6 +164,24 @@ public class OpeningGlobalIdTests
     }
 
     [Theory]
+    [InlineData(true, 777)]
+    [InlineData(false, 311)]
+    public void Current_WrittenDoor_IsIdentifiedByItsOwnLevelWhenItDiffersFromTheLevelOfItsStorey(bool currentProfile, int level)
+    {
+        // The door is contained in the storey of level 311, but its own level is 777 (a level that is no storey).
+        Model model = DoorModel(cutLoopCount: 1, writeDoor: true);
+        model.Elements[906937].Parameters.Add(new Parameter
+        {
+            Id = -1001952, Definition = new Definition { Id = -1001952, Name = "LEVEL_PARAM" },
+            StorageType = StorageType.ElementId, Value = 777,
+        });
+        Assert.Single(IfcExporter.ApplyDoorWindowOpeningIdentities(
+            model.Writer, model.Elements, model.ProductElements, model.Levels, model.Exact, currentProfile));
+        Assert.StartsWith($"'{IfcExporter.DoorWindowOpeningGlobalId(Id("2pfAHb2EL46hq_sMVbImEN"), level, IfcExporter.DoorWindowOpeningKind.Extrusion)}'",
+            Args(model.Writer, model.Opening));
+    }
+
+    [Theory]
     [InlineData(StorageType.Integer, -1, 1)]
     [InlineData(StorageType.String, "IfcWall", 0)]
     public void IfcExportParameterOnTheDoor_BlocksTheDoorPathOnlyAsARealOverride(StorageType storage, object value, int assigned)
