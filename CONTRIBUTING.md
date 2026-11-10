@@ -2,7 +2,7 @@
 
 ## Reporting bugs
 
-Open a [GitHub issue](https://github.com/mahach666/RvtIO/issues) with:
+Open a [GitHub issue](https://github.com/IOExtend/RvtIO/issues) with:
 
 - The Revit version that saved the file.
 - The rvtio version.

@@ -16,8 +16,8 @@
     <Authors>mahach666</Authors>
     <Copyright>Copyright (c) 2026 mahach666</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/mahach666/RvtIO</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/mahach666/RvtIO</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/IOExtend/RvtIO</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/IOExtend/RvtIO</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>revit;rvt;ifc;bim;json;reader</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
