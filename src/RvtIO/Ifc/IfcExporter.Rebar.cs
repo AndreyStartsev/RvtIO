@@ -243,12 +243,15 @@ public partial class IfcExporter
     private const string BeamSystemFamilyLabel = "Structural Beam System";
 
     /// <summary>The IfcElementAssembly (BEAM_GRID, no representation) of every beam system whose beams were exported, and the
-    /// IfcRelAggregates to those beams. The beams leave the storey and the assembly takes their place.
+    /// IfcRelAggregates to those beams. The beams leave their storeys and the assembly stands in the storey of its first beam.
+    /// Where that beam is on a level that is not a project storey, the assembly stands where the storey rule puts the beam system
+    /// itself: it has no body, so that is measured by its own outline (a system without an outline stays with its first beam).
     /// The assembly is not registered as an exported element: it gets no material or type relation (the later passes read that list).
     /// Returns the ids of the beam systems written.</summary>
     private List<int> WriteJoistAssemblies(StepWriter w, IReadOnlyList<Element> elements, int ownerHistId, int parentPlacementId, int axisId,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> exported, IReadOnlyDictionary<int, int> exportedStoreyIds,
-        Dictionary<int, List<int>> storeyContents, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds)
+        Dictionary<int, List<int>> storeyContents, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
+        Func<Element, int> storeyOfSystem)
     {
         var written = new List<int>();
         foreach (var elem in elements.Where(e => e.JoistSystem != null).OrderBy(e => e.Id))
@@ -256,6 +259,7 @@ public partial class IfcExporter
             var data = elem.JoistSystem!;
             var memberIds = data.BeamIds.Where(exported.ContainsKey).Distinct().ToList();
             if (string.IsNullOrEmpty(data.TypeName) || memberIds.Count == 0 || !exportedStoreyIds.TryGetValue(memberIds[0], out int storeyId)) continue;
+            if (elem.BoundingBox is { Length: >= 6 } && _offStoreyLevelElementIds.Contains(memberIds[0])) storeyId = storeyOfSystem(elem);
             string objectType = $"{BeamSystemFamilyLabel}:{data.TypeName}";
             string globalId = ResolveExactElementGlobalId(elem, _usedExportIds, handleBased: CurrentProfile) ?? IfcGuid.FromElementId(elem.Id);
             string tag = elem.Id.ToString(CultureInfo.InvariantCulture);
