@@ -184,6 +184,8 @@ public class IfcExporterGridTests
         // Ground: three families, one triangular grid with all three lines. Upper: two families, one rectangular grid.
         Assert.Equal(2, Regex.Matches(ifc, @"=IFCGRID\(").Count);
         Assert.Equal(5, Regex.Matches(ifc, @"IFCGRIDAXIS\(").Count);
+        Assert.Single(Regex.Matches(ifc, @"=IFCGRID\([^\r\n]*,\(#\d+\)\);"));
+        Assert.Single(Regex.Matches(ifc, @"=IFCGRID\([^\r\n]*,\$\);"));
     }
 
     [Fact]
@@ -268,11 +270,11 @@ public class IfcExporterGridTests
     ];
 
     [Fact]
-    public void ExportCurrent_OneGridPerStorey_NamedDefaultGrid_WithAnEmptyWAxisList()
+    public void ExportCurrent_OneGridPerStorey_NamedDefaultGrid_WithNoWAxisList()
     {
         string ifc = Export(IfcProfile.Current, Model());
 
-        var grids = Regex.Matches(ifc, @"#\d+=IFCGRID\('([^']{22})',#\d+,'Default Grid','','',#\d+,#\d+,\((#\d+(?:,#\d+)*)\),\((#\d+(?:,#\d+)*)\),\(\)\);");
+        var grids = Regex.Matches(ifc, @"#\d+=IFCGRID\('([^']{22})',#\d+,'Default Grid','','',#\d+,#\d+,\((#\d+(?:,#\d+)*)\),\((#\d+(?:,#\d+)*)\),\$\);");
         Assert.Equal(2, grids.Count);
         Assert.NotEqual(grids[0].Groups[1].Value, grids[1].Groups[1].Value);
         Assert.Equal(2, grids[0].Groups[2].Value.Split(',').Length);
@@ -305,7 +307,7 @@ public class IfcExporterGridTests
 
         string ifc = Export(IfcProfile.Current, elements.ToArray());
 
-        var grids = Regex.Matches(ifc, @"#\d+=IFCGRID\('[^']{22}',#\d+,'Default Grid','','',#\d+,#\d+,\(([^)]*)\),\(([^)]*)\),\(\)\);");
+        var grids = Regex.Matches(ifc, @"#\d+=IFCGRID\('[^']{22}',#\d+,'Default Grid','','',#\d+,#\d+,\(([^)]*)\),\(([^)]*)\),\$\);");
         // Ground: A, B, 1, 2. Upper: A, B, C, D (touching, within the 1e-9 tolerance) + 1, 2, 3; line 4 starts 1e-8 above it.
         // Roof: A, B + 1, 2, 4 (line 4 reaches up to 30).
         Assert.Equal([4, 7, 5], grids.Select(grid => grid.Groups[1].Value.Split(',').Length + grid.Groups[2].Value.Split(',').Length).ToArray());
