@@ -8,7 +8,9 @@ namespace RvtIO.Ifc;
 /// instance's created phase; the first room whose vertical extent and solid hold it wins (a point on the boundary is inside).
 /// The test point, where the symbol is the one the instance's placement names (the type symbol, or the private copy of it
 /// that a modified instance stands on):
-/// - an instance of a hosted family in a wall: the placed origin of the symbol, projected on a side face of the wall and moved
+/// - an instance of a family with a room calculation point: that point of the symbol, placed with the instance
+///   (<see cref="CalculationPointCurrent"/>);
+/// - else an instance of a hosted family in a wall: the placed origin of the symbol, projected on a side face of the wall and moved
 ///   one foot along that face's normal (<see cref="WallSideTestPointCurrent"/>);
 /// - else a work-plane-based instance: the placed origin of the symbol, one foot along the instance's Z;
 /// - else an instance of a hosted family on a floor or a ceiling: the placed origin of the symbol, one foot against the
@@ -53,6 +55,9 @@ public partial class IfcExporter
 
     private const string FlippedYField = "1794:m_flippedY", WorkPlaneBasedField = "1794:m_workPlaneBased", AssociatedLevelField = "37:m_assocLevelId";
 
+    private const string CalculationPointField = "3639:m_position", HasCalculationPointField = "1773:m_hasRoomCalculationPoint",
+        SymbolFamilyField = "1829:m_familyId";
+
     /// <summary>The symbol the instance's placement names; null when the placement or the symbol is not decoded.</summary>
     private static Element? PlacedSymbolCurrent(Element instance, IReadOnlyDictionary<int, Element> elementsById) =>
         instance.Transform is { SymbolId: > 0 } placement ? elementsById.GetValueOrDefault(placement.SymbolId) : null;
@@ -70,6 +75,21 @@ public partial class IfcExporter
         var fields = PlacedSymbolCurrent(instance, elementsById)?.NativeRoomFields;
         return PlacedCurrent(instance, fields?.GetValueOrDefault("1829:m_origin@0") ?? 0, fields?.GetValueOrDefault("1829:m_origin@1") ?? 0,
             fields?.GetValueOrDefault("1829:m_origin@2") ?? 0);
+    }
+
+    /// <summary>The room calculation point of an instance in project coordinates: the point its symbol stores, placed with the
+    /// instance. Revit reports the room at this point for the instances of a family that has the point turned on, of level,
+    /// wall, floor, ceiling and face based families alike. Null when the family of the symbol does not turn the point on,
+    /// the symbol, its family or the point is not decoded, or the instance has no placement.</summary>
+    internal static double[]? CalculationPointCurrent(Element instance, IReadOnlyDictionary<int, Element> elementsById)
+    {
+        if (PlacedSymbolCurrent(instance, elementsById) is not { NativeRoomFields: { } point } symbol
+            || !point.TryGetValue(CalculationPointField + "@0", out double x) || !point.TryGetValue(CalculationPointField + "@1", out double y)
+            || !point.TryGetValue(CalculationPointField + "@2", out double z)
+            || symbol.NativeListFields is not { } symbolFields || !symbolFields.TryGetValue(SymbolFamilyField, out int familyId)
+            || elementsById.GetValueOrDefault(familyId)?.NativeRoomFields?.GetValueOrDefault(HasCalculationPointField) != 1)
+            return null;
+        return PlacedCurrent(instance, x, y, z);
     }
 
     /// <summary>The test point of an instance of a hosted family in a wall: the placed origin of its symbol projected on a side
@@ -159,7 +179,8 @@ public partial class IfcExporter
         return [origin[0] + axis[0] * step, origin[1] + axis[1] * step, origin[2] + axis[2] * step];
     }
 
-    /// <summary>The test point (feet) of an instance: beside its host wall (<see cref="WallSideTestPointCurrent"/>); else, for a
+    /// <summary>The test point (feet) of an instance: the room calculation point of its family
+    /// (<see cref="CalculationPointCurrent"/>); else beside its host wall (<see cref="WallSideTestPointCurrent"/>); else, for a
     /// work-plane-based instance, the placed origin of its symbol and one foot along its Z; else, for an instance of a hosted
     /// family on a floor or a ceiling, one foot against its Z or along it (<see cref="FloorOrCeilingHostTestPointCurrent"/>);
     /// else the centre of the box of its own geometry, moved by at most half a foot towards the elevation of its associated
@@ -171,6 +192,7 @@ public partial class IfcExporter
     {
         if (elementsById != null)
         {
+            if (CalculationPointCurrent(instance, elementsById) is { } calculationPoint) return calculationPoint;
             if (WallSideTestPointCurrent(instance, elementsById) is { } wallPoint) return wallPoint;
             if (instance.NativeListFields?.GetValueOrDefault(WorkPlaneBasedField) == 1
                 && PlacedSymbolOriginCurrent(instance, elementsById) is { } origin && instance.Transform?.BasisZ is { Length: 3 } axis)

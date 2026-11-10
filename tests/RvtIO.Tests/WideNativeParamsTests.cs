@@ -7,18 +7,19 @@ namespace RvtIO.Tests;
 
 /// <summary>
 /// The readings <see cref="WideNativeParams"/> takes from the walk of a block with 64-bit ids (Level elevation, project phase order, room
-/// phase, system discriminator, the stored demolished phase) and the capture of a whole counted array (<see cref="WideBlockWalker.AllItemsKeyPrefix"/>),
+/// phase, system discriminator, the stored demolished phase, the room calculation point) and the capture of a whole counted array (<see cref="WideBlockWalker.AllItemsKeyPrefix"/>),
 /// on hand-made blocks of a schema that has the class and field names of the Revit 2025 files; then the phase pass that consumes them.
 /// </summary>
 public class WideNativeParamsTests
 {
     private const int IdentifierId = 1, ElementIdId = 2, PlaneId = 3, LevelId = 4, PhasesId = 5, RoomId = 6, RootId = 7, SubRootId = 8, HolderId = 9,
-        NamedParamId = 10, FamilyParamsId = 11, InlineParamsId = 12, QueuedParamsId = 13;
+        NamedParamId = 10, FamilyParamsId = 11, InlineParamsId = 12, QueuedParamsId = 13, XyzId = 14, CalculationPointId = 15, RegenHolderId = 16,
+        PlainPointId = 17, PlanePointId = 18;
 
     private static SchemaField Field(string name, byte type, byte mods = 0, int? reference = null, int? fixedCount = null) =>
         new(name, type, mods, 0, fixedCount, reference, null, null);
 
-    private static SchemaDocument Schema() => new()
+    private static SchemaDocument Schema(int xyzSize = 3) => new()
     {
         Classes =
         [
@@ -35,6 +36,11 @@ public class WideNativeParamsTests
             new(FamilyParamsId, "FamilyParams", 0, 1, [Field("m_params", 14, 80, NamedParamId)], []),
             new(InlineParamsId, "InlineParams", 0, 1, [Field("m_subInstParams", 14, 0, FamilyParamsId)], []),
             new(QueuedParamsId, "QueuedParams", 0, 1, [Field("m_pParams", 14, 2)], []),
+            new(XyzId, "XYZ", 0, 1, [Field("m_xyz", 7, 16, null, xyzSize)], []),
+            new(CalculationPointId, "SpatialElementCalculationPointRegenData", 0, 1, [Field("m_position", 14, 0, XyzId)], []),
+            new(RegenHolderId, "RegenHolder", 0, 1, [Field("m_arrFamSymRegenData", 14, 81)], []),
+            new(PlainPointId, "PlainPoint", 0, 1, [Field("m_position", 14, 0, XyzId)], []),
+            new(PlanePointId, "PlanePoint", 0, 1, [Field("m_position", 14, 0, PlaneId)], []),
         ],
     };
 
@@ -115,6 +121,40 @@ public class WideNativeParamsTests
         Assert.NotNull(np);
         Assert.Equal(86961, np.Fields["m_createdPhaseId"]);
         Assert.Equal(-1, np.Fields["m_demolishedPhaseId"]);
+    }
+
+    [Fact]
+    public void Build_KeepsTheRoomCalculationPointOfAQueuedRegenDataObjectAsThreeDoubles()
+    {
+        // one owned pointer in the counted array (handle, class tag), then the queued object: the XYZ of its m_position
+        var np = Params.Build(Walk(RegenHolderId, w =>
+        {
+            w.Write(1u); w.Write(7u); w.Write((ushort)CalculationPointId);
+            w.Write(-0.5); w.Write(0.25); w.Write(5.375);
+        }));
+        Assert.NotNull(np);
+        Assert.Equal(-0.5, np.DoubleFields["3639:m_position@0"]);
+        Assert.Equal(0.25, np.DoubleFields["3639:m_position@1"]);
+        Assert.Equal(5.375, np.DoubleFields["3639:m_position@2"]);
+    }
+
+    [Fact]
+    public void Walker_CapturesAStructFieldAsThreeDoublesOnlyWhenItIsKeyedAndAnXyzOfThreeDoubles()
+    {
+        static string? Key(SchemaClass declaring, SchemaField field) => field.Name == "m_position" ? "point" : null;
+        var point = Block(PlainPointId, w => { w.Write(1.0); w.Write(2.0); w.Write(3.0); });
+        var captures = new WideBlockWalker(Schema(), Key, []).Run(point, 0, point.Length, PlainPointId).Captures;
+        Assert.Equal(["point@0", "point@1", "point@2"], captures.Select(c => c.Key));
+        Assert.Equal([1.0, 2.0, 3.0], captures.Select(c => c.Real));
+
+        // not keyed
+        Assert.Empty(new WideBlockWalker(Schema(), (_, _) => null, []).Run(point, 0, point.Length, PlainPointId).Captures);
+        // a struct of three doubles that is no XYZ
+        var plane = Block(PlanePointId, w => { w.Write(1.0); w.Write(2.0); w.Write(3.0); });
+        Assert.Empty(new WideBlockWalker(Schema(), Key, []).Run(plane, 0, plane.Length, PlanePointId).Captures);
+        // an XYZ of another size
+        var flat = Block(PlainPointId, w => { w.Write(1.0); w.Write(2.0); });
+        Assert.Empty(new WideBlockWalker(Schema(xyzSize: 2), Key, []).Run(flat, 0, flat.Length, PlainPointId).Captures);
     }
 
     [Fact]

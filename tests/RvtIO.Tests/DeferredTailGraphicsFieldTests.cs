@@ -6,7 +6,8 @@ namespace RvtIO.Tests;
 
 /// <summary>Layouts of graphics fields inside the deferred tail walk of ExtractParams. Every object is probed by a
 /// synthetic root (ContentElemRecPointers) whose header pointer queues it, followed by an AnalyticalSettingsCell: the
-/// cell's byte is read (key 308:m_enableAnalyticalModel) only when the object before it consumed exactly its bytes.</summary>
+/// cell's byte is read (key 308:m_enableAnalyticalModel) only when the object before it consumed exactly its bytes. The
+/// room calculation point of a regen data object is read through the same root, without a cell behind it.</summary>
 public class DeferredTailGraphicsFieldTests
 {
     private const int GGroup = 2009, PointOnSketchData = 3027, AnalyticalSettingsCell = 308;
@@ -18,6 +19,18 @@ public class DeferredTailGraphicsFieldTests
         // GInfo words (0,0,0,0) were read as a 4-byte null, which took the next word as the m_subNodes count.
         var tail = Concat(Words(0, 0, 0, 0), Words(1, 5), Tag(AnalyticalSettingsCell), Cell(1));
         Assert.Equal(1, Read(GGroup, tail)!.Fields[CellKey]);
+    }
+
+    [Fact]
+    public void RoomCalculationPointRegenDataIsThreeDoublesKeptUnderTheKeyOfItsField()
+    {
+        // SpatialElementCalculationPointRegenData (3639) has one field of its own, the XYZ m_position: 24 bytes.
+        var tail = Concat(BitConverter.GetBytes(-0.5), BitConverter.GetBytes(0.25), BitConverter.GetBytes(5.375));
+        var result = Read(3639, tail)!;
+        Assert.True(result.TailWalkComplete);
+        Assert.Equal(-0.5, result.DoubleFields["3639:m_position@0"]);
+        Assert.Equal(0.25, result.DoubleFields["3639:m_position@1"]);
+        Assert.Equal(5.375, result.DoubleFields["3639:m_position@2"]);
     }
 
     [Fact]

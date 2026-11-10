@@ -224,11 +224,13 @@ internal static partial class TfBlockDeserializer
     ];
 
     /// <summary>Inputs of the room of a family instance (IfcExporter.InstanceRoomsCurrent): the Y flip of the instance, the origin
-    /// of its symbol, the level, vertical extent and phase of a room and the computation offset of a level. Kept in
+    /// of its symbol, the room calculation point of the symbol and the flag of its family that turns it on, the level,
+    /// vertical extent and phase of a room and the computation offset of a level. Kept in
     /// <see cref="Element.NativeRoomFields"/>.</summary>
     internal static readonly string[] RoomRuleFieldKeys =
     [
         "1794:m_flippedY", "1829:m_origin@0", "1829:m_origin@1", "1829:m_origin@2",
+        "3639:m_position@0", "3639:m_position@1", "3639:m_position@2", "1773:m_hasRoomCalculationPoint",
         "3471:m_upperOffset", "3471:m_height", "3471:m_lowerOffset", "3471:m_upperLevelId", "3471:m_levelId", "3471:m_phaseId",
         "2299:m_roomComputationElevationOffset",
     ];
@@ -4818,6 +4820,14 @@ internal static partial class TfBlockDeserializer
                 if (SerializationFields(45) is not [{ Name: "m_typeId", Type: 8, Mods: 96 }]) throw Fail;
                 string forgeId = ReadString(c);
                 if (WantField(f)) capture.StringFields[FieldKey(f)] = forgeId;
+                return true;
+            }
+            // SpatialElementCalculationPointRegenData.m_position is an XYZ struct (three doubles); read here so that they are
+            // kept under the key of the field (the key of the struct's own field, "171:m_xyz", is not a captured one).
+            case (3639, "m_position") when f.Type == 14 && f.Mods == 0 && f.Ref == 171 && capture != null:
+            {
+                if (SerializationFields(171) is not [{ Name: "m_xyz", Type: 7, Mods: 16, Cnt: 3 }]) throw Fail;
+                for (int i = 0; i < 3; i++) capture.DoubleFields[FieldKey(f) + "@" + i] = ReadF64(c);
                 return true;
             }
             // ParamElem.m_pParamDef: the class of the owned ParamDef object is the parameter's kind

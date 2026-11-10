@@ -6,7 +6,8 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>The test point the current profile looks for the room of a family instance at: beside a side face of the host wall
+/// <summary>The test point the current profile looks for the room of a family instance at: the room calculation point of its
+/// family where it has one, else beside a side face of the host wall
 /// for an instance of a hosted family, one foot along the instance's Z for a work-plane-based instance, one foot against it
 /// (along it when the instance is flipped in Y) for an instance of a hosted family on a floor or a ceiling, else the centre
 /// of the box of the instance's own geometry (the placed box of its symbol where it has none), moved towards the associated
@@ -81,22 +82,32 @@ public class IfcExporterCurrentWallHostedRoomTests
         return instance;
     }
 
-    /// <summary>The symbol the instance stands on: its stored box and origin, in symbol coordinates.</summary>
-    private static Element SymbolElement(double[]? origin = null, double[]? box = null) => new()
+    /// <summary>The symbol the instance stands on: its stored box, origin and room calculation point, in symbol coordinates.</summary>
+    private static Element SymbolElement(double[]? origin = null, double[]? box = null, double[]? calculationPoint = null)
     {
-        Id = Symbol, NativeRecordClass = Tag("FamilySymbol"), NativeListFields = new() { ["1829:m_familyId"] = Family },
-        NativeRoomFields = origin == null ? null : new() { ["1829:m_origin@0"] = origin[0], ["1829:m_origin@1"] = origin[1], ["1829:m_origin@2"] = origin[2] },
-        BoundingBox = box, BoundingBoxIsHeaderOutline = box != null,
-    };
+        var fields = new Dictionary<string, double>();
+        if (origin != null)
+            for (int i = 0; i < 3; i++) fields["1829:m_origin@" + i] = origin[i];
+        if (calculationPoint != null)
+            for (int i = 0; i < 3; i++) fields["3639:m_position@" + i] = calculationPoint[i];
+        return new Element
+        {
+            Id = Symbol, NativeRecordClass = Tag("FamilySymbol"), NativeListFields = new() { ["1829:m_familyId"] = Family },
+            NativeRoomFields = fields.Count == 0 ? null : fields,
+            BoundingBox = box, BoundingBoxIsHeaderOutline = box != null,
+        };
+    }
 
-    /// <summary>The family of the symbol: its host type (0 or 7 none, 1 wall, 2 floor, 3 ceiling) and category.</summary>
-    private static Element FamilyElement(int hostType, int category = -2000151) => new()
+    /// <summary>The family of the symbol: its host type (0 or 7 none, 1 wall, 2 floor, 3 ceiling), its category and whether its
+    /// room calculation point is turned on.</summary>
+    private static Element FamilyElement(int hostType, int category = -2000151, bool calculationPoint = false) => new()
     {
         Id = Family, NativeRecordClass = Tag("Family"),
         NativeListFields = new()
         {
             ["1772:m_refTypeIds@0"] = hostType, ["1773:m_categoryId"] = category, ["1773:m_isCurtainPanel"] = 0, ["1773:m_isCrvDriven"] = 0,
         },
+        NativeRoomFields = new() { ["1773:m_hasRoomCalculationPoint"] = calculationPoint ? 1 : 0 },
     };
 
     private static Dictionary<int, Element> Elements(params Element[] elements) => elements.ToDictionary(element => element.Id);
@@ -111,6 +122,65 @@ public class IfcExporterCurrentWallHostedRoomTests
     }
 
     private static double[] Rounded(double[]? point) => point!.Select(value => Math.Round(value, 9)).ToArray();
+
+    [Fact]
+    public void InstanceOfAFamilyWithARoomCalculationPoint_IsTestedAtThatPointPlacedWithTheInstance()
+    {
+        var levels = new Dictionary<int, double>();
+        var elements = Elements(WallElement(), SymbolElement(calculationPoint: [0.5, -1, 0.25]), FamilyElement(hostType: 1, calculationPoint: true));
+
+        // The point comes before the rule of the host: the wall rule alone gives (2, 4.5, 1).
+        Assert.Equal([2.5, 2.25, 1.25], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
+        var turned = Instance();
+        turned.Transform!.BasisX = [0, 1, 0];
+        turned.Transform.BasisY = [-1, 0, 0];
+        Assert.Equal([3.0, 3.75, 1.25], Rounded(IfcExporter.RoomTestPointCurrent(turned, levels, elements)));
+
+        // The family does not turn the point on: the point its symbol still stores is not used.
+        elements[Family] = FamilyElement(hostType: 1);
+        Assert.Null(IfcExporter.CalculationPointCurrent(Instance(), elements));
+        Assert.Equal([2.0, 4.5, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
+        // The family is not decoded.
+        elements.Remove(Family);
+        Assert.Null(IfcExporter.CalculationPointCurrent(Instance(), elements));
+        // The symbol stores no point, or only a part of it.
+        elements[Family] = FamilyElement(hostType: 1, calculationPoint: true);
+        elements[Symbol] = SymbolElement();
+        Assert.Null(IfcExporter.CalculationPointCurrent(Instance(), elements));
+        elements[Symbol] = SymbolElement(calculationPoint: [0.5, -1, 0.25]);
+        elements[Symbol].NativeRoomFields!.Remove("3639:m_position@2");
+        Assert.Null(IfcExporter.CalculationPointCurrent(Instance(), elements));
+        // No placement, or a placement without one of its axes.
+        elements[Symbol] = SymbolElement(calculationPoint: [0.5, -1, 0.25]);
+        var unplaced = Instance();
+        unplaced.Transform = null;
+        Assert.Null(IfcExporter.CalculationPointCurrent(unplaced, elements));
+        var skewed = Instance();
+        skewed.Transform!.BasisX = [1, 0];
+        Assert.Null(IfcExporter.CalculationPointCurrent(skewed, elements));
+        Assert.NotNull(IfcExporter.CalculationPointCurrent(Instance(), elements));
+        // The family stores no flag; the symbol does not name its family; the symbol is not among the elements.
+        elements[Family].NativeRoomFields = null;
+        Assert.Null(IfcExporter.CalculationPointCurrent(Instance(), elements));
+        elements[Family] = FamilyElement(hostType: 1, calculationPoint: true);
+        elements[Symbol].NativeListFields = null;
+        Assert.Null(IfcExporter.CalculationPointCurrent(Instance(), elements));
+        elements.Remove(Symbol);
+        Assert.Null(IfcExporter.CalculationPointCurrent(Instance(), elements));
+    }
+
+    [Theory]
+    [InlineData(0.5, 1.0, true, "IFCSPACE")]            // the point is in the room, the box of the instance as well
+    [InlineData(5.0, 1.0, true, "IFCBUILDINGSTOREY")]   // the point is over the room although the box is in it
+    [InlineData(0.5, 9.0, true, "IFCSPACE")]            // the point is in the room although the box is not
+    [InlineData(5.0, 1.0, false, "IFCSPACE")]           // the point is not turned on: the box decides
+    public void InstanceWithARoomCalculationPoint_IsInTheRoomThatHoldsThePoint(double pointZ, double boxZ, bool turnedOn, string container)
+    {
+        var instance = Placed(Instance(hostId: -1), [2, 1.5, 0], [2, 1.5, boxZ]);
+        string ifc = Export(IfcProfile.Current, Levels().Concat(
+            [Room(), SymbolElement(calculationPoint: [0, 0, pointZ]), FamilyElement(hostType: 0, calculationPoint: turnedOn), instance]).ToArray());
+        Assert.Equal(container, ContainerOf(ifc, "IFCBUILDINGELEMENTPROXY", 100));
+    }
 
     [Fact]
     public void WallSideTestPoint_IsOneFootBeyondTheSideFaceWithTheHigherHandle_TheLowerOneWhenFlippedInY()
