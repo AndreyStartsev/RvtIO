@@ -69673,37 +69673,29 @@ public partial class IfcExporter
             _ when elem.NativeMasterSymbolId is > 0 => [-1001350, -1001365, -1001383],
             _ => [],
         };
+        // A building-services element whose level is a Level that is not a project storey stands like a column
+        // on such a level: in the highest storey at or below it, in the building where no storey is that low.
+        Element? offStoreyLevel = null;
         foreach (int parameterId in baseLevelParameters)
-            if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId
-                && storeyIds.TryGetValue(levelId, out int storeyId))
-                return storeyId;
+            if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
+            {
+                if (storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
+                if (CurrentProfile && offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                    && elemById.TryGetValue(levelId, out var baseLevel) && baseLevel.CategoryId == -2000240)
+                    offStoreyLevel = baseLevel;
+            }
+        // A base level that is not a storey outranks the element's own level parameters below, as one that is a
+        // storey does. Among the base-level parameters one on a storey still outranks an earlier one that is not.
+        if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
 
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
         if (CurrentProfile && elem.CategoryId is -2001330 or -2000100
             && parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == -1001350)?.Value is int columnBaseLevelId
             && elemById.TryGetValue(columnBaseLevelId, out var columnBaseLevel) && columnBaseLevel.CategoryId == -2000240)
-        {
-            if (storeyIds.TryGetValue(columnBaseLevelId, out int baseStoreyId)) return baseStoreyId;
-            const double Tolerance = 1e-6;
-            double baseElevation = GetElevation(columnBaseLevel);
-            int chosen = buildingId;
-            double chosenElevation = double.NegativeInfinity;
-            int chosenLevelId = 0;
-            foreach (var (levelId, storeyId) in storeyIds)
-                if (elemById.TryGetValue(levelId, out var level))
-                {
-                    double elevation = GetElevation(level);
-                    if (elevation <= baseElevation + Tolerance
-                        && (elevation > chosenElevation || elevation == chosenElevation && levelId > chosenLevelId))
-                    {
-                        chosen = storeyId;
-                        chosenElevation = elevation;
-                        chosenLevelId = levelId;
-                    }
-                }
-            return chosen;
-        }
+            return storeyIds.TryGetValue(columnBaseLevelId, out int baseStoreyId)
+                ? baseStoreyId
+                : HighestStoreyAtOrBelow(columnBaseLevel, storeyIds, elemById, buildingId);
 
         if (CurrentProfile)
         {
@@ -69713,9 +69705,14 @@ public partial class IfcExporter
             foreach (int parameterId in elem.CategoryId is -2000035 or -2000120
                          ? new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063, -1001352 }
                          : new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063 })
-                if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId
-                    && storeyIds.TryGetValue(assocLevelId, out int assocStoreyId))
-                    return assocStoreyId;
+                if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId)
+                {
+                    if (storeyIds.TryGetValue(assocLevelId, out int assocStoreyId)) return assocStoreyId;
+                    if (offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                        && elemById.TryGetValue(assocLevelId, out var assocLevel) && assocLevel.CategoryId == -2000240)
+                        offStoreyLevel = assocLevel;
+                }
+            if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
         }
         // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
         else foreach (var p in elem.Parameters)
@@ -69759,6 +69756,34 @@ public partial class IfcExporter
 
         return defaultStoreyId;
     }
+
+    /// <summary>The storey of the highest project level at or below this level (the later level on a tie), the building where no storey is that low.</summary>
+    private static int HighestStoreyAtOrBelow(Element level, Dictionary<int, int> storeyIds,
+        IReadOnlyDictionary<int, Element> elemById, int buildingId)
+    {
+        const double Tolerance = 1e-6;
+        double baseElevation = GetElevation(level);
+        int chosen = buildingId;
+        double chosenElevation = double.NegativeInfinity;
+        int chosenLevelId = 0;
+        foreach (var (levelId, storeyId) in storeyIds)
+            if (elemById.TryGetValue(levelId, out var storeyLevel))
+            {
+                double elevation = GetElevation(storeyLevel);
+                if (elevation <= baseElevation + Tolerance
+                    && (elevation > chosenElevation || elevation == chosenElevation && levelId > chosenLevelId))
+                {
+                    chosen = storeyId;
+                    chosenElevation = elevation;
+                    chosenLevelId = levelId;
+                }
+            }
+        return chosen;
+    }
+
+    /// <summary>Every category of the duct, pipe, cable tray and conduit range (segments, fittings, accessories, insulation, terminals, sprinklers), and the electrical, lighting, mechanical, plumbing and food service equipment and fixtures.</summary>
+    private static bool IsBuildingServicesCategory(int? categoryId) =>
+        categoryId is <= -2008000 and >= -2008999 or -2001040 or -2001043 or -2001060 or -2001120 or -2001140 or -2001160;
 
     /// <summary>10 cm in feet: the storey rule, how far below a level its storey starts.</summary>
     private const double StoreyExtensionFeet = 10.0 / (12.0 * 2.54);
