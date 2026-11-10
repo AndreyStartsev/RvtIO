@@ -14,6 +14,10 @@ internal class StepWriter
     private int _nextId = 1;
     private readonly List<(int id, string type, string args)> _entities = new();
 
+    /// <summary>The circular arcs a written IfcPolyline stands for, by the id of the polyline: the chords each arc was written as.
+    /// A polyline without an entry has straight sides only, as far as its writer knew.</summary>
+    internal Dictionary<int, IReadOnlyList<IfcExporter.ArcChordsCurrent>> PolylineArcs { get; } = new();
+
     /// <summary>Captures the append-only writer state so a caller can inspect the exact
     /// representation it produced and then discard that whole attempted product.</summary>
     internal Checkpoint CreateCheckpoint() => new(_nextId, _entities.Count);
@@ -27,6 +31,8 @@ internal class StepWriter
         _entities.RemoveRange(checkpoint.EntityCount,
             _entities.Count - checkpoint.EntityCount);
         _nextId = checkpoint.NextId;
+        // the ids from here on are given out again
+        foreach (int id in PolylineArcs.Keys.Where(id => id >= checkpoint.NextId).ToList()) PolylineArcs.Remove(id);
     }
 
     public int NextId() => _nextId++;

@@ -182,6 +182,51 @@ public partial class IfcExporter
         return parts;
     }
 
+    /// <summary>Writes the body of a monolithic ramp with its vertices taken from their lowest corner (the smallest x, y and z of the
+    /// written points) and returns the axis that puts the container at that corner; the IfcRamp that holds the body is at identity under
+    /// the container. Writes nothing and returns false when the body has no point.</summary>
+    private bool TryWriteRampBodyAtMinimumCurrent(StepWriter w, GeometryData geometry, int subCtxId,
+        out int shapeId, out BodyRepresentationWriteOutcome outcome, out int axisId)
+    {
+        axisId = 0;
+        var checkpoint = w.CreateCheckpoint();
+        (shapeId, outcome) = CreateFacetedBrepWithOutcome(w, geometry, subCtxId);
+        double[]? min = shapeId > 0 ? MinimumWrittenPoint(w, checkpoint) : null;
+        w.Rollback(checkpoint);
+        if (min == null)
+        {
+            (shapeId, outcome) = (0, default);
+            return false;
+        }
+        (shapeId, outcome) = CreateFacetedBrepWithOutcome(w, geometry, subCtxId,
+            -min[0] / FeetToMetres, -min[1] / FeetToMetres, -min[2] / FeetToMetres);
+        int origin = w.Add("IFCCARTESIANPOINT", StepWriter.List(D(min[0]), D(min[1]), D(min[2])));
+        axisId = w.Add("IFCAXIS2PLACEMENT3D", $"{R(origin)},$,$");
+        return shapeId > 0;
+    }
+
+    /// <summary>The smallest x, y and z of the IfcCartesianPoint entities written since the checkpoint, or null when there is none
+    /// or a coordinate is not a finite number.</summary>
+    private static double[]? MinimumWrittenPoint(StepWriter w, StepWriter.Checkpoint checkpoint)
+    {
+        double[]? min = null;
+        for (int index = checkpoint.EntityCount; index < w.EntityCount; index++)
+        {
+            var entity = w.EntityAt(index);
+            if (entity.Type != "IFCCARTESIANPOINT") continue;
+            var parts = entity.Args.Trim('(', ')').Split(',');
+            if (parts.Length != 3) return null;
+            min ??= [double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity];
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (!double.TryParse(parts[axis], NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
+                    || !double.IsFinite(value)) return null;
+                min[axis] = Math.Min(min[axis], value);
+            }
+        }
+        return min;
+    }
+
     /// <summary>Writes the IfcRamp that holds the body of a monolithic ramp, under a copy of the placement of the container,
     /// and the IfcRelAggregates that links it to the container. Returns the entity ids of the contained IfcRamp and of the relation.</summary>
     private (int Body, int Relation) WriteRampBodyCurrent(StepWriter w, int ownerHistId, Element ramp, int rampEntityId, string rampGlobalId, string rampName,

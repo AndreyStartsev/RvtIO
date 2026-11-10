@@ -106,6 +106,155 @@ public class RebarShapeSolverTests
     }
 
     [Theory]
+    // a joggle (two obtuse bends in opposite turns): bar diameter 12, bend radius 30, 30 degrees, then bar diameter 20, bend radius 80, 10 degrees;
+    // outer dimensions of the edges, then the expected straight pieces
+    [InlineData(12, 30, 30, -1, 2371.607711615669, 243.51124426449482, 643.7616151903096, 2361.9615, 223.923, 634.1154)]
+    [InlineData(20, 80, 10, 1, 2740.8748467882297, 175.65519632488878, 670.7364504796526, 2733.0009, 158.7649, 662.8625)]
+    public void Joggle_HasEdgesBetweenTheOuterCornersWithTheirFixedDirectionsAndTangentArcs(double diameter, double radius, double degrees, int firstTurn,
+        double l1, double l2, double l3, double s1, double s2, double s3)
+    {
+        double a = degrees * Math.PI / 180 * firstTurn;
+        double[] middle = [Math.Cos(a), Math.Sin(a), 0];
+        var pieces = RebarShapeSolver.Solve([[1, 0, 0], middle, [1, 0, 0]], [l1, l2, l3], [0, firstTurn, -firstTurn, 0], diameter, radius, null, null)!;
+        Assert.Equal(5, pieces.Count);
+        Assert.Equal([false, true, false, true, false], pieces.Select(p => p.IsArc).ToArray());
+        double[] straight = [s1, s2, s3];
+        for (int i = 0; i < 3; i++) Near(straight[i], pieces[2 * i].End - pieces[2 * i].Start, 1e-3);
+        Assert.All(pieces.Where(p => p.IsArc), arc => { Near(radius, arc.Radius); Near(Math.Abs(a), arc.End - arc.Start, 1e-12); });
+        // the first piece starts half a diameter inside the outer line, on the side of the first turn
+        Near(diameter / 2 * firstTurn, Start(pieces[0])[1]);
+        // the pieces join end to start
+        static double[] Point(RebarSegment p, double t) => p.IsArc
+            ? [p.Origin[0] + p.Radius * (p.Axis[0] * Math.Cos(t) + p.Axis2[0] * Math.Sin(t)), p.Origin[1] + p.Radius * (p.Axis[1] * Math.Cos(t) + p.Axis2[1] * Math.Sin(t)), 0]
+            : [p.Origin[0] + p.Axis[0] * t, p.Origin[1] + p.Axis[1] * t, 0];
+        for (int i = 1; i < pieces.Count; i++)
+            Assert.True(Point(pieces[i], pieces[i].Start).Zip(Point(pieces[i - 1], pieces[i - 1].End)).All(pair => Math.Abs(pair.First - pair.Second) < 1e-9));
+        // the last piece runs in the direction of the first one, shifted across by the lateral offset of the two outer corners
+        Near(0, pieces[4].Axis[1], 1e-12);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(-1)]
+    public void JoggleGivenByItsOuterCornerVector_PutsTheOuterCornersOneDiameterApartAcrossTheMiddleEdge(int firstTurn)
+    {
+        // the middle edge is the vector between its two outer corners (a projection of 300 along the bar and 120 across it)
+        double[] outer = [300, 120 * firstTurn, 0];
+        var pieces = RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], outer, [1000, 800], [0, firstTurn, -firstTurn, 0], 20, 60, true)!;
+        Assert.Equal([false, true, false, true, false], pieces.Select(p => p.IsArc).ToArray());
+        double[] middle = pieces[2].Axis;
+        Near(1, Math.Sqrt(middle[0] * middle[0] + middle[1] * middle[1]), 1e-12);
+        // the offset of the outer corners across the middle edge is one diameter, on the side of the first turn
+        Near(20 * firstTurn, middle[0] * outer[1] - middle[1] * outer[0], 1e-9);
+        // the middle edge turns by the same angle at both arcs, in opposite senses
+        var arcs = pieces.Where(p => p.IsArc).ToArray();
+        Near(arcs[0].End - arcs[0].Start, arcs[1].End - arcs[1].Start, 1e-12);
+        Assert.True(firstTurn * middle[1] > 0);
+    }
+
+    [Fact]
+    public void JoggleGivenByItsOuterCornerVector_NeedsOppositeTurnsAndNoHooks()
+    {
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [300, 120, 0], [1000, 800], [0, 1, 1, 0], 20, 60, true));
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [300, 120, 0], [1000, 800], [0, 1, -1, 0], 20, 60, false));
+        // a vector shorter than the diameter has no direction
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [10, 0, 0], [1000, 800], [0, 1, -1, 0], 20, 60, true));
+    }
+
+    [Fact]
+    public void ObtuseCorners_AreCoveredOnlyAsAJoggleOfTwoOppositeTurns()
+    {
+        double c = Math.Cos(Math.PI / 6), s = Math.Sin(Math.PI / 6);
+        double[] x = [1, 0, 0], up = [c, s, 0], down = [c, -s, 0];
+        // the joggle itself is solved
+        Assert.NotNull(RebarShapeSolver.Solve([x, up, x], [2400, 250, 650], [0, 1, -1, 0], D, 29, null, null));
+        // the same turn at both corners (a doubled bend), a single obtuse corner, an obtuse corner next to a quarter turn and four edges are not measured
+        Assert.Null(RebarShapeSolver.Solve([x, up, [Math.Cos(Math.PI / 3), Math.Sin(Math.PI / 3), 0]], [2400, 250, 650], [0, 1, 1, 0], D, 29, null, null));
+        Assert.Null(RebarShapeSolver.Solve([x, up], [2400, 250], [0, 1, 0], D, 29, null, null));
+        Assert.Null(RebarShapeSolver.Solve([x, up, [0, -1, 0]], [2400, 250, 650], [0, 1, -1, 0], D, 29, null, null));
+        Assert.Null(RebarShapeSolver.Solve([x, up, x, down, x], [2400, 250, 650, 250, 600], [0, 1, -1, -1, 1, 0], D, 29, null, null));
+    }
+
+    public static IEnumerable<object[]> DamagedDirections() =>
+    [
+        [new double[] { double.NaN, 0, 0 }], [new double[] { 0, double.NaN, 0 }], [new double[] { double.PositiveInfinity, 0, 0 }], [new double[] { 0, 0, double.NaN }],
+    ];
+
+    [Theory]
+    [MemberData(nameof(DamagedDirections))]
+    public void Solve_GivesNothingForANonFiniteDirection(double[] direction)
+    {
+        Assert.Null(RebarShapeSolver.Solve([[1, 0, 0], direction], [1000, 500], [0, 1, 0], D, 29, null, null));
+        Assert.Null(RebarShapeSolver.Solve([direction], [1000], [0, 0], D, 29, null, null));
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Solve_GivesNothingForANonFiniteLengthOrDiameter(double bad)
+    {
+        Assert.Null(RebarShapeSolver.Solve([[1, 0, 0], [0, 1, 0]], [1000, bad], [0, 1, 0], D, 29, null, null));
+        Assert.Null(RebarShapeSolver.Solve([[1, 0, 0]], [1000], [0, 0], bad, 29, null, null));
+        Assert.Null(RebarShapeSolver.Solve([[1, 0, 0]], [1000], [0, 0], D, bad, null, null));
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(-2)]
+    [InlineData(int.MinValue)]
+    public void Solve_GivesNothingForATurnOutsideMinusOneToOne(int turn)
+    {
+        Assert.Null(RebarShapeSolver.Solve([[1, 0, 0], [0, 1, 0]], [1000, 500], [0, turn, 0], D, 29, null, null));
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 120, 0)]
+    [InlineData(300, double.NaN, 0)]
+    [InlineData(double.PositiveInfinity, 0, 0)]
+    [InlineData(0, double.NegativeInfinity, 0)]
+    [InlineData(300, 120, double.NaN)]
+    [InlineData(5, 5, 0)]
+    public void SolveJoggle_GivesNothingForANonFiniteVectorOrOneShorterThanTheDiameter(double x, double y, double z)
+    {
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [x, y, z], [1000, 800], [0, 1, -1, 0], 20, 60, true));
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(-20.0)]
+    [InlineData(400.0)]
+    public void SolveJoggle_GivesNothingForADiameterThatIsNotBetweenZeroAndTheVectorLength(double diameter)
+    {
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [300, 120, 0], [1000, 800], [0, 1, -1, 0], diameter, 60, true));
+    }
+
+    [Theory]
+    [InlineData(2, -2)]
+    [InlineData(0, 0)]
+    [InlineData(3, -3)]
+    [InlineData(-5, 5)]
+    public void SolveJoggle_GivesNothingForATurnThatIsNotOneOrMinusOne(int turn, int opposite)
+    {
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [30, 0, 0], [1000, 800], [0, turn, opposite, 0], 20, 60, true));
+    }
+
+    [Fact]
+    public void SolveJoggle_GivesNothingForANonFiniteEndDirectionOrLength()
+    {
+        Assert.Null(RebarShapeSolver.SolveJoggle([double.NaN, 0, 0], [1, 0, 0], [300, 120, 0], [1000, 800], [0, 1, -1, 0], 20, 60, true));
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [300, 120, 0], [1000, double.NaN], [0, 1, -1, 0], 20, 60, true));
+        Assert.Null(RebarShapeSolver.SolveJoggle([1, 0, 0], [1, 0, 0], [300, 120, 0], [double.PositiveInfinity, 800], [0, 1, -1, 0], 20, 60, true));
+    }
+
+    [Fact]
+    public void ObtuseCornersWithAHook_AreNotCoveredAndGiveNothing()
+    {
+        var hook = new RebarShapeSolver.Hook(3 * Math.PI / 4, 29, -1, null, 6);
+        Assert.Null(RebarShapeSolver.Solve([[1, 0, 0], [0.866025403784437, -0.5, 0], [1, 0, 0]], [2400, 250, 650], [0, -1, 1, 0], D, 29, hook, null));
+    }
+
+    [Theory]
     [InlineData(0.0)]
     [InlineData(-1.0)]
     public void ShapeWithoutPositiveLengthOrWithAnOutOfPlaneDirection_GivesNothing(double length)
