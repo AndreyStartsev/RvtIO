@@ -4881,7 +4881,7 @@ public partial class IfcExporter
             exportedCount++;
         }
 
-        StairAggregation.Apply(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, CurrentProfile);
+        StairAggregation.Apply(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, CurrentProfile, storeyIds, storeyPlacements);
         var stairBodyParts = CurrentProfile
             ? StairAggregation.SplitLegacyBodies(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, axisId, _usedExportIds)
             : [];

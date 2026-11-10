@@ -6,12 +6,17 @@ namespace RvtIO.Ifc;
 /// <summary>Container semantics for the core members of a stair.
 /// Admission happens after product emission, not from decoded geometry or bounding boxes.
 /// Railing host links are independent of core ownership. Run/landing/support names use
-/// numeric ordinals of the stair's component sets, including filtered members.</summary>
+/// numeric ordinals of the stair's component sets, including filtered members.
+/// The current profile repeats a multistory stair on each level of its data cell: copy k (from 2)
+/// is an IfcStair without representation in the storey of that level, moved by the distance between
+/// the two storeys, which aggregates copies of the stair's components and railings over the same
+/// representation items.</summary>
 internal static class StairAggregation
 {
     internal static void Apply(StepWriter writer, IReadOnlyList<Element> elements,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products,
-        Dictionary<int, List<int>> storeyContents, int ownerHistory, bool currentProfile = false)
+        Dictionary<int, List<int>> storeyContents, int ownerHistory, bool currentProfile = false,
+        IReadOnlyDictionary<int, int>? storeyIds = null, IReadOnlyDictionary<int, int>? storeyPlacements = null)
     {
         var candidates = elements.Where(element => element.SerializedStairCore is { Length: > 0 }).ToArray();
         if (candidates.Length == 0) return;
@@ -119,6 +124,109 @@ internal static class StairAggregation
             foreach (var contents in storeyContents.Values) contents.RemoveAll(handleSet.Contains);
             decomposed.UnionWith(handles);
             existingParents.Add(emittedParent.entityId);
+            if (currentProfile && storeyIds != null && storeyPlacements != null
+                && parent.SerializedStairCopyLevelIds is { Length: > 0 } levels)
+                WriteLevelCopies(emittedParent.entityId, levels, parentArgs, handles);
+        }
+
+        void WriteLevelCopies(int stairId, int[] levels, string[] stairArgs, List<int> handles)
+        {
+            // The stair and its components stand on the placement the storey placements hang from. A copy stands
+            // on a placement that is as far from the storey of its level as that one is from the storey of the stair.
+            if (!Placement(stairArgs[5], out var placement)) return;
+            int home = storeyContents.FirstOrDefault(pair => pair.Value.Contains(stairId)).Key;
+            if (!storeyPlacements!.TryGetValue(home, out int homePlacement) || !Offset(homePlacement, placement[0], out var offset)) return;
+            string stairGuid = stairArgs[0][1..^1], suffix = "";
+            for (int copy = 0; copy < levels.Length; copy++)
+            {
+                // Component names keep the suffixes of the earlier copies; the stair name does not.
+                string number = " : " + (copy + 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                suffix += number;
+                // A level that is not an exported storey has no placement to repeat the stair under.
+                if (!storeyIds!.TryGetValue(levels[copy], out int storey) || !storeyPlacements.TryGetValue(storey, out int storeyPlacement)
+                    || !storeyContents.TryGetValue(storey, out var contents) || !Offset(storeyPlacement, placement[0], out _)) continue;
+                int point = writer.Add("IFCCARTESIANPOINT",
+                    StepWriter.List(offset.Select(value => StepWriter.RealExact(value == 0 ? 0 : -value))));
+                int origin = writer.Add("IFCLOCALPLACEMENT",
+                    $"{StepWriter.Ref(storeyPlacement)},{StepWriter.Ref(writer.Add("IFCAXIS2PLACEMENT3D", $"{StepWriter.Ref(point)},$,$"))}");
+                int copyPlacement = writer.Add("IFCLOCALPLACEMENT", $"{StepWriter.Ref(origin)},{placement[1]}");
+                var copyArgs = (string[])stairArgs.Clone();
+                string copyGuid = IfcGuid.FromMd5(stairGuid + "Sub-element:IfcStair Copy: " + number[3..]);
+                copyArgs[0] = StepWriter.Str(copyGuid);
+                copyArgs[2] = Suffixed(stairArgs[2], number);
+                copyArgs[5] = StepWriter.Ref(copyPlacement);
+                int copyStair = writer.Add("IFCSTAIR", string.Join(",", copyArgs));
+                var children = new List<int>();
+                foreach (int handle in handles.Order())
+                {
+                    var entity = writer.EntityAt(indexById[handle]);
+                    var args = IfcExporter.SplitStepArguments(entity.Args);
+                    if (!Placement(args[5], out var childPlacement)) continue;
+                    // A component placed under anything else has no placement that follows the copy.
+                    int relativeTo = childPlacement[0] == stairArgs[5] ? copyPlacement
+                        : childPlacement[0] == placement[0] ? origin : 0;
+                    if (relativeTo == 0) continue;
+                    string guid = args[0][1..^1];
+                    if (entity.Type == "IFCRAILING")
+                        args[0] = StepWriter.Str(IfcGuid.FromMd5($"IfcRailing:{copy + 1}:{guid}"));
+                    else
+                    {
+                        string role = entity.Type switch { "IFCSTAIRFLIGHT" => "IfcStairFlight", "IFCSLAB" => "IfcSlab", _ => "IfcMember" };
+                        args[0] = StepWriter.Str(IfcGuid.FromMd5($"{guid}Sub-element:{role}: {copy}"));
+                        args[2] = Suffixed(args[2], suffix);
+                    }
+                    args[5] = StepWriter.Ref(writer.Add("IFCLOCALPLACEMENT", $"{StepWriter.Ref(relativeTo)},{childPlacement[1]}"));
+                    args[6] = CopyShape(args[6]);
+                    children.Add(writer.Add(entity.Type, string.Join(",", args)));
+                }
+                if (children.Count > 0)
+                    writer.Add("IFCRELAGGREGATES", $"{StepWriter.Str(IfcGuid.FromMd5("IfcRelAggregates:" + copyGuid))},{StepWriter.Ref(ownerHistory)},$,$,"
+                        + $"{StepWriter.Ref(copyStair)},{StepWriter.List(children.Select(StepWriter.Ref))}");
+                contents.Add(copyStair);
+            }
+        }
+
+        bool Placement(string reference, out string[] args)
+        {
+            args = [];
+            if (!Id(reference, out int id) || !indexById.TryGetValue(id, out int index)
+                || writer.EntityAt(index).Type != "IFCLOCALPLACEMENT") return false;
+            args = IfcExporter.SplitStepArguments(writer.EntityAt(index).Args);
+            return args.Length == 2;
+        }
+
+        // The offset of a placement without rotation from the given placement.
+        bool Offset(int placementId, string relativeTo, out double[] offset)
+        {
+            offset = [];
+            if (!Placement(StepWriter.Ref(placementId), out var args) || args[0] != relativeTo
+                || !Id(args[1], out int axisId) || !indexById.TryGetValue(axisId, out int axisIndex)) return false;
+            var axis = IfcExporter.SplitStepArguments(writer.EntityAt(axisIndex).Args);
+            if (writer.EntityAt(axisIndex).Type != "IFCAXIS2PLACEMENT3D" || axis.Length != 3 || axis[1] != "$" || axis[2] != "$"
+                || !Id(axis[0], out int pointId) || !indexById.TryGetValue(pointId, out int pointIndex)
+                || writer.EntityAt(pointIndex).Type != "IFCCARTESIANPOINT") return false;
+            var coordinates = List(writer.EntityAt(pointIndex).Args);
+            offset = new double[coordinates.Length];
+            for (int axisNumber = 0; axisNumber < offset.Length; axisNumber++)
+                if (!double.TryParse(coordinates[axisNumber], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out offset[axisNumber])) return false;
+            return offset.Length == 3;
+        }
+
+        static string Suffixed(string name, string suffix) =>
+            name.Length >= 2 && name[0] == '\'' && name[^1] == '\'' ? name[..^1] + suffix + "'" : name;
+
+        // A new shape with new representations over the items of the original.
+        string CopyShape(string shape)
+        {
+            if (!Id(shape, out int id) || !indexById.TryGetValue(id, out int index)) return shape;
+            var args = IfcExporter.SplitStepArguments(writer.EntityAt(index).Args);
+            if (writer.EntityAt(index).Type != "IFCPRODUCTDEFINITIONSHAPE" || args.Length != 3) return shape;
+            args[2] = StepWriter.List(List(args[2]).Select(representation =>
+                Id(representation, out int repId) && indexById.TryGetValue(repId, out int repIndex)
+                    && writer.EntityAt(repIndex).Type == "IFCSHAPEREPRESENTATION"
+                    ? StepWriter.Ref(writer.Add("IFCSHAPEREPRESENTATION", writer.EntityAt(repIndex).Args)) : representation));
+            return StepWriter.Ref(writer.Add("IFCPRODUCTDEFINITIONSHAPE", string.Join(",", args)));
         }
 
         bool HasBody(string shape)
