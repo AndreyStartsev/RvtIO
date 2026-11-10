@@ -12,13 +12,13 @@ internal static partial class ElementBuilder
         {
             if (group.Count() != 1) continue;
             var element = group.Single();
-            if (!state.OwnedElementClassRoots.TryGetValue((uint)element.Id, out var root)
-                || root.BlockCount != 1 || root.ClassId != 485
+            // The stream walk's own root count: a file with its own class schema is seeded by the schema index and the walk
+            // counts the same block again, so the seeded table alone reads every such id as a duplicate.
+            if (state.StairClassRoot((uint)element.Id) is not { BlockCount: 1, ClassId: 485 }
                 || !state.RailingQuantityInputs.TryGetValue((uint)element.Id, out var occurrence)
                 || occurrence.BlockCount != 1 || occurrence.Input is not { ClassId: 485, SymbolId: > 0 } own
                 || own.OwnerId != element.Id || own.SymbolId == element.Id
-                || !state.OwnedElementClassRoots.TryGetValue((uint)own.SymbolId.Value, out var symbolRoot)
-                || symbolRoot.BlockCount != 1 || symbolRoot.ClassId != 492
+                || state.StairClassRoot((uint)own.SymbolId.Value) is not { BlockCount: 1, ClassId: 492 }
                 || !state.RailingQuantityInputs.TryGetValue((uint)own.SymbolId.Value, out var symbol)
                 || symbol.BlockCount != 1 || symbol.Input is not { ClassId: 492, LengthFeet: > 0 } source
                 || source.OwnerId != own.SymbolId || source.RailingId != element.Id
