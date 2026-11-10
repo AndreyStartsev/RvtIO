@@ -284,7 +284,7 @@ public partial class IfcExporter
                     }
                     return StepWriter.List(ids.Select(R));
                 }
-                string uAxes = Axes(set.U), vAxes = Axes(set.V), wAxes = Axes(set.W);
+                string uAxes = Axes(set.U), vAxes = Axes(set.V), wAxes = set.W.Count > 0 ? Axes(set.W) : "$";
                 int representationId = w.Add("IFCSHAPEREPRESENTATION",
                     $"{R(subCtxId)},{S("FootPrint")},{S("GeometricCurveSet")},{StepWriter.List(curveSetIds.Select(R))}");
                 int shapeId = w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,{StepWriter.List(R(representationId))}");
