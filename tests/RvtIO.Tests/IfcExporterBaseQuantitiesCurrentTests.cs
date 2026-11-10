@@ -265,6 +265,21 @@ public class IfcExporterBaseQuantitiesCurrentTests
         return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
     }
 
+    /// <summary>A body that is a vertical extrusion of a round tube profile (a hollow pile): outer radius and wall in the units of the writer.</summary>
+    private static int AddHollowCircleBody(StepWriter w, double radius, double wall, double depth)
+    {
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.)");
+        int profilePlacement = w.Add("IFCAXIS2PLACEMENT2D", $"#{origin},$");
+        int profile = w.Add("IFCCIRCLEHOLLOWPROFILEDEF", $".AREA.,$,#{profilePlacement},{StepWriter.Real(radius)},{StepWriter.Real(wall)}");
+        int point3 = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{point3},$,$");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int context = w.Add("IFCGEOMETRICREPRESENTATIONCONTEXT", $"$,'Model',3,1.E-05,#{position},$");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#{context},'Body','SweptSolid',(#{solid})");
+        return w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+    }
+
     private static int AddProduct(StepWriter w, string type, string guid, int owner, int placement, int? shape = null) =>
         w.Add(type, $"'{guid}',#{owner},'P',$,$,#{placement},{(shape is { } id ? "#" + id : "$")},'1'");
 
@@ -1111,6 +1126,26 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.DoesNotContain(Quantities(w, "IFCQUANTITYLENGTH"), q => q.Name == "Perimeter");
     }
 
+    [Theory]
+    [InlineData("IFCSLAB", true)]
+    [InlineData("IFCCOLUMN", false)]
+    public void Pass_HollowCircleBody_GivesOnlyASlabTheCircumferenceAndTheDiameter(string type, bool expected)
+    {
+        var (w, owner, placement) = NewWriter();
+        int product = AddProduct(w, type, "WZGD7y6S5209$mGLi_sPlj", owner, placement, AddHollowCircleBody(w, 0.4, 0.06, 7));
+
+        Apply(w, owner, new() { [33] = new Element { Id = 33, Geometry = HalfDiscPrism(3, 6) } }, new() { [product] = 33 });
+
+        var lengths = Quantities(w, "IFCQUANTITYLENGTH");
+        Assert.Equal(expected, lengths.Any(q => q.Name == "Perimeter"));
+        if (!expected) return;
+        // the circumference of the outer circle only, and the diameter
+        Assert.Equal(2 * Math.PI * 0.4, lengths.Single(q => q.Name == "Perimeter").Value, 9);
+        Assert.Equal(0.8, lengths.Single(q => q.Name == "Width").Value, 9);
+        // the body is read, so the slab gets GrossVolume too: the area of its top surface times the depth of the extrusion
+        Assert.Equal(Math.PI * 9 / 2 * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "GrossVolume").Value, 9);
+    }
+
     [Fact]
     public void Pass_Slab_CurvedSideThatIsNoVerticalCylinder_GivesNoGrossVolume()
     {
@@ -1548,6 +1583,71 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("GrossFootprintArea", 0.202 * 4.0), ("GrossSideArea", 3.2 * 2.7), ("NetSideArea", 3.2 * 2.7));
         Assert.Equal(3.2 * 0.202 * 2.7, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "NetVolume").Value, 9);
         Assert.Equal(3.2, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Length").Value, 9);
+    }
+
+    private static Element WallTypeWithLayers(int id, params double[] layerWidthsMetres) => new()
+    {
+        Id = id, CategoryId = -2000011, SerializedSystemTypeClassId = 512,
+        SerializedHostTypeLayers = layerWidthsMetres.Select(width => new RvtIO.Internal.RawCompoundStructureLayer(
+            BitConverter.DoubleToInt64Bits(width / 0.3048), 0, 0, 0, 0, 0, 0)).ToArray(),
+    };
+
+    [Fact]
+    public void Pass_SimpleRectangularWall_WidthIsTheTotalOfTheLayersOfItsType()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 3.2, 0.202, 2.7);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        double length = 3.2 / 0.3048, thickness = 0.202 / 0.3048, height = 2.7 / 0.3048;
+        // The solid is 0.202 m thick, the layers of the type add up to 0.25 m: Width, the footprint and GrossVolume follow the layers.
+        var element = new Element { Id = 11, CategoryId = -2000011, SerializedSystemTypeId = 12, Geometry = Box(length, thickness, height),
+            Location = new LocationCurve { Length = 3.2 / 0.3048 } };
+
+        Apply(w, owner, new() { [11] = element, [12] = WallTypeWithLayers(12, 0.1, 0.15) }, new() { [wall] = 11 });
+
+        double side = 3.2 * 2.7;
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Height", 2.7), ("Length", 3.2), ("Width", 0.25));
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("GrossFootprintArea", 3.2 * 0.25), ("GrossSideArea", side), ("NetSideArea", side));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", 0.25 * side), ("NetVolume", 3.2 * 0.202 * 2.7));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Pass_ArcWall_TheLayersOfItsTypeLeaveNetVolumeAsItIsWithoutThem(bool withTypeLayers)
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 3.2, 0.202, 2.7);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        double length = 3.2 / 0.3048, thickness = 0.202 / 0.3048, height = 2.7 / 0.3048;
+        // The solid is 0.202 m thick, the layers of the type add up to 0.25 m: the gross quantities follow the layers,
+        // the net volume of the arc wall stays the footprint of the solid width times the height.
+        var element = new Element { Id = 11, CategoryId = -2000011, SerializedSystemTypeId = 12, Geometry = Box(length, thickness, height),
+            Location = new LocationCurve { CurveType = "Arc", Length = 3.2 / 0.3048 } };
+        var elements = new Dictionary<int, Element> { [11] = element };
+        if (withTypeLayers) elements[12] = WallTypeWithLayers(12, 0.1, 0.15);
+
+        Apply(w, owner, elements, new() { [wall] = 11 });
+
+        double width = withTypeLayers ? 0.25 : 0.202, side = 3.2 * 2.7;
+        Assert.Equal(width, Quantities(w, "IFCQUANTITYLENGTH").Single(q => q.Name == "Width").Value, 9);
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("GrossFootprintArea", 3.2 * width), ("GrossSideArea", side), ("NetSideArea", side));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", width * side), ("NetVolume", 1.74528));
+    }
+
+    [Fact]
+    public void Pass_SimpleRectangularWall_TypeWithoutUsableLayersKeepsTheProfileWidth()
+    {
+        var (w, owner, placement) = NewWriter();
+        int shape = AddExtrusionBody(w, 3.2, 0.202, 2.7);
+        int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "CZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        double length = 3.2 / 0.3048, thickness = 0.202 / 0.3048, height = 2.7 / 0.3048;
+        var element = new Element { Id = 11, CategoryId = -2000011, SerializedSystemTypeId = 12, Geometry = Box(length, thickness, height) };
+        var type = WallTypeWithLayers(12, 0.0, double.NaN);
+
+        Apply(w, owner, new() { [11] = element, [12] = type }, new() { [wall] = 11 });
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Height", 2.7), ("Length", 3.2), ("Width", 0.202));
     }
 
     [Fact]

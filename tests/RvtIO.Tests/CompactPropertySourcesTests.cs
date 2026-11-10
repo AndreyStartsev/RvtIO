@@ -113,7 +113,7 @@ public class CompactPropertySourcesTests
             entries += count;
             if (count > 0) withProperties++;
         }
-        Assert.Equal(47726, entries);
+        Assert.Equal(47742, entries);
         Assert.Equal(7621, withProperties);
     }
 

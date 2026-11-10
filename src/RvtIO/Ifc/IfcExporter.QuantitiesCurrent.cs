@@ -161,7 +161,7 @@ public partial class IfcExporter
 
     /// <summary>The extrusion an item of a Body representation is, a mapped item through its representation map; null for any other item.</summary>
     private static ProfileExtrusion? ReadExtrusionItemCurrent(StepWriter w, Dictionary<int, int> indexById, int itemIndex, bool lastOfSeveral,
-        Func<int, bool>? isCuttingItem = null)
+        Func<int, bool>? isCuttingItem = null, bool hollowCircle = false)
     {
         var item = w.EntityAt(itemIndex);
         if (item.Type == "IFCMAPPEDITEM")
@@ -199,7 +199,7 @@ public partial class IfcExporter
         if (solid.Length != 4 || !TryParseStepReal(solid[3], out double depth)
             || !TryEntityId(solid[0], out int profileId) || !indexById.TryGetValue(profileId, out int profileIndex))
             return null;
-        var profile = ReadProfileCurrent(w, indexById, w.EntityAt(profileIndex), depth);
+        var profile = ReadProfileCurrent(w, indexById, w.EntityAt(profileIndex), depth, hollowCircle);
         if (profile is not { } read || Axis3FrameCurrent(w, indexById, solid[1]) is not { } position
             || DirectionOfCurrent(w, indexById, solid[2]) is not { } direction)
             return profile;
@@ -225,7 +225,7 @@ public partial class IfcExporter
     /// An item for which <paramref name="isCuttingItem"/> (by entity id) holds is the solid of a cutting node: the exporter exports no body for it, so it
     /// is not an item of the body here.</summary>
     internal static ProfileExtrusion? ReadBodyExtrusionCurrent(StepWriter w, Dictionary<int, int> indexById, string representationArgument, bool lastOfSeveral = false,
-        Func<int, bool>? isCuttingItem = null)
+        Func<int, bool>? isCuttingItem = null, bool hollowCircle = false)
     {
         if (!TryEntityId(representationArgument, out int shapeId) || !indexById.TryGetValue(shapeId, out int shapeIndex))
             return null;
@@ -249,7 +249,7 @@ public partial class IfcExporter
             if (items.Length == 0 || items.Length != 1 && !lastOfSeveral
                 || !TryEntityId(items[^1], out int itemId) || !indexById.TryGetValue(itemId, out int itemIndex))
                 return null;
-            return ReadExtrusionItemCurrent(w, indexById, itemIndex, lastOfSeveral, isCuttingItem);
+            return ReadExtrusionItemCurrent(w, indexById, itemIndex, lastOfSeveral, isCuttingItem, hollowCircle);
         }
         return null;
     }
@@ -370,7 +370,8 @@ public partial class IfcExporter
         return false;
     }
 
-    private static ProfileExtrusion? ReadProfileCurrent(StepWriter w, Dictionary<int, int> indexById, (int Id, string Type, string Args) profile, double depth)
+    private static ProfileExtrusion? ReadProfileCurrent(StepWriter w, Dictionary<int, int> indexById, (int Id, string Type, string Args) profile, double depth,
+        bool hollowCircle = false)
     {
         var arguments = SplitStepArguments(profile.Args);
         string profileName = arguments.Length > 1 ? arguments[1].Trim('\'') : "";
@@ -381,6 +382,13 @@ public partial class IfcExporter
                 return new ProfileExtrusion(depth, x * y, 2 * (x + y), x, y, true);
             case "IFCCIRCLEPROFILEDEF" when arguments.Length == 4 && TryParseStepReal(arguments[3], out double radius):
                 return new ProfileExtrusion(depth, Math.PI * radius * radius, 2 * Math.PI * radius, 2 * radius, 2 * radius, false);
+            // Read for a slab only (a pile): the quantities of a column, beam or member that is a round tube come from their own rules.
+            case "IFCCIRCLEHOLLOWPROFILEDEF" when hollowCircle && arguments.Length == 5
+                && TryParseStepReal(arguments[3], out double tubeRadius) && TryParseStepReal(arguments[4], out double tubeWall)
+                && tubeWall > 0 && tubeWall < tubeRadius:
+                double boreRadius = tubeRadius - tubeWall;
+                return new ProfileExtrusion(depth, Math.PI * (tubeRadius * tubeRadius - boreRadius * boreRadius), 2 * Math.PI * tubeRadius,
+                    2 * tubeRadius, 2 * tubeRadius, false, InnerPerimeter: 2 * Math.PI * boreRadius);
             case "IFCARBITRARYCLOSEDPROFILEDEF" when arguments.Length == 3 && TryEntityId(arguments[2], out int curveId)
                 && ReadPolylinePointsCurrent(w, indexById, curveId) is { } points:
                 if (TryAnalyzeLProfileWithFillets(points, profileName, out double lArea, out double lPerimeter, out double lNominalArea))
@@ -813,14 +821,14 @@ public partial class IfcExporter
                     : none;
             case "IFCWALLSTANDARDCASE":
                 return element != null && ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6]) is { } wall
-                    ? WallQuantitiesCurrent(wall, element) : none;
+                    ? WallQuantitiesCurrent(wall, element, context) : none;
             case "IFCSPACE":
                 return element != null ? SpaceQuantitiesCurrent(element, StoreyHeightOfSpaceCurrent(context, arguments)) : none;
         }
         if (element == null) return none;
         ProfileExtrusion? body = type is "IFCMEMBER" or "IFCCOLUMN" or "IFCBEAM" or "IFCSLAB"
             ? ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6], lastOfSeveral: type == "IFCCOLUMN",
-                isCuttingItem: IsCuttingNodeItemCurrent) : null;
+                isCuttingItem: IsCuttingNodeItemCurrent, hollowCircle: type == "IFCSLAB") : null;
         return type switch
         {
             "IFCDOOR" or "IFCWINDOW" => DoorWindowQuantitiesCurrent(context, element),
@@ -1021,9 +1029,11 @@ public partial class IfcExporter
 
     /// <summary>Quantities for a wall written as an extrusion: Height is the extrusion depth,
     /// Length and Width the profile sides, GrossFootprintArea its area; the side area is the largest vertical face of the
-    /// wall solids (the net and the gross side area agree), GrossVolume is Width times it, NetVolume the solid volume.</summary>
-    private List<QuantityValue> WallQuantitiesCurrent(ProfileExtrusion body, Element element)
+    /// wall solids (the net and the gross side area agree), GrossVolume is Width times it, NetVolume the solid volume.
+    /// Width is the total width of the layers of the wall type when the type holds decoded layers, else the profile side.</summary>
+    private List<QuantityValue> WallQuantitiesCurrent(ProfileExtrusion body, Element element, QuantityContextCurrent context)
     {
+        double width = WallTypeLayersWidthCurrent(context.Elements, element) ?? body.ExtentY;
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
         // A standard-case wall of several solids is the extrusion of its first solid; the others count neither in areas, volumes nor height.
@@ -1044,29 +1054,52 @@ public partial class IfcExporter
             if (trimmedLength > 1e-9 && Math.Abs(trimmedLength - length) > 1e-5) length = trimmedLength;
         }
         AddIfPositive(result, QuantityKind.Length, "Length", simple ? length : zRange ?? body.Depth);
-        AddIfPositive(result, QuantityKind.Length, "Width", body.ExtentY);
+        AddIfPositive(result, QuantityKind.Length, "Width", width);
         double topArea = LargestHorizontalFaceAreaCurrent(shells) * SquareFeetToSquareMetres;
         // A simple rectangular wall gets its footprint from the whole location curve and the total width of the layers,
         // not from the face trimmed at the joins; any other wall from the extrusion loops.
         double? curveLength = element.Location is { Length: > 0 } loc ? loc.Length * FeetToMetres
             : ExactParameterFeetCurrent(element, null, CurveElemLengthParamId) * FeetToMetres;
-        double footprint = (simple || element.Location?.CurveType == "Arc" || element.Location == null)
-            && curveLength != null && body.ExtentY > 1e-9 ? body.ExtentY * curveLength.Value
-            : topArea > 1e-12 ? topArea : body.Area;
-        if (element.Location?.CurveType == "Arc" && shells is [{ Closed: true } shell]
-            && shell.Faces.Select(RebuiltHorizontalCurveLoopAreaCurrent).FirstOrDefault(area => area != null) is { } rebuiltArea)
-            footprint = rebuiltArea * SquareFeetToSquareMetres;
+        double? rebuiltArea = element.Location?.CurveType == "Arc" && shells is [{ Closed: true } shell]
+            ? shell.Faces.Select(RebuiltHorizontalCurveLoopAreaCurrent).FirstOrDefault(area => area != null) * SquareFeetToSquareMetres
+            : null;
+        double Footprint(double across) => rebuiltArea
+            ?? ((simple || element.Location?.CurveType == "Arc" || element.Location == null)
+                && curveLength != null && across > 1e-9 ? across * curveLength.Value
+                : topArea > 1e-12 ? topArea : body.Area);
+        double footprint = Footprint(width);
+        // The net volume of an arc wall is measured on its solid: the footprint of the profile width, not of the layers of the type.
         double? netVolume = element.Location?.CurveType == "Arc" && body.Depth > 1e-9
             && !shells.Any(shell => shell.SourceMeasured)
-            ? footprint * (zRange ?? body.Depth)
+            ? Footprint(body.ExtentY) * (zRange ?? body.Depth)
             : SolidTotalsCurrent(shells)?.Volume;
         AddIfPositive(result, QuantityKind.Area, "GrossFootprintArea", footprint);
-        if (body.Depth > 1e-9 && body.ExtentY > 1e-9 && sideArea > 1e-12)
-            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", body.ExtentY * sideArea);
+        if (body.Depth > 1e-9 && width > 1e-9 && sideArea > 1e-12)
+            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", width * sideArea);
         AddIfPositive(result, QuantityKind.Area, "GrossSideArea", sideArea);
         AddIfPositive(result, QuantityKind.Area, "NetSideArea", sideArea);
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", netVolume);
         return result;
+    }
+
+    /// <summary>The total width of the layers of the type of a wall (the sum of the layer widths of its compound structure), in metres;
+    /// null when the type is not found, is not a wall type or holds no decoded layer of positive finite width.</summary>
+    private static double? WallTypeLayersWidthCurrent(IReadOnlyDictionary<int, Element> elements, Element wall)
+    {
+        if (wall.SerializedSystemTypeId is int typeId && typeId > 0 && typeId != wall.Id
+            && elements.TryGetValue(typeId, out var type)
+            && type.CategoryId == wall.CategoryId && type.SerializedSystemTypeClassId == 512
+            && type.SerializedHostTypeLayers is { Length: > 0 } layers)
+        {
+            double total = 0;
+            foreach (var layer in layers)
+            {
+                double feet = BitConverter.Int64BitsToDouble(layer.LayerWidthBits);
+                if (double.IsFinite(feet) && feet > 0) total += feet;
+            }
+            return total > 0 && double.IsFinite(total) ? total * FeetToMetres : null;
+        }
+        return null;
     }
 
     /// <summary>The height of a wall: the Z range of the bounding box of its stored solid, as long as none of its faces stands outside
@@ -1350,9 +1383,11 @@ public partial class IfcExporter
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", netVolume);
         // The parameter called "Perimeter" (HOST_PERIMETER_COMPUTED) of the floor comes before the profile; its value is the
         // length of every boundary loop of the floor, the loops of its holes included (the parser's parameter is the outer loop).
-        AddIfPositive(result, QuantityKind.Length, "Perimeter",
-            (ExactParameterFeetCurrent(element, null, HostPerimeterComputedParameterId) ?? (prism ?? topFace)?.OuterPerimeter) is { } outerPerimeter
-                ? (outerPerimeter + ((prism ?? topFace)?.InnerPerimeter ?? 0)) * FeetToMetres : null);
+        double? perimeter = (ExactParameterFeetCurrent(element, null, HostPerimeterComputedParameterId) ?? (prism ?? topFace)?.OuterPerimeter) is { } outerPerimeter
+            ? (outerPerimeter + ((prism ?? topFace)?.InnerPerimeter ?? 0)) * FeetToMetres : null;
+        // A round tube profile (a hollow pile) has no chords to count: its perimeter is the circumference of the outer circle, not of the bore.
+        if (perimeter == null && body is { Polygon: null, Rectangle: false, InnerPerimeter: > 0 } tube) perimeter = tube.OuterPerimeter;
+        AddIfPositive(result, QuantityKind.Length, "Perimeter", perimeter);
         // A roof takes the larger side of its body. A foundation (a structural foundation, or a slab of the base slab type) takes the first side of its profile: the body of a pile
         // cap is not extruded upwards, and the reference does not turn a base slab by the angle of its profile, so the world X extent says nothing about it. Any other slab takes the world X
         // extent of its vertical prism (the first loop of the lower end face), and the body only when it has no such prism.
