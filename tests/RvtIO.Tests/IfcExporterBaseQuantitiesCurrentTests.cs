@@ -1925,6 +1925,27 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
+    public void Pass_BeamWithAnArcClosedByAStraightSide_AddsNoArcToTheOutlineAsWritten()
+    {
+        // A half disc held as four chords. Its straight side joins the two ends of the arc as well, and the chords of the arc are
+        // written over that side: the way the arc was laid is not a known one, so the section is the polygon as written.
+        const double radius = 0.5, height = 10, feet = 0.3048;
+        var outline = Enumerable.Range(0, 5).Select(k => (radius * Math.Cos(k * Math.PI / 4), radius * Math.Sin(k * Math.PI / 4))).ToArray();
+        var (w, owner, beam) = BeamOverOutline(outline, height, [new([0, 0, 0], [1, 0, 0], [0, 1, 0], radius, 0, Math.PI)]);
+        Assert.Empty(w.PolylineArcs);
+        var element = new Element { Id = 17, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
+
+        Apply(w, owner, new() { [17] = element }, new() { [beam] = 17 });
+
+        double area = radius * radius / 2 * (16 * Math.Sin(Math.PI / 16) - 4 * Math.Sin(Math.PI / 4)) * SquareFeet;
+        double perimeter = 2 * radius * (4 * Math.Sin(Math.PI / 8) + 16 * Math.Sin(Math.PI / 32)) * feet, depth = height * feet;
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", area), ("OuterSurfaceArea", perimeter * depth), ("GrossSurfaceArea", perimeter * depth + 2 * area),
+            ("NetSurfaceArea", 2 * (1 * 2 + 1 * 5 + 2 * 5) * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * depth), ("NetVolume", 10 * CubicFeet));
+    }
+
+    [Fact]
     public void Pass_BeamWithARegularPolygonProfile_MeasuresThePolygon()
     {
         var (w, owner, placement) = NewWriter();

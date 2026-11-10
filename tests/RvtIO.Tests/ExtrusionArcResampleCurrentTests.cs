@@ -85,6 +85,20 @@ public class ExtrusionArcResampleCurrentTests
         Assert.Empty(arcs);
     }
 
+    [Theory]
+    [InlineData(4)]
+    [InlineData(16)]
+    public void AnArcClosedByOneStraightSide_PassesNoArcOn(int meshSteps)
+    {
+        // the half disc: the straight side joins the two ends of the arc as the arc does, so the way the arc was laid is not a known one
+        var half = new Arc([0, 0, 0], [1, 0, 0], [0, 1, 0], 4, 0, Math.PI);
+        var ring = Enumerable.Range(0, meshSteps + 1).Select(k => OnCircle(Math.PI * k / meshSteps)).ToArray();
+
+        IfcExporter.TryResampleArcsCurrent(ring, [], [half], out _, out _, out _, out var arcs);
+
+        Assert.Empty(arcs);
+    }
+
     [Fact]
     public void AnArcOfAHole_IsResampledInTheHoleRing()
     {

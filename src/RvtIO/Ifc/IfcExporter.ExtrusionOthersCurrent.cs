@@ -24,7 +24,7 @@ public partial class IfcExporter
         public required double[] Axis { get; init; }
         public required double LengthFt { get; init; }
         /// <summary>One region per profile: the outer loop and the loops of its holes (feet, as the decoded face holds them), and the arcs
-        /// of the outer loop when its circular edges were resampled (<c>ResampleArcsCurrent</c>).</summary>
+        /// of the outer loop when its circular edges were resampled (<c>TryResampleArcsCurrent</c>).</summary>
         public required List<(List<double[]> Outer, List<List<double[]>> Inner, IReadOnlyList<ArcChordsCurrent>? OuterArcs)> Regions { get; init; }
         public IReadOnlyList<double[]>? FirstSourceLoop { get; init; }
         /// <summary>The corners of the outer loop of the first region when its circular edges were resampled (<c>ResampleArcsCurrent</c>); the

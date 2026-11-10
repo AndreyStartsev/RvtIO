@@ -28,8 +28,9 @@ public partial class IfcExporter
     }
 
     /// <summary>One circular edge of a ring: the ring vertices <c>First..First+Steps</c> (cyclic, in ring order) are samples of
-    /// <c>Arc</c>, whose stored parameter runs against the ring order when <c>Reversed</c>.</summary>
-    internal readonly record struct ArcRunCurrent(int First, int Steps, Internal.Arc Arc, bool Reversed);
+    /// <c>Arc</c>, whose stored parameter runs against the ring order when <c>Reversed</c>. <c>EitherWay</c>: the other way round
+    /// the ring passed as the arc too, so the run is the shorter of the two, not a known one.</summary>
+    internal readonly record struct ArcRunCurrent(int First, int Steps, Internal.Arc Arc, bool Reversed, bool EitherWay = false);
 
     /// <summary>Finds the circular edges of a ring: the arcs whose two ends are vertices of the ring and whose vertices between
     /// them lie on the circle. An arc that closes on itself or has no such run is left out (the ring keeps its own points).</summary>
@@ -82,7 +83,7 @@ public partial class IfcExporter
             }
             if (s < 0 || e < 0 || s == e) continue;
             // forward from s to e, or backward (the ring runs against the stored parameter): the way that is the arc
-            int bestSteps = int.MaxValue, bestDirection = 0;
+            int bestSteps = int.MaxValue, bestDirection = 0, ways = 0;
             for (int direction = 1; direction >= -1; direction -= 2)
             {
                 var route = new List<double[]> { ring[s] };
@@ -91,10 +92,12 @@ public partial class IfcExporter
                     route.Add(ring[i]);
                     if (i == e || route.Count > n) break;
                 }
-                if (route.Count <= n && IsArcRoute(route) && route.Count - 1 < bestSteps) (bestSteps, bestDirection) = (route.Count - 1, direction);
+                if (route.Count > n || !IsArcRoute(route)) continue;
+                ways++;
+                if (route.Count - 1 < bestSteps) (bestSteps, bestDirection) = (route.Count - 1, direction);
             }
             if (bestDirection != 0)
-                runs.Add(bestDirection == 1 ? new ArcRunCurrent(s, bestSteps, arc, false) : new ArcRunCurrent(e, bestSteps, arc, true));
+                runs.Add(bestDirection == 1 ? new ArcRunCurrent(s, bestSteps, arc, false, ways == 2) : new ArcRunCurrent(e, bestSteps, arc, true, ways == 2));
         }
         return runs;
     }
@@ -107,7 +110,9 @@ public partial class IfcExporter
         out List<double[]> resampledOuter, out List<List<double[]>> resampledInner, out List<double[]> outerCorners) =>
         TryResampleArcsCurrent(outer, inner, arcs, out resampledOuter, out resampledInner, out outerCorners, out _);
 
-    /// <summary><paramref name="outerArcs"/>: the arcs of the resampled outer ring, none when the method returns false.</summary>
+    /// <summary><paramref name="outerArcs"/>: the arcs of the resampled outer ring, none when the method returns false or when a
+    /// run of the ring could have been laid either way (an arc closed by one straight side: the ring is resampled as before, but
+    /// where its arc lies is not known).</summary>
     internal static bool TryResampleArcsCurrent(IReadOnlyList<double[]> outer, IReadOnlyList<List<double[]>> inner, IReadOnlyList<Internal.Arc>? arcs,
         out List<double[]> resampledOuter, out List<List<double[]>> resampledInner, out List<double[]> outerCorners,
         out List<ArcChordsCurrent> outerArcs)
@@ -122,6 +127,7 @@ public partial class IfcExporter
         resampledOuter = results[0];
         resampledInner = results.Skip(1).ToList();
         ResampleRingCurrent(outer, runsByRing[0], out outerCorners, out outerArcs);
+        if (runsByRing[0].Any(run => run.EitherWay)) outerArcs = [];
         return true;
     }
 
