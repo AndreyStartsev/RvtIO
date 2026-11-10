@@ -8,8 +8,9 @@ namespace RvtIO.Tests;
 
 /// <summary>The test point the current profile looks for the room of a family instance at: beside a side face of the host wall
 /// for an instance of a hosted family, one foot along the instance's Z for a work-plane-based instance, one foot against it
-/// for an instance of a hosted family on a floor, else the placed centre of the box of the instance's symbol, moved towards
-/// the associated level.</summary>
+/// (along it when the instance is flipped in Y) for an instance of a hosted family on a floor or a ceiling, else the centre
+/// of the box of the instance's own geometry (the placed box of its symbol where it has none), moved towards the associated
+/// level.</summary>
 public class IfcExporterCurrentWallHostedRoomTests
 {
     private const int RoomPhase = 5;
@@ -88,7 +89,7 @@ public class IfcExporterCurrentWallHostedRoomTests
         BoundingBox = box, BoundingBoxIsHeaderOutline = box != null,
     };
 
-    /// <summary>The family of the symbol: its host type (0 or 7 none, 1 wall, 2 floor) and category.</summary>
+    /// <summary>The family of the symbol: its host type (0 or 7 none, 1 wall, 2 floor, 3 ceiling) and category.</summary>
     private static Element FamilyElement(int hostType, int category = -2000151) => new()
     {
         Id = Family, NativeRecordClass = Tag("Family"),
@@ -99,6 +100,15 @@ public class IfcExporterCurrentWallHostedRoomTests
     };
 
     private static Dictionary<int, Element> Elements(params Element[] elements) => elements.ToDictionary(element => element.Id);
+
+    /// <summary>Puts the instance at an origin, the box of its own geometry one foot wide around a centre.</summary>
+    private static Element Placed(Element instance, double[] origin, double[] centre)
+    {
+        instance.Transform!.Origin = origin;
+        instance.Geometry!.BoundingBox = [centre[0] - 0.5, centre[1] - 0.5, centre[2] - 0.5, centre[0] + 0.5, centre[1] + 0.5, centre[2] + 0.5];
+        instance.BoundingBox = (double[])instance.Geometry.BoundingBox.Clone();
+        return instance;
+    }
 
     private static double[] Rounded(double[]? point) => point!.Select(value => Math.Round(value, 9)).ToArray();
 
@@ -174,24 +184,83 @@ public class IfcExporterCurrentWallHostedRoomTests
         tilted.Transform.BasisY = [0, 0, 1];
         Assert.Equal([2.5, 3.75, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(tilted, levels, elements)));
         var flat = Instance();
-        flat.Transform!.BasisZ = [0, 0, 0];      // no direction to go against: the box of the symbol decides
+        flat.Transform!.BasisZ = [0, 0, 0];      // no direction to go against: the box of the instance decides
         Assert.Equal([2.0, 3.25, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(flat, levels, elements)));
 
         // A work-plane-based instance on a face of the floor goes along its Z, as on any work plane.
         Assert.Equal([2.5, 3.25, 2.25], Rounded(IfcExporter.RoomTestPointCurrent(Instance(workPlaneBased: true), levels, elements)));
-        // A family that takes no host hides the floor stored with its instance: the box of the symbol decides.
+        // A family that takes no host hides the floor stored with its instance: the box of the instance decides.
         foreach (int free in new[] { 0, 7 })
         {
             elements[Family] = FamilyElement(hostType: free);
-            Assert.Equal([2.0, 3.25, 2.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
+            Assert.Equal([2.0, 3.25, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
         }
         // So does an instance whose family is not decoded: it is not known to take a host.
         elements.Remove(Family);
-        Assert.Equal([2.0, 3.25, 2.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
-        // The host is not a floor.
+        Assert.Equal([2.0, 3.25, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
+        // The host is neither a floor nor a ceiling.
         elements[Family] = FamilyElement(hostType: 2);
-        elements[Wall] = WallElement(categoryId: -2000038);
-        Assert.Equal([2.0, 3.25, 2.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
+        elements[Wall] = WallElement(categoryId: -2000035);
+        Assert.Equal([2.0, 3.25, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
+    }
+
+    /// <summary>A ceiling over the room: its bottom is the top of the room.</summary>
+    private static Element CeilingElement() => new()
+    {
+        Id = Wall, CategoryId = -2000038, Category = "OST_Ceilings", Name = "Ceiling",
+        BoundingBox = [0, 0, 2, 4, 3, 2.1], Geometry = Box(0, 4, 0, 3, 2, 2.1),
+    };
+
+    [Fact]
+    public void InstanceOfAHostedFamilyOnAFloorOrACeiling_FlippedInY_IsTestedOneFootAlongItsZ()
+    {
+        var levels = new Dictionary<int, double>();
+        foreach (var (host, hostType) in new[] { (FloorElement(), 2), (CeilingElement(), 3) })
+        {
+            var elements = Elements(host, SymbolElement(origin: [0.5, 0, 0.25], box: [-1, -1, 0, 1, 1, 2]), FamilyElement(hostType));
+            Assert.Equal([2.5, 3.25, 0.25], Rounded(IfcExporter.RoomTestPointCurrent(Instance(), levels, elements)));
+            Assert.Equal([2.5, 3.25, 2.25], Rounded(IfcExporter.RoomTestPointCurrent(Instance(flippedY: true), levels, elements)));
+            var tilted = Instance(flippedY: true);
+            tilted.Transform!.BasisZ = [0, -2, 0];
+            tilted.Transform.BasisY = [0, 0, 1];
+            Assert.Equal([2.5, 1.75, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(tilted, levels, elements)));
+            var unknown = Instance();
+            unknown.NativeRoomFields = null;         // the flip is not decoded: taken as not flipped
+            Assert.Equal([2.5, 3.25, 0.25], Rounded(IfcExporter.RoomTestPointCurrent(unknown, levels, elements)));
+        }
+    }
+
+    [Theory]
+    [InlineData(3, false, 5.0, "IFCSPACE")]           // hangs from the ceiling: tested one foot under its origin, in the room
+    [InlineData(3, true, 5.0, "IFCBUILDINGSTOREY")]   // flipped in Y: tested one foot over its origin, above the room
+    [InlineData(0, true, 1.5, "IFCSPACE")]            // a family without a host: the centre of its box, in the room, whatever the flip
+    [InlineData(0, false, 5.0, "IFCBUILDINGSTOREY")]  // and out of the room with its box
+    public void InstanceHangingFromTheCeilingOfARoom_IsOutOfTheRoomWhenFlippedInY(int hostType, bool flippedY, double boxZ, string container)
+    {
+        var instance = Placed(Instance(flippedY), [2, 1.5, 2], [2, 1.5, boxZ]);
+        string ifc = Export(IfcProfile.Current, Levels().Concat(
+            [Room(), CeilingElement(), SymbolElement(box: [-0.5, -0.5, -0.4, 0.5, 0.5, 0]), FamilyElement(hostType), instance]).ToArray());
+        Assert.Equal(container, ContainerOf(ifc, "IFCBUILDINGELEMENTPROXY", 100));
+    }
+
+    [Theory]
+    [InlineData(3, false, 300)]  // hangs from the ceiling: the room under it holds the point one foot under its origin
+    [InlineData(3, true, 301)]   // flipped in Y: the room over the ceiling holds the point one foot over its origin
+    [InlineData(2, true, 301)]   // the same on a floor
+    [InlineData(0, true, 0)]     // a family without a host: the centre of its box, which is in neither room
+    public void InstanceOnAHostBetweenTwoRooms_TakesTheRoomItsTestPointIsIn(int hostType, bool flippedY, int expected)
+    {
+        var above = Room();
+        above.Id = 301;
+        above.SerializedSpaceBoundary = Box(0, 4, 0, 3, 2.1, 4);
+        var instance = Placed(Instance(flippedY), [2, 1.5, 2], [2, 1.5, 9]);
+        var elements = Elements(Room(), above, hostType == 2 ? FloorElement() : CeilingElement(),
+            SymbolElement(box: [-0.5, -0.5, -0.4, 0.5, 0.5, 0]), FamilyElement(hostType), instance);
+
+        var rooms = IfcExporter.ResolveInstanceRoomsCurrent(elements.Values, elements,
+            [new KeyValuePair<int, string>(100, "IFCBUILDINGELEMENTPROXY")], new Dictionary<int, double>());
+        Assert.True(rooms.ContainsKey(100));
+        Assert.Equal(expected, rooms[100]);
     }
 
     [Theory]
@@ -199,8 +268,7 @@ public class IfcExporterCurrentWallHostedRoomTests
     [InlineData(0, "IFCSPACE")]           // the same instance of a family without a host: the centre of its box, in the room
     public void InstanceStandingOnTheFloorOfARoom_IsInTheRoomOnlyWhenItsFamilyTakesNoHost(int hostType, string container)
     {
-        var instance = Instance();
-        instance.Transform!.Origin = [2, 1.5, 0];
+        var instance = Placed(Instance(), [2, 1.5, 0], [2, 1.5, 0.5]);
         string ifc = Export(IfcProfile.Current, Levels().Concat(
             [Room(), FloorElement(), SymbolElement(box: [-0.5, -0.5, 0, 0.5, 0.5, 1]), FamilyElement(hostType), instance]).ToArray());
         Assert.Equal(container, ContainerOf(ifc, "IFCBUILDINGELEMENTPROXY", 100));
@@ -214,8 +282,7 @@ public class IfcExporterCurrentWallHostedRoomTests
         var below = Room();
         below.Id = 301;
         below.SerializedSpaceBoundary = Box(0, 4, 0, 3, -3, -0.5);
-        var instance = Instance();
-        instance.Transform!.Origin = [2, 1.5, 0];
+        var instance = Placed(Instance(), [2, 1.5, 0], [2, 1.5, 0.5]);
         var elements = Elements(Room(), below, FloorElement(), SymbolElement(box: [-0.5, -0.5, 0, 0.5, 0.5, 1]), FamilyElement(hostType), instance);
 
         var rooms = IfcExporter.ResolveInstanceRoomsCurrent(elements.Values, elements,
@@ -224,15 +291,51 @@ public class IfcExporterCurrentWallHostedRoomTests
     }
 
     [Fact]
-    public void Instance_TakesThePlacedCentreOfTheBoxOfItsSymbol_MovedTowardsItsStoredLevelByAtMostHalfAFoot()
+    public void Instance_TakesTheCentreOfTheBoxOfItsOwnGeometry_MovedTowardsItsStoredLevelByAtMostHalfAFoot()
     {
-        // The box of the symbol is not the box of the instance: centre (0, -1, 0.75) in symbol coordinates.
+        // The box of the symbol is not the box of the instance: centre (0, -1, 0.75) in symbol coordinates, (2, 3.25, 1) for the instance.
+        var elements = Elements(SymbolElement(box: [-1, -2, 0.5, 1, 0, 1]), FamilyElement(hostType: 0));
+        var levels = new Dictionary<int, double> { [10] = 0.0, [30] = 1.25 };
+
+        Assert.Equal([2.0, 3.25, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(hostId: -1), levels, elements)));                        // no level stored
+        Assert.Equal([2.0, 3.25, 0.5], Rounded(IfcExporter.RoomTestPointCurrent(Instance(hostId: -1, associatedLevel: 10), levels, elements)));   // half a foot down
+        Assert.Equal([2.0, 3.25, 1.25], Rounded(IfcExporter.RoomTestPointCurrent(Instance(hostId: -1, associatedLevel: 30), levels, elements)));  // up to the level
+    }
+
+    [Fact]
+    public void InstanceWithoutABoxOfItsOwnGeometry_TakesThePlacedCentreOfTheBoxOfItsSymbol()
+    {
         var elements = Elements(SymbolElement(box: [-1, -2, 0.5, 1, 0, 1]), FamilyElement(hostType: 0));
         var levels = new Dictionary<int, double> { [10] = 0.0, [30] = 2.0 };
+        Element Bare(int associatedLevel = -1)
+        {
+            var instance = Instance(hostId: -1, associatedLevel: associatedLevel);
+            instance.Geometry!.BoundingBox = null;
+            return instance;
+        }
 
-        Assert.Equal([2.0, 2.25, 1.75], Rounded(IfcExporter.RoomTestPointCurrent(Instance(hostId: -1), levels, elements)));                        // no level stored
-        Assert.Equal([2.0, 2.25, 1.25], Rounded(IfcExporter.RoomTestPointCurrent(Instance(hostId: -1, associatedLevel: 10), levels, elements)));   // half a foot down
-        Assert.Equal([2.0, 2.25, 2.0], Rounded(IfcExporter.RoomTestPointCurrent(Instance(hostId: -1, associatedLevel: 30), levels, elements)));    // up to the level
+        Assert.Equal([2.0, 2.25, 1.75], Rounded(IfcExporter.RoomTestPointCurrent(Bare(), levels, elements)));     // no level stored
+        Assert.Equal([2.0, 2.25, 1.25], Rounded(IfcExporter.RoomTestPointCurrent(Bare(10), levels, elements)));   // half a foot down
+        Assert.Equal([2.0, 2.25, 2.0], Rounded(IfcExporter.RoomTestPointCurrent(Bare(30), levels, elements)));    // up to the level
+        // Neither box: the box the instance carries itself.
+        elements[Symbol] = SymbolElement();
+        Assert.Equal([2.0, 3.25, 1.0], Rounded(IfcExporter.RoomTestPointCurrent(Bare(), levels, elements)));
+    }
+
+    [Theory]
+    [InlineData(true, 300)]   // the geometry of the instance lies in the room
+    [InlineData(false, 0)]    // without it the box of the symbol decides, and its centre is outside the room
+    public void InstanceWhoseSymbolBoxIsWiderThanItsGeometry_IsLookedUpAtTheCentreOfItsGeometry(bool ownBox, int expected)
+    {
+        // The stored box of the symbol reaches 1.3 ft beyond the room (y = 3) although the geometry ends at the origin of the instance.
+        var instance = Placed(Instance(hostId: -1), [2, 2.9, 1], [2, 2.4, 1]);
+        if (!ownBox) instance.Geometry!.BoundingBox = null;
+        var elements = Elements(Room(), SymbolElement(box: [-0.5, -1, -0.5, 0.5, 1.4, 0.5]), FamilyElement(hostType: 0), instance);
+
+        var rooms = IfcExporter.ResolveInstanceRoomsCurrent(elements.Values, elements,
+            [new KeyValuePair<int, string>(100, "IFCBUILDINGELEMENTPROXY")], new Dictionary<int, double>());
+        Assert.True(rooms.ContainsKey(100));   // looked up, whatever the answer
+        Assert.Equal(expected, rooms[100]);
     }
 
     [Theory]
@@ -248,7 +351,7 @@ public class IfcExporterCurrentWallHostedRoomTests
     [Fact]
     public void InstanceOfAFamilyWithoutAHost_KeepsTheBoxCentre()
     {
-        // Same wall and instance, but the family takes no host: the centre of the symbol's box (inside the wall) decides.
+        // Same wall and instance, but the family takes no host: the centre of the instance's box (inside the wall) decides.
         string ifc = Export(IfcProfile.Current, Levels().Concat(
             [Room(), WallElement(), SymbolElement(box: [-0.5, -0.15, -0.5, 0.5, 0.15, 0.5]), FamilyElement(hostType: 0), Instance(flippedY: true)]).ToArray());
         Assert.Equal("IFCBUILDINGSTOREY", ContainerOf(ifc, "IFCBUILDINGELEMENTPROXY", 100));
@@ -259,8 +362,7 @@ public class IfcExporterCurrentWallHostedRoomTests
     [InlineData(-2000011, "IFCBUILDINGSTOREY")]  // walls are not: the category of the family decides, not the instance's
     public void TheCategoryOfTheFamilyDecidesWhetherARoomIsLookedFor(int familyCategory, string container)
     {
-        var instance = Instance(hostId: -1);
-        instance.Transform!.Origin = [2, 1.5, 1];
+        var instance = Placed(Instance(hostId: -1), [2, 1.5, 1], [2, 1.5, 1]);
         string ifc = Export(IfcProfile.Current, Levels().Concat(
             [Room(), SymbolElement(box: [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), FamilyElement(hostType: 0, category: familyCategory), instance]).ToArray());
         Assert.Equal(container, ContainerOf(ifc, "IFCBUILDINGELEMENTPROXY", 100));
@@ -296,8 +398,7 @@ public class IfcExporterCurrentWallHostedRoomTests
         room.SerializedRoomPhaseId = validatedPhase;
         room.NativeRoomFields = new() { ["3471:m_levelId"] = 10, ["3471:m_lowerOffset"] = lowerOffset };
         if (storedPhase is int stored) room.NativeRoomFields["3471:m_phaseId"] = stored;
-        var instance = Instance(hostId: -1);
-        instance.Transform!.Origin = [2, 1.5, 1];
+        var instance = Placed(Instance(hostId: -1), [2, 1.5, 1], [2, 1.5, 1]);
         instance.SerializedCreatedPhaseId = validatedPhase ?? storedPhase ?? RoomPhase;
         var elements = Elements(room, SymbolElement(box: [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), FamilyElement(hostType: 0), instance);
 

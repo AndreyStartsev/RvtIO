@@ -6,15 +6,15 @@ namespace RvtIO.Ifc;
 /// <summary>
 /// The current profile: the room of a family instance. One test point of the instance is looked up in the rooms of the
 /// instance's created phase; the first room whose vertical extent and solid hold it wins (a point on the boundary is inside).
-/// The test point is taken from the symbol the instance's placement names (the type symbol, or the private copy of it that a
-/// modified instance stands on) and from that placement:
+/// The test point, where the symbol is the one the instance's placement names (the type symbol, or the private copy of it
+/// that a modified instance stands on):
 /// - an instance of a hosted family in a wall: the placed origin of the symbol, projected on a side face of the wall and moved
 ///   one foot along that face's normal (<see cref="WallSideTestPointCurrent"/>);
 /// - else a work-plane-based instance: the placed origin of the symbol, one foot along the instance's Z;
-/// - else an instance of a hosted family on a floor: the placed origin of the symbol, one foot against the instance's Z
-///   (<see cref="FloorHostTestPointCurrent"/>);
-/// - else the placed centre of the symbol's stored box, moved by at most half a foot towards the elevation of the instance's
-///   associated level.
+/// - else an instance of a hosted family on a floor or a ceiling: the placed origin of the symbol, one foot against the
+///   instance's Z, along it for an instance flipped in Y (<see cref="FloorOrCeilingHostTestPointCurrent"/>);
+/// - else the centre of the box stored with the instance's own geometry, or without one the placed centre of the symbol's
+///   stored box, moved by at most half a foot towards the elevation of the instance's associated level.
 /// A room stored with the instance is kept; this lookup only decides the instances without one.
 /// </summary>
 public partial class IfcExporter
@@ -48,6 +48,8 @@ public partial class IfcExporter
     private const double LevelPullFeet = 0.5;
 
     private const double WallSideOffsetFeet = 1.0;
+
+    private const int CeilingsCategoryId = -2000038;
 
     private const string FlippedYField = "1794:m_flippedY", WorkPlaneBasedField = "1794:m_workPlaneBased", AssociatedLevelField = "37:m_assocLevelId";
 
@@ -135,31 +137,35 @@ public partial class IfcExporter
         ];
     }
 
-    /// <summary>The test point of an instance of a hosted family that stands on a floor: the placed origin of its symbol, one
-    /// foot against the instance's Z, which is under the floor's top for an upright instance. Revit reports the room at this
-    /// point for such instances; the centre of the box, which lies over the floor, gives the room above it instead. Null
-    /// when the family is free of a host or not decoded, the host is no floor, the instance has no placement, or its Z has
-    /// no direction.</summary>
-    internal static double[]? FloorHostTestPointCurrent(Element instance, IReadOnlyDictionary<int, Element> elementsById)
+    /// <summary>The test point of an instance of a hosted family on a floor or a ceiling: the placed origin of its symbol, one
+    /// foot against the instance's Z, and one foot along it for an instance flipped in Y. Revit reports the room at this
+    /// point for such instances: under the top of the floor an upright instance stands on (the centre of its box gives the
+    /// room over the floor instead), under the ceiling an upright instance hangs from, and over that ceiling, where no room
+    /// is, when the instance is flipped. Null when the family is free of a host or not decoded, the host is neither a floor
+    /// nor a ceiling, the instance has no placement, or its Z has no direction.</summary>
+    internal static double[]? FloorOrCeilingHostTestPointCurrent(Element instance, IReadOnlyDictionary<int, Element> elementsById)
     {
         // Only a family known to take a host: a family that takes none stores the floor it stands on as well.
         if (CompactFamilyInstanceFacts.Get("fi:isFreeFamilySymbol", instance, id => elementsById.GetValueOrDefault(id)) != 0) return null;
-        // shortcut: only hosts of the floors category were compared with Revit; extend when another host kind is measured
+        // shortcut: only hosts of the floors and ceilings categories and the flip in Y were compared with Revit; extend when
+        // another host kind or a flip in X alone is measured
         if (instance.SerializedHostId is not int hostId || hostId <= 0 || !elementsById.TryGetValue(hostId, out var host)
-            || host.CategoryId != FloorsCategoryId || instance.Transform?.BasisZ is not { Length: 3 } axis
+            || host.CategoryId is not (FloorsCategoryId or CeilingsCategoryId) || instance.Transform?.BasisZ is not { Length: 3 } axis
             || PlacedSymbolOriginCurrent(instance, elementsById) is not { } origin)
             return null;
         double length = Math.Sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
-        return length > 1e-10 && double.IsFinite(length)
-            ? [origin[0] - axis[0] / length, origin[1] - axis[1] / length, origin[2] - axis[2] / length]
-            : null;
+        if (!(length > 1e-10) || !double.IsFinite(length)) return null;
+        double step = (instance.NativeRoomFields?.GetValueOrDefault(FlippedYField) == 1 ? 1 : -1) / length;
+        return [origin[0] + axis[0] * step, origin[1] + axis[1] * step, origin[2] + axis[2] * step];
     }
 
     /// <summary>The test point (feet) of an instance: beside its host wall (<see cref="WallSideTestPointCurrent"/>); else, for a
     /// work-plane-based instance, the placed origin of its symbol and one foot along its Z; else, for an instance of a hosted
-    /// family on a floor, one foot against its Z (<see cref="FloorHostTestPointCurrent"/>); else the placed centre of the
-    /// stored box of its symbol, moved by at most half a foot towards the elevation of its associated level. An instance
-    /// without a decoded placement or symbol box takes the centre of its own box. Null without any box.</summary>
+    /// family on a floor or a ceiling, one foot against its Z or along it (<see cref="FloorOrCeilingHostTestPointCurrent"/>);
+    /// else the centre of the box of its own geometry, moved by at most half a foot towards the elevation of its associated
+    /// level. An instance without such a box takes the placed centre of the stored box of its symbol, and without a decoded
+    /// placement or symbol box the centre of the box it carries itself (<see cref="Element.DecodedBox"/>). Null without any
+    /// box.</summary>
     internal static double[]? RoomTestPointCurrent(Element instance, IReadOnlyDictionary<int, double> levelElevations,
         IReadOnlyDictionary<int, Element>? elementsById = null)
     {
@@ -174,14 +180,18 @@ public partial class IfcExporter
                     ? [origin[0] + axis[0] / length, origin[1] + axis[1] / length, origin[2] + axis[2] / length]
                     : origin;
             }
-            if (FloorHostTestPointCurrent(instance, elementsById) is { } floorPoint) return floorPoint;
+            if (FloorOrCeilingHostTestPointCurrent(instance, elementsById) is { } hostPoint) return hostPoint;
         }
         double[]? center = null;
-        if (elementsById != null && PlacedSymbolCurrent(instance, elementsById) is { BoundingBoxIsHeaderOutline: true, BoundingBox: { Length: >= 6 } symbolBox })
+        // The box of the geometry comes first: the outline stored with a symbol can be wider than what the symbol holds, and
+        // Revit then reports the room at the centre of the geometry.
+        if (instance.Geometry?.BoundingBox is { Length: >= 6 } own)
+            center = [(own[0] + own[3]) / 2, (own[1] + own[4]) / 2, (own[2] + own[5]) / 2];
+        else if (elementsById != null && PlacedSymbolCurrent(instance, elementsById) is { BoundingBoxIsHeaderOutline: true, BoundingBox: { Length: >= 6 } symbolBox })
             center = PlacedCurrent(instance, (symbolBox[0] + symbolBox[3]) / 2, (symbolBox[1] + symbolBox[4]) / 2, (symbolBox[2] + symbolBox[5]) / 2);
         if (center == null)
         {
-            if ((instance.Geometry?.BoundingBox ?? instance.DecodedBox) is not { Length: >= 6 } box) return null;
+            if (instance.DecodedBox is not { Length: >= 6 } box) return null;
             center = [(box[0] + box[3]) / 2, (box[1] + box[4]) / 2, (box[2] + box[5]) / 2];
         }
         // The associated level as stored with the instance; an instance whose record is not decoded takes it as the
