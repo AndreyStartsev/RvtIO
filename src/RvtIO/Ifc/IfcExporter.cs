@@ -67753,7 +67753,9 @@ public partial class IfcExporter
                     ("IFCSLAB", 3452, RoofCategoryId) => currentProfile,
                     _ => false,
                 };
+            // The slot of a door style holds its OperationType; doors that disagree leave it NOTDEFINED below.
             string predefinedType = currentProfile && typeClass == "IFCSTAIRFLIGHTTYPE" ? StairFlightTypePredefinedTypeCurrent(instElem)
+                : currentProfile && typeClass == "IFCDOORSTYLE" ? DoorStyleOperationCurrent(canonicalType, instElem)
                 : ResolveNativeTypePredefinedType(canonicalType, instElem, typeClass, currentProfile);
             if (!typeGroups.TryGetValue(key, out var members))
             {
@@ -67827,7 +67829,7 @@ public partial class IfcExporter
             {
                 typeEntityId = w.Add(typeClass,
                     $"{guidArg},{R(ownerHistId)},{nameArg},$,$,{hasPropertySetsArg},$,{tagArg},"
-                    + ".NOTDEFINED.,.NOTDEFINED.,.F.,.F.");
+                    + $".{(currentProfile && typeClass == "IFCDOORSTYLE" ? predefinedTypes[key] : "NOTDEFINED")}.,.NOTDEFINED.,.F.,.F.");
             }
             else if (typeClass == "IFCTYPEPRODUCT")
             {

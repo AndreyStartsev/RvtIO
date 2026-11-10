@@ -235,6 +235,11 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal int? ValidatedOriginalFamilySymbolId { get; set; }
 
+        /// <summary>Hand flip differs from facing flip in the one own FamilyInstance root (a mirrored insert); null when
+        /// the root is not unique or the flags are not read.</summary>
+        [JsonIgnore]
+        internal bool? SerializedFlippedSymbol { get; set; }
+
         /// <summary>One active own computed-symbol cut with paired InstanceInfo transform;
         /// only a unique, non-inplace family with no nested instances is admitted.</summary>
         [JsonIgnore]

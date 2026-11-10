@@ -211,6 +211,27 @@ public class ComputedFamilySymbolTests
         Assert.Null(symbol.ValidatedOriginalFamilySymbolId);
     }
 
+    [Theory]
+    [InlineData(0, 0, false)] [InlineData(1, 0, true)] [InlineData(0, 1, true)] [InlineData(1, 1, false)]
+    [InlineData(2, 0, null)] [InlineData(0, 255, null)]
+    public void HandAndFacingFlipsComeFromTheSameOwnRoot(byte flippedX, byte flippedY, bool? mirrored)
+    {
+        byte[] block = Block(flippedX: flippedX, flippedY: flippedY);
+        var own = Read(block)!;
+        Assert.Equal(flippedX > 1 ? null : flippedX == 1, own.FlippedX);
+        Assert.Equal(flippedY > 1 ? null : flippedY == 1, own.FlippedY);
+        Assert.Equal(600, own.SymbolId);
+        var instance = new Element { Id = 100 };
+        var state = new ParsingState(); Record(state, block);
+        ElementBuilder.ApplyValidatedOriginalFamilySymbols([instance], state);
+        Assert.Equal(mirrored, instance.SerializedFlippedSymbol);
+        // a second, different root of the same element leaves the flips unread
+        Record(state, Block(symbol: 601, flippedX: flippedX, flippedY: flippedY));
+        ElementBuilder.ApplyValidatedOriginalFamilySymbols([instance], state);
+        Assert.Null(instance.SerializedFlippedSymbol);
+        Assert.DoesNotContain("Flipped", JsonSerializer.Serialize(instance));
+    }
+
     [Fact]
     public void OriginalSymbol_IsPrivateAndStaleValidationIsCleared()
     {
@@ -317,7 +338,8 @@ public class ComputedFamilySymbolTests
     private static void Record(ParsingState state, byte[] block, uint owner = 100)
         => RvtFileReader.RecordFamilySymbolReferenceSource(state, block, 0, Size(block), 1794, owner);
 
-    private static byte[] Block(string? mutation = null, int symbol = 600, int host = -1, int orientation = 0, int master = 500)
+    private static byte[] Block(string? mutation = null, int symbol = 600, int host = -1, int orientation = 0, int master = 500,
+        byte flippedX = 0, byte flippedY = 0)
     {
         using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
         writer.Write(100); writer.Write(0u); writer.Write(0u); writer.Write((ushort)1794);
@@ -329,6 +351,8 @@ public class ComputedFamilySymbolTests
             if (field.Name == "m_masterSymbolId") { writer.Write(master); continue; }
             if (field is { Declaring: 1795, Name: "m_hostId" }) { writer.Write(host); continue; }
             if (field is { Declaring: 1794, Name: "m_insertOrientation" }) { writer.Write(orientation); continue; }
+            if (field is { Declaring: 1794, Name: "m_flippedX" }) { writer.Write(flippedX); continue; }
+            if (field is { Declaring: 1794, Name: "m_flippedY" }) { writer.Write(flippedY); continue; }
             if (field.Name == "m_pParamValueSetAString") { writer.Write(uint.MaxValue); writer.Write((ushort)2886); continue; }
             if (field.Name == "m_pInstanceInfo")
             {
