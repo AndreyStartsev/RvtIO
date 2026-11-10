@@ -105,10 +105,14 @@ public class SystemFamilyNameTests
     [InlineData("2021", "RoundDuct", "Round Duct")] [InlineData("2021", "PipeInsulation", "Pipe Insulation")]
     [InlineData("2021", "CableTrayWithFittings", "Cable Tray with Fittings")]
     [InlineData("2021", "Floor", "Floor")] [InlineData("2021", "FoundationSlab", "Foundation Slab")] [InlineData("2021", "Pad", "Pad")]
-    [InlineData("2021", "BasicWall", null)] [InlineData("2021", "Railing", null)] [InlineData("2021", "BasicRoof", null)]
+    [InlineData("2021", "BasicWall", "Basic Wall")] [InlineData("2021", "Railing", "Railing")] [InlineData("2021", "BasicRoof", "Basic Roof")]
+    [InlineData("2021", "CompoundCeiling", "Compound Ceiling")] [InlineData("2021", "WallFoundation", "Wall Foundation")]
+    [InlineData("2021", "Stringer", "Stringer")] [InlineData("2021", "Carriage", "Carriage")]
+    [InlineData("2021", "MonolithicRun", "Monolithic Run")] [InlineData("2021", "NonMonolithicRun", "Non-Monolithic Run")]
+    [InlineData("2021", "WallSweep", null)] [InlineData("2021", "SlopedGlazing", "Sloped Glazing")] [InlineData("2021", "MonolithicLanding", null)]
     [InlineData("2020", "Floor", "Floor")] [InlineData("2020", "FoundationSlab", "Foundation Slab")]
     [InlineData("2020", "CurtainWall", "Curtain Wall")] [InlineData("2020", "AssembledStair", "Assembled Stair")]
-    [InlineData("2020", "PipeTypes", null)] [InlineData("2020", "BasicWall", null)]
+    [InlineData("2020", "PipeTypes", null)] [InlineData("2020", "BasicWall", "Basic Wall")] [InlineData("2020", "Railing", "Railing")]
     public void LoadPreviousReleaseFamilies_GivesTheNamesOfThoseFamiliesOnly(string version, string kind, string? expected)
     {
         var names = RevitSystemFamilyNames.LoadPreviousReleaseFamilies(version, "ENU", "ENU")!;
@@ -134,19 +138,21 @@ public class SystemFamilyNameTests
         Assert.Null(saved.Get(SystemFamilyKind.CurtainWall));
         Assert.Null(saved.Get(SystemFamilyKind.AssembledStair));
         Assert.Null(saved.Get(SystemFamilyKind.Floor));
+        Assert.Null(saved.Get(SystemFamilyKind.BasicWall));
         Assert.Null(saved.StairOccurrenceName);
 
         var requested = RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2021", "RUS", "ENU")!;
         Assert.Equal("Curtain Wall", requested.Get(SystemFamilyKind.CurtainWall));
         Assert.Equal("Foundation Slab", requested.Get(SystemFamilyKind.FoundationSlab));
+        Assert.Equal("Basic Wall", requested.Get(SystemFamilyKind.BasicWall));
         Assert.Equal("Stair", requested.StairOccurrenceName);
         Assert.Null(requested.Get(SystemFamilyKind.RectangularDuct));
 
         Assert.Null(RevitSystemFamilyNames.LoadPreviousReleaseFamilies("2020", "ENU", null));
     }
 
-    // A curtain wall, stair, floor, foundation slab and pad type of a 2020/2021 file are named by the type root's own class (and, for a floor
-    // and a stair, its stored kind), a basic wall type is not.
+    // The system family types of a 2020/2021 file are named by the type root's own class (and, for a floor, a stair, a stringer or carriage and
+    // a run, its stored kind); the wall sweep and the landings are not named.
     [Theory]
     [InlineData(2559, null, -2000011, "Curtain Wall")]
     [InlineData(3742, 0, -2000120, "Assembled Stair")]
@@ -157,10 +163,23 @@ public class SystemFamilyNameTests
     [InlineData(571, null, -2001263, "Pad")]
     [InlineData(1915, 1, -2000032, null)]
     [InlineData(1915, null, -2000032, null)]
-    [InlineData(512, null, -2000011, null)]
+    [InlineData(512, null, -2000011, "Basic Wall")]
+    [InlineData(512, null, -2000032, null)]
+    [InlineData(3452, null, -2000035, "Basic Roof")]
+    [InlineData(646, null, -2000038, "Compound Ceiling")]
+    [InlineData(3705, null, -2000126, "Railing")]
+    [InlineData(813, null, -2001300, "Wall Foundation")]
+    [InlineData(3736, 0, -2000123, "Stringer")]
+    [InlineData(3736, 1, -2000123, "Carriage")]
+    [InlineData(3718, 1, -2000919, "Monolithic Run")]
+    [InlineData(3718, 0, -2000919, "Non-Monolithic Run")]
+    [InlineData(3718, null, -2000919, null)]
+    [InlineData(873, null, -2000181, null)]
+    [InlineData(908, null, -2000035, "Sloped Glazing")]
+    [InlineData(3697, 1, -2000920, null)]
     [InlineData(2559, null, -2000120, null)]
     [InlineData(3742, null, -2000120, null)]
-    public void ApplyValidatedSystemFamilyNames_PreviousReleaseNamesCurtainWallStairAndSlabTypes(int cls, int? discriminator, int category, string? expected)
+    public void ApplyValidatedSystemFamilyNames_PreviousReleaseNamesTheSystemFamilyTypes(int cls, int? discriminator, int category, string? expected)
     {
         var state = new ParsingState();
         state.SystemTypeRoots[500] = (1, (ushort)cls, discriminator);
@@ -223,7 +242,7 @@ public class SystemFamilyNameTests
         Assert.Null(type.ValidatedStairOccurrenceName);
     }
 
-    // Through the reader: only a reader that is asked for the English locale (the current profile) names the curtain walls and stairs of a
+    // Through the reader: only a reader that is asked for the English locale (the current profile) names the system families of a
     // 2020 file; a reader without a locale (the legacy profile) leaves every name unset, as it did before.
     [SkippableFact]
     public void Reader_PreviousReleaseFamilyNamesFollowTheRequestedLocale()
@@ -232,6 +251,8 @@ public class SystemFamilyNameTests
         var requested = new RvtFileReader(new RvtReaderOptions { R22Layout = true, SystemFamilyNameLocale = "ENU" }).Read(path);
         Assert.Contains(requested.Elements, e => e.CategoryId == -2000120 && e.ValidatedSystemFamilyName == "Assembled Stair");
         Assert.Contains(requested.Elements, e => e.ValidatedStairOccurrenceName == "Stair");
+        Assert.Contains(requested.Elements, e => e.CategoryId == -2000011 && e.ValidatedSystemFamilyName == "Basic Wall");
+        Assert.Contains(requested.Elements, e => e.CategoryId == -2000126 && e.ValidatedSystemFamilyName == "Railing");
         var legacy = new RvtFileReader(new RvtReaderOptions { R22Layout = true }).Read(path);
         Assert.All(legacy.Elements, e =>
         {

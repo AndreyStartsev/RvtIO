@@ -1,3 +1,4 @@
+using RvtIO.Parsing;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using System.Text.RegularExpressions;
@@ -76,6 +77,81 @@ public class IfcCeilingOccurrencePredefinedTypeTests
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
+
+    [Theory]
+    [InlineData(IfcProfile.Current, "IFCCOVERING", "$")]
+    [InlineData(IfcProfile.Legacy, "IFCBUILDINGELEMENTPROXY", "$")]
+    public void RoofSoffitIsACoveringWithoutAPredefinedTypeAndItsTypeIsNotDefinedInTheCurrentProfile(IfcProfile profile, string productClass, string lastArgument)
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(WithTypeLink(IfcExporterCoveringCommonPropertySetTests.Product(100, 200, -2001393, "OST_RoofSoffit", "Soffit")));
+        info.Elements.Add(new Element { Id = 200, TypeId = -1, CategoryId = -2001393, Category = "OST_RoofSoffit", Name = "Soffit 100" });
+        string path = Path.Combine(Path.GetTempPath(), $"revitreader-soffit-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            var skipped = new SkipLog();
+            new IfcExporter { Profile = profile, SkipLog = skipped }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            Assert.True(Regex.Matches(ifc, $@"#\d+={productClass}\(").Count == 1, Describe(skipped, ifc));
+            var product = Assert.Single(Regex.Matches(ifc, $@"#\d+={productClass}\(([^\r\n]*)\);"));
+            Assert.EndsWith($",'100',{lastArgument}", product.Groups[1].Value);
+            if (profile == IfcProfile.Current)
+            {
+                var type = Assert.Single(Regex.Matches(ifc, @"#\d+=IFCCOVERINGTYPE\(([^\r\n]*)\);"));
+                // PredefinedType is optional on IfcCovering and required on IfcCoveringType.
+                Assert.EndsWith(",'200',$,.NOTDEFINED.", type.Groups[1].Value);
+            }
+            else Assert.DoesNotContain("IFCCOVERING", ifc);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(IfcProfile.Current)]
+    [InlineData(IfcProfile.Legacy)]
+    public void GutterIsAFlowSegmentWithAGutterTypeOfItsOwnInTheCurrentProfile(IfcProfile profile)
+    {
+        var info = new RevitFileInfo();
+        var gutter = WithTypeLink(IfcExporterCoveringCommonPropertySetTests.Product(100, 200, -2001391, "OST_Gutter", "Gutter"));
+        gutter.SerializedExportId = Guid.Parse("1551350c-45e5-41b8-bdf1-bcfa6794dc6a");
+        info.Elements.Add(gutter);
+        info.Elements.Add(new Element { Id = 200, TypeId = -1, CategoryId = -2001391, Category = "OST_Gutter", Name = "Gutter 150" });
+        string path = Path.Combine(Path.GetTempPath(), $"revitreader-gutter-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            var skipped = new SkipLog();
+            new IfcExporter { Profile = profile, SkipLog = skipped }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            if (profile == IfcProfile.Legacy)
+            {
+                Assert.Contains("=IFCBUILDINGELEMENTPROXY(", ifc);
+                Assert.DoesNotContain("IFCFLOWSEGMENT", ifc);
+                return;
+            }
+            Assert.True(Regex.Matches(ifc, @"#\d+=IFCFLOWSEGMENT\(").Count == 1, Describe(skipped, ifc));
+            Assert.EndsWith(",'100'", Assert.Single(Regex.Matches(ifc, @"#\d+=IFCFLOWSEGMENT\(([^\r\n]*)\);")).Groups[1].Value);
+            string type = Assert.Single(Regex.Matches(ifc, @"#\d+=IFCPIPESEGMENTTYPE\(([^\r\n]*)\);")).Groups[1].Value;
+            string typeGuid = IfcGuid.ToIfcGuid(ElementExportIds.SubElementId(gutter.SerializedExportId.Value, 1));
+            Assert.StartsWith($"'{typeGuid}',", type);
+            Assert.EndsWith(",'100','Gutter:Gutter 150:200',.GUTTER.", type);
+            Assert.Contains(",'Gutter:Gutter 150:200',", type);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    private static Element WithTypeLink(Element product)
+    {
+        product.Parameters.Add(new Parameter
+        {
+            Id = -1002050, Value = 200, StorageType = StorageType.ElementId,
+            Definition = new Definition { Id = -1002050, Name = "ELEM_TYPE_PARAM" },
+        });
+        return product;
+    }
+
+    private static string Describe(SkipLog skipped, string ifc) =>
+        string.Join(";", skipped.Groups().Select(group => $"{group.Class}/{group.Reason}/{group.Count}"))
+        + " | " + string.Join(" ", ifc.Split('\n').Where(line => line.Contains("'100'")).Select(line => line.Trim()));
 
     private static Element Ceiling() => new() { Id = 100, TypeId = 200, CategoryId = -2000038 };
     private static Dictionary<int, int> Counts() => new() { [100] = 1, [200] = 1 };
