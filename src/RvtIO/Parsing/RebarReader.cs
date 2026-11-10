@@ -43,10 +43,12 @@ internal sealed record RebarSegment(bool IsArc, double[] Origin, double[] Axis, 
 /// <see cref="ShapeName"/> is the name of the RebarShape of a shape driven bar (RebarInstBase.m_shapeId);
 /// the diameters (feet) and the name are those of the bar type (RebarBarType.m_barNominalDiameter, m_barModelDiameter, SymbolInfo.m_name);
 /// <see cref="LengthRoundingMillimetres"/> is the total length rounding of the document (ReinforcementSettings, nearest), 0 for none;
-/// <see cref="InAssembly"/> is true for a bar that is a member of an assembly (AssemblyGroupMembership cell).</summary>
+/// <see cref="InAssembly"/> is true for a bar that is a member of an assembly (AssemblyGroupMembership cell).
+/// A RebarContainer holds no bars of its own: <see cref="Items"/> are its items (one bar each, <see cref="ItemIndex"/> is the index of the item
+/// in the container) and <see cref="BarTypeName"/> is the name of the container type.</summary>
 internal sealed record RebarBars(int BarTypeId, int SystemId, double? BarLength, IReadOnlyList<IReadOnlyList<RebarSegment>> Bars,
     double NominalDiameter = 0, double ModelDiameter = 0, string? BarTypeName = null, double LengthRoundingMillimetres = 0, string? ShapeName = null,
-    bool InAssembly = false);
+    bool InAssembly = false, IReadOnlyList<RebarBars>? Items = null, int ItemIndex = -1);
 
 /// <summary>A beam system (JoistSystem): its type (JoistSystemAttr, <see cref="TypeName"/> from SymbolInfo.m_name) and the beams it holds
 /// (HeldBeam.m_existingBeamId, in stored order, deleted ones left out).</summary>
@@ -89,6 +91,7 @@ internal static partial class RebarReader
             "RebarShapeEdge" => field.Name is "m_constraints" or "m_arcHeightParamId" or "m_radiusParamId" or "m_type",
             "RebarShapeVertex" => field.Name is "m_constraints" or "m_bendAngle" or "m_turn",
             "RebarShapeConstraintEdgeLength" => field.Name is "m_paramId" or "m_refType",
+            "RebarShapeConstraintProjEdgeLength" => field.Name is "m_paramId" or "m_refType",
             "XYZ" => field.Name == "m_xyz",
             "RebarHookType" => field.Name is "m_hookAngle" or "m_straightLineMultiplier" or "m_style",
             "std::pair< ElementId, HookLengthSettings >" => field.Name == "first",
@@ -96,6 +99,8 @@ internal static partial class RebarReader
             "RebarSystemLayer" => field.Name is "m_barType" or "m_active" or "m_uncutCurves" or "m_individualLineTrf"
                 or "m_uncutRebarInstances" or "m_includedUncutBars",
             "RebarInSystem" => field.Name == "m_systemId",
+            "RebarContainer" => field.Name is "m_rebarContainerTypeId" or "m_hostId",
+            "FamilyInstance" => field.Name is "m_instOrigin" or "m_RefDir" or "m_zAxis",
             "GroupMembership" => field.Name == "m_groupId",
             "RebarBarType" => field.Name is "m_barDiameter" or "m_barNominalDiameter" or "m_barModelDiameter" or "m_standardBendDiam" or "m_standardHookBendDiam" or "m_stirrupTieBendDiam",
             "SymbolInfo" => field.Name == "m_name",
@@ -130,6 +135,9 @@ internal static partial class RebarReader
         var settings = schema.ByName("ReinforcementSettings")?.Id;
         var shape = schema.ByName("RebarShape")?.Id;
         var hookType = schema.ByName("RebarHookType")?.Id;
+        // the container classes exist in the schema of Revit 2022 and later; a file without them has no containers
+        var container = schema.ByName("RebarContainer")?.Id;
+        var containerType = schema.ByName("RebarContainerType")?.Id;
         var joist = schema.ByName("JoistSystem")?.Id;
         var joistType = schema.ByName("JoistSystemAttr")?.Id;
         if (rebar == null || system == null || inSystem == null || barType == null || settings == null || shape == null || joist == null || joistType == null) return empty;
@@ -141,12 +149,15 @@ internal static partial class RebarReader
         var shapeDefinitions = new Dictionary<int, ShapeDefinition>();
         var hookKinds = new Dictionary<int, HookKind>();
         var pending = new Dictionary<uint, PendingBar>();
+        var containers = new Dictionary<uint, (int TypeId, int HostId, bool InAssembly, List<PendingBar> Items)>();
+        var containerNames = new Dictionary<int, string>();
         var held = new Dictionary<(uint System, int Layer, int Index), PendingBar>();
         bool heldLayout = HeldLayout(schema);
         double rounding = 0;
         WideElementRecords.BuildIndex(streams, schema, wanted, (id, data, offset, size, cls) =>
         {
-            if (cls != rebar && cls != system && cls != inSystem && cls != barType && cls != settings && cls != shape && cls != joist && cls != joistType && cls != hookType) return;
+            if (cls != rebar && cls != system && cls != inSystem && cls != barType && cls != settings && cls != shape && cls != joist && cls != joistType && cls != hookType
+                && cls != container && cls != containerType) return;
             var walk = walker.Run(data, offset, size, cls, cls == shape ? (w, first) => ConstraintsValid(walker, w, first) : null);
             // The bar of a Rebar that stopped behind an extensible storage entity is its RebarInstance, read before the entity payloads.
             if (cls == rebar && walk.BeforeEntityBlobs() is { } beforeBlobs)
@@ -175,6 +186,12 @@ internal static partial class RebarReader
                     && Integer(root, "RebarHookType.m_style") is long style)
                     hookKinds.TryAdd((int)id, new HookKind(angle, multiplier, (int)style));
             }
+            else if (cls == containerType)
+            {
+                if (byQueue.Values.SelectMany(list => list).Where(c => c.Key == "SymbolInfo.m_name").Select(c => c.Text).FirstOrDefault() is { } containerName)
+                    containerNames.TryAdd((int)id, containerName);
+            }
+            else if (cls == container) { if (ReadContainer(walker, walk, byQueue) is { } found) containers.TryAdd(id, found); }
             else if (cls == settings) rounding = Rounding(byQueue);
             else if (cls == shape)
             {
@@ -207,6 +224,24 @@ internal static partial class RebarReader
             && shapeDefinitions.TryGetValue(bar.ShapeId, out var definition) ? SolveShapeDriven(bar, definition, hookKinds, kind, barDiameters.Model) : null;
         foreach (var (id, bar) in pending)
             if (Solve(bar) is { } solved) result.TryAdd(id, solved);
+        // the items of a container that can be solved; their bar types come with the pass, like those of the other bars. They are in the
+        // coordinates of the host instance, so a container whose host has no frame is not written.
+        var hostFrames = ReadHostFrames(walker, streams, schema, containers.Values.Select(c => (uint)c.HostId).ToHashSet());
+        foreach (var (id, (typeId, hostId, inAssembly, items)) in containers)
+        {
+            if (!hostFrames.TryGetValue((uint)hostId, out var hostFrame)) continue;
+            var solvedItems = new List<RebarBars>();
+            for (int index = 0; index < items.Count; index++)
+                if (Solve(items[index]) is { } solvedItem && diameters.TryGetValue(items[index].BarTypeId, out var itemDiameters))
+                    solvedItems.Add(solvedItem with
+                    {
+                        ItemIndex = index, InAssembly = inAssembly, ShapeName = null, NominalDiameter = itemDiameters.Nominal, ModelDiameter = itemDiameters.Model,
+                        BarTypeName = itemDiameters.Name, LengthRoundingMillimetres = rounding,
+                        Bars = solvedItem.Bars.Select(bar => (IReadOnlyList<RebarSegment>)bar.Select(piece => piece.Moved(hostFrame)).ToList()).ToList(),
+                    });
+            if (solvedItems.Count > 0 && containerNames.TryGetValue(typeId, out var typeName))
+                result.TryAdd(id, new RebarBars(-1, 0, null, [], BarTypeName: typeName, Items: solvedItems, InAssembly: inAssembly));
+        }
         foreach (var (id, (systemId, layerIndex, index, inAssembly)) in members)
         {
             if (held.TryGetValue(((uint)systemId, layerIndex, index), out var heldBar))
@@ -224,7 +259,8 @@ internal static partial class RebarReader
         }
         // the diameters of the bar types come with the pass, so they are attached once every element was read
         foreach (var (id, bars) in result.ToList())
-            if (diameters.TryGetValue(bars.BarTypeId, out var d))
+            if (bars.Items != null) continue;
+            else if (diameters.TryGetValue(bars.BarTypeId, out var d))
                 result[id] = bars with
                 {
                     NominalDiameter = d.Nominal, ModelDiameter = d.Model, BarTypeName = d.Name, LengthRoundingMillimetres = rounding,
@@ -235,6 +271,52 @@ internal static partial class RebarReader
         foreach (var (id, data) in joists.ToList())
             joists[id] = data with { TypeName = joistTypeNames.GetValueOrDefault(data.TypeId) };
         return empty;
+    }
+
+    /// <summary>A RebarContainer: its type and the shape driven bar of each of its RebarContainerItem objects (the walk of the root queues them in
+    /// the order of the items); null when an item cannot be read.</summary>
+    private static (int TypeId, int HostId, bool InAssembly, List<PendingBar> Items)? ReadContainer(
+        WideBlockWalker walker, WideBlockWalker.Walk walk, Dictionary<int, List<WideBlockWalker.Capture>> byQueue)
+    {
+        var root = byQueue.GetValueOrDefault(-1);
+        if (walk.Error != null || Integer(root, "RebarContainer.m_rebarContainerTypeId") is not long typeId || Integer(root, "RebarContainer.m_hostId") is not long hostId) return null;
+        bool inAssembly = InAssembly(walker, walk, byQueue);
+        var items = new List<PendingBar>();
+        for (int q = 0; q < walk.Queue.Count; q++)
+        {
+            if (walker.Class(walk.Queue[q])?.Name != "RebarContainerItem") continue;
+            if (!byQueue.TryGetValue(q, out var caps) || ReadPending(caps, inAssembly, containerItem: true) is not { } item) return null;
+            items.Add(item);
+        }
+        return items.Count == 0 ? null : ((int)typeId, (int)hostId, inAssembly, items);
+    }
+
+    /// <summary>The frame (row-major 3x3 of the columns x direction (m_RefDir), its cross product with the axis, axis, then the origin: 12 numbers) of
+    /// each of the FamilyInstance elements <paramref name="hosts"/> (FamilyInstance.m_instOrigin, m_RefDir and m_zAxis); a host that is no
+    /// FamilyInstance or whose values are not a frame has none.</summary>
+    private static Dictionary<uint, double[]> ReadHostFrames(WideBlockWalker walker, IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> hosts)
+    {
+        var frames = new Dictionary<uint, double[]>();
+        if (hosts.Count == 0) return frames;
+        WideElementRecords.BuildIndex(streams, schema, hosts, (id, data, offset, size, cls) =>
+        {
+            if (walker.Class(cls)?.Name != "FamilyInstance") return;
+            var root = ByQueue(walker.Run(data, offset, size, cls)).GetValueOrDefault(-1);
+            double[]? Vector(string key)
+            {
+                var v = new double[3];
+                for (int i = 0; i < 3; i++)
+                    if (RealOf(root, $"{key}@{i}") is not double r || !double.IsFinite(r)) return null;
+                    else v[i] = r;
+                return v;
+            }
+            if (Vector("FamilyInstance.m_instOrigin") is not { } origin || Vector("FamilyInstance.m_RefDir") is not { } x || Vector("FamilyInstance.m_zAxis") is not { } z) return;
+            double Dot(double[] a, double[] b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            if (Math.Abs(Dot(x, x) - 1) > 1e-9 || Math.Abs(Dot(z, z) - 1) > 1e-9 || Math.Abs(Dot(x, z)) > 1e-9) return;
+            double[] y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+            frames.TryAdd(id, [x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2], origin[0], origin[1], origin[2]]);
+        });
+        return frames;
     }
 
     private static JoistSystemData? ReadJoist(Dictionary<int, List<WideBlockWalker.Capture>> byQueue)
