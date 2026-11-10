@@ -8,6 +8,9 @@ internal static partial class TfBlockDeserializer
         public uint? SubInstanceCount { get; init; }
         public int? HostId { get; init; }
         public int? InsertOrientation { get; init; }
+        /// <summary>FamilyInstance.m_flippedX and m_flippedY (hand and facing flip) of the same root.</summary>
+        public bool? FlippedX { get; init; }
+        public bool? FlippedY { get; init; }
     }
 
     /// <summary>FamilyInstance's own Instance.m_pInstanceInfo -> InstInfoBase.m_symbolId.
@@ -46,6 +49,7 @@ internal static partial class TfBlockDeserializer
         int owner = 0, target = -1;
         uint? subInstanceCount = null;
         int? hostId = null, insertOrientation = null;
+        bool? flippedX = null, flippedY = null;
         try
         {
             foreach (var field in rootFields)
@@ -70,6 +74,12 @@ internal static partial class TfBlockDeserializer
                     insertOrientation = ReadI32(cursor);
                 else
                 {
+                    if (field is { Declaring: 1794, Name: "m_flippedX" or "m_flippedY", Type: 1, Mods: 0, Ref: null, Cnt: null }
+                        && cursor.Pos < cursor.End && data[cursor.Pos] <= 1)
+                    {
+                        if (field.Name == "m_flippedX") flippedX = data[cursor.Pos] == 1;
+                        else flippedY = data[cursor.Pos] == 1;
+                    }
                     if (field is { Declaring: 1794, Name: "m_subInstTable", Type: 14, Mods: 80, Ref: 19, Cnt: null }
                         && cursor.Pos <= cursor.End - 4)
                         subInstanceCount = BitConverter.ToUInt32(data, cursor.Pos);
@@ -95,7 +105,8 @@ internal static partial class TfBlockDeserializer
             return symbol > 0 && symbol != owner
                 ? new ComputedFamilySymbol(symbol, target, infoStart, cursor.Pos - start)
                     { Transform = transform, SubInstanceCount = subInstanceCount,
-                        HostId = hostId, InsertOrientation = insertOrientation } : null;
+                        HostId = hostId, InsertOrientation = insertOrientation,
+                        FlippedX = flippedX, FlippedY = flippedY } : null;
         }
         catch (DecodeFail) { return null; }
     }

@@ -5207,6 +5207,10 @@ internal static partial class ElementBuilder
             .ToDictionary(element => element.Id);
         foreach (var element in elements)
         {
+            element.SerializedFlippedSymbol = element.Id > 0 && counts[element.Id] == 1
+                && state.ComputedFamilySymbols.TryGetValue((uint)element.Id, out var root)
+                && root is { BlockCount: 1, Symbol: { FlippedX: bool flippedX, FlippedY: bool flippedY } }
+                    ? flippedX != flippedY : null;
             if (element.Id <= 0 || counts[element.Id] != 1
                 || !state.ComputedFamilySymbols.TryGetValue((uint)element.Id, out var own)
                 || own.BlockCount != 1 || own.Symbol is not { SymbolId: > 0 } source
