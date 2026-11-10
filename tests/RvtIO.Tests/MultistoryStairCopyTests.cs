@@ -117,6 +117,34 @@ public class MultistoryStairCopyTests
         Assert.Equal(2, added.Count(entity => entity.Type == "IFCMEMBER"));
     }
 
+    [Fact]
+    public void ASupportCopyTakesItsGlobalIdFromTheSupportAtItsPlaceInTheWholeSet()
+    {
+        var (writer, elements, products, contents, storeys, placements) = Fixture();
+        // Supports 300, 305 and 310 of which 305 is not exported: the copy of the second exported one is named by 305.
+        var notExported = new Guid("0f8fad5b-d9cb-469f-a165-70867728950e");
+        string last = IfcGuid.FromMd5("310");
+        writer.Add("IFCLOCALPLACEMENT", "#11,#908");                                              // 24
+        writer.Add("IFCMEMBER", $"'{last}',#99,'stair Stringer 3',$,'type',#24,#14,'310'");       // 25
+        elements[0].SerializedStairCore = [.. elements[0].SerializedStairCore!, new(305, 3727), new(310, 3727)];
+        elements.Add(new() { Id = 305, SerializedOwnElementClassId = 3727, SerializedOwningElementId = 100, SerializedExportId = notExported });
+        elements.Add(new() { Id = 310, SerializedOwnElementClassId = 3727, SerializedOwningElementId = 100 });
+        products[310] = (25, 0, "IFCMEMBER");
+        contents[20].Add(25);
+        int before = writer.EntityCount;
+        StairAggregation.Apply(writer, elements, products, contents, 99, true, storeys, placements);
+        var copies = Enumerable.Range(before, writer.EntityCount - before).Select(writer.EntityAt)
+            .Where(entity => entity.Type == "IFCMEMBER").Select(entity => IfcExporter.SplitStepArguments(entity.Args)).ToList();
+        string seed = IfcGuid.ToIfcGuid(notExported);
+        Assert.Equal([$"'{StringerCopy}'", StepWriter.Str(IfcGuid.FromMd5(seed + "Sub-element:IfcMember: 0")),
+            StepWriter.Str(IfcGuid.FromMd5(Stringer + "Sub-element:IfcMember: 1")), StepWriter.Str(IfcGuid.FromMd5(seed + "Sub-element:IfcMember: 1"))],
+            copies.Select(copy => copy[0]));
+        // The name and the Tag stay those of the support the copy repeats.
+        Assert.Equal(["'300'", "'310'", "'300'", "'310'"], copies.Select(copy => copy[7]));
+        Assert.Equal(["'stair Stringer 1 : 2'", "'stair Stringer 3 : 2'", "'stair Stringer 1 : 2 : 3'", "'stair Stringer 3 : 2 : 3'"],
+            copies.Select(copy => copy[2]));
+    }
+
     [SkippableFact]
     public void SampleMultistoryStairsCarryTheirCopyLevel()
     {

@@ -1290,7 +1290,7 @@ internal static partial class TfBlockDeserializer
                 return null;
             for (int index = 0; index < queue.Count; index++)
             {
-                if (queue.Count > 100_000) return null;
+                if (queue.Count > 100_000) return result;
                 if (index == cellIndex)
                 {
                     uint count = ReadU32(cursor);
@@ -1344,7 +1344,7 @@ internal static partial class TfBlockDeserializer
                     if (!Schemas.TryGetValue(step, out var schema) || schema.Name != name
                         || (step == 677 ? schema.Base != 678 : schema.Base != 96 || schema.Fields.Count != 0)
                         || !HasExactCurrentStepFields(step, stepFields)
-                        || !StairGraphLayout.TryCurrentHistoryEnd(data, cursor.Pos, cursor.End, out int finish)) return null;
+                        || !StairGraphLayout.TryCurrentHistoryEnd(data, cursor.Pos, cursor.End, out int finish)) return result;
                     cursor.Pos = finish;
                     foreach (var field in stepFields!)
                     {
@@ -1352,7 +1352,7 @@ internal static partial class TfBlockDeserializer
                             or "m_curveHistTableSet" or "m_edgeHistTable" or "m_edgeHistTableReverse") continue;
                         if (field is { Declaring: 677, Name: "m_affectedEdgesTags", Type: 14, Mods: 80, Ref: null })
                         {
-                            if (!StairGraphLayout.TryAffectedTags(data, cursor.Pos, cursor.End, out int tagsEnd, out _)) return null;
+                            if (!StairGraphLayout.TryAffectedTags(data, cursor.Pos, cursor.End, out int tagsEnd, out _)) return result;
                             cursor.Pos = tagsEnd;
                         }
                         else ReadField(cursor, field, queue, 1, null);

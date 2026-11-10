@@ -10,7 +10,8 @@ namespace RvtIO.Ifc;
 /// The current profile repeats a multistory stair on each level of its data cell: copy k (from 2)
 /// is an IfcStair without representation in the storey of that level, moved by the distance between
 /// the two storeys, which aggregates copies of the stair's components and railings over the same
-/// representation items.</summary>
+/// representation items. The GlobalId of the copy of the i-th exported support comes from the i-th
+/// support of the whole numeric set, exported or not; the copy keeps the Tag of the support it repeats.</summary>
 internal static class StairAggregation
 {
     internal static void Apply(StepWriter writer, IReadOnlyList<Element> elements,
@@ -126,10 +127,24 @@ internal static class StairAggregation
             existingParents.Add(emittedParent.entityId);
             if (currentProfile && storeyIds != null && storeyPlacements != null
                 && parent.SerializedStairCopyLevelIds is { Length: > 0 } levels)
-                WriteLevelCopies(emittedParent.entityId, levels, parentArgs, handles);
+            {
+                var supports = core.Where(child => child.ClassId == 3727).Select(child => child.Id).Order().ToArray();
+                var seeds = new Dictionary<int, string>();
+                int position = 0;
+                foreach (int id in supports)
+                    if (products.TryGetValue(id, out var product) && handles.Contains(product.entityId))
+                        seeds.Add(product.entityId, GlobalId(supports[position++]));
+                WriteLevelCopies(emittedParent.entityId, levels, parentArgs, handles, seeds);
+            }
         }
 
-        void WriteLevelCopies(int stairId, int[] levels, string[] stairArgs, List<int> handles)
+        // An element that is not exported has the GlobalId it would have been exported with.
+        string GlobalId(int elementId) =>
+            products.TryGetValue(elementId, out var product) && indexById.TryGetValue(product.entityId, out int index)
+                ? IfcExporter.SplitStepArguments(writer.EntityAt(index).Args)[0][1..^1]
+                : unique[elementId].SerializedExportId is Guid exportId ? IfcGuid.ToIfcGuid(exportId) : IfcGuid.FromElementId(elementId);
+
+        void WriteLevelCopies(int stairId, int[] levels, string[] stairArgs, List<int> handles, Dictionary<int, string> supportSeeds)
         {
             // The stair and its components stand on the placement the storey placements hang from. A copy stands
             // on a placement that is as far from the storey of its level as that one is from the storey of the stair.
@@ -172,7 +187,7 @@ internal static class StairAggregation
                     else
                     {
                         string role = entity.Type switch { "IFCSTAIRFLIGHT" => "IfcStairFlight", "IFCSLAB" => "IfcSlab", _ => "IfcMember" };
-                        args[0] = StepWriter.Str(IfcGuid.FromMd5($"{guid}Sub-element:{role}: {copy}"));
+                        args[0] = StepWriter.Str(IfcGuid.FromMd5($"{supportSeeds.GetValueOrDefault(handle, guid)}Sub-element:{role}: {copy}"));
                         args[2] = Suffixed(args[2], suffix);
                     }
                     args[5] = StepWriter.Ref(writer.Add("IFCLOCALPLACEMENT", $"{StepWriter.Ref(relativeTo)},{childPlacement[1]}"));
