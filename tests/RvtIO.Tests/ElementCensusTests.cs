@@ -38,60 +38,62 @@ public sealed class ElementCensusTests : IDisposable
     /// <summary>One block: <paramref name="keyed"/> for a loaded family document, and its elements as (owner id, class name).</summary>
     private sealed record Block(bool Keyed, (uint Owner, string Class)[] Elements, bool Tagless = false);
 
-    /// <summary>A record whose body is the 2-byte class tag and one more byte, or, when <paramref name="tagless"/>, one byte only.</summary>
-    private static byte[] Record(uint owner, uint channel, ushort kind, bool tagless = false)
-    {
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-        writer.Write(owner);
-        if (channel != 101) writer.Write(77u);
-        writer.Write(tagless ? 1u : 3u);
-        if (!tagless) writer.Write(kind);
-        writer.Write((byte)17);
-        writer.Write(tagless ? 1u : 3u);
-        return stream.ToArray();
-    }
+    /// <summary>One record: its owner, its body and the value in front of the size on channels 102 and 103.</summary>
+    internal sealed record Rec(uint Owner, byte[] Body, uint Extra = 77);
 
-    private static void Segment(BinaryWriter writer, uint channel, byte[] records, uint count, uint recordSize = 3)
-    {
-        byte[] payload = GzipMember.Write(records);
-        uint size = (uint)payload.Length + 8;
-        writer.Write(Id("SegmentMarker"));
-        writer.Write(0u);
-        writer.Write(count);
-        writer.Write(size);
-        writer.Write(count * recordSize);
-        writer.Write(channel);
-        writer.Write(19u);
-        writer.Write(payload);
-        writer.Write(Id("SegmentCheckback"));
-        writer.Write(size);
-    }
+    // the body of a record is the 2-byte class tag and one more byte, or, in a tagless block, one byte only on channel 102
+    private static byte[] Partition(params Block[] blocks) => Partition(Id, [.. blocks.Select(block => (block.Keyed, Enumerable.Range(101, 3)
+        .Select(channel => block.Elements.Select(e => new Rec(e.Owner,
+            block.Tagless && channel == 102 ? [17] : [.. BitConverter.GetBytes(channel == 102 ? Tag(e.Class) : (ushort)1), 17])).ToArray()).ToArray()))]);
 
-    private static byte[] Partition(params Block[] blocks)
+    /// <summary>The partition stream of the blocks, each given as the records of its channels 101, 102 and 103; <paramref name="id"/>
+    /// gives the class id of a framing class.</summary>
+    internal static byte[] Partition(Func<string, ushort> id, params (bool Keyed, Rec[][] Channels)[] blocks)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         writer.Write(9ul);
-        foreach (var block in blocks)
+        for (int index = 0; index < blocks.Length; index++)
         {
-            writer.Write(Id("ContentMarker"));
-            writer.Write(block.Keyed ? uint.MaxValue : 0u);
-            if (block.Keyed) writer.Write(Id("ContentKey"));
-            writer.Write((uint)block.Elements.Length);
-            if (block.Keyed) writer.Write(new byte[16]);
+            var (keyed, channels) = blocks[index];
+            writer.Write(id("ContentMarker"));
+            writer.Write(keyed ? uint.MaxValue : 0u);
+            if (keyed) writer.Write(id("ContentKey"));
+            writer.Write((uint)channels[0].Count(r => r.Owner != uint.MaxValue));
+            if (keyed) writer.Write([(byte)index, .. new byte[15]]);
             for (uint channel = 101; channel <= 103; channel++)
             {
-                byte[] records = [.. block.Elements.SelectMany(e => Record(e.Owner, channel, channel == 102 ? Tag(e.Class) : (ushort)1, block.Tagless && channel == 102))];
-                Segment(writer, channel, records, (uint)block.Elements.Length, block.Tagless && channel == 102 ? 1u : 3u);
+                var records = channels[channel - 101];
+                using var items = new MemoryStream();
+                using var item = new BinaryWriter(items);
+                foreach (var record in records)
+                {
+                    item.Write(record.Owner);
+                    if (channel != 101) item.Write(record.Extra);
+                    item.Write((uint)record.Body.Length);
+                    item.Write(record.Body);
+                    item.Write((uint)record.Body.Length);
+                }
+                byte[] payload = GzipMember.Write(items.ToArray());
+                uint size = (uint)payload.Length + 8;
+                writer.Write(id("SegmentMarker"));
+                writer.Write(0u);
+                writer.Write((uint)records.Length);
+                writer.Write(size);
+                writer.Write((uint)records.Sum(r => r.Body.Length));
+                writer.Write(channel);
+                writer.Write(19u);
+                writer.Write(payload);
+                writer.Write(id("SegmentCheckback"));
+                writer.Write(size);
             }
-            writer.Write(Id("SegmentMarker"));
+            writer.Write(id("SegmentMarker"));
             writer.Write(new byte[16]);
-            writer.Write(Id("SignatureMarker"));
+            writer.Write(id("SignatureMarker"));
             writer.Write(0u);
             writer.Write(0u);
         }
-        writer.Write(Id("ContentMarker"));
+        writer.Write(id("ContentMarker"));
         writer.Write(0u);
         writer.Write(uint.MaxValue);
         return stream.ToArray();

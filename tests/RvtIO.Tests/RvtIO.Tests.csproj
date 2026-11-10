@@ -34,6 +34,7 @@
     <Compile Include="..\..\src\RvtIO.Cli\CurrentCopiesOption.cs" Link="Cli\CurrentCopiesOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\ReportPathOption.cs" Link="Cli\ReportPathOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\DowngradeCommand.cs" Link="Cli\DowngradeCommand.cs" />
+    <Compile Include="..\..\src\RvtIO.Cli\CoverageCommand.cs" Link="Cli\CoverageCommand.cs" />
   </ItemGroup>
 
 </Project>

@@ -157,7 +157,7 @@ internal static class DowngradeCommand
     }
 
     // The report is written beside its target and moved over it, so a failed write leaves no half file and a link keeps its content.
-    private static int WriteReport(TextWriter error, string? reportPath, object report, int exitCode)
+    internal static int WriteReport(TextWriter error, string? reportPath, object report, int exitCode)
     {
         if (reportPath == null) return exitCode;
         string temporary = reportPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
