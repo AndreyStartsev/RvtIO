@@ -4889,7 +4889,8 @@ public partial class IfcExporter
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
             foreach (int systemId in WriteJoistAssemblies(w, exportableElements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
-                         storeyContents, propertySingleValueIds))
+                         storeyContents, propertySingleValueIds,
+                         system => ResolveStorey(system, storeyIds, defaultStoreyId, elemById, buildingId, system.BoundingBox)))
             {
                 // counted with or without a skip log; the log entry is only there to be taken out
                 exportedCount++;
@@ -69649,10 +69650,10 @@ public partial class IfcExporter
     /// <summary>
     /// The storey of an element, replaying the storey rule: the base-level
     /// parameter of its kind (a nested family instance reads its top-level instance), then any
-    /// stored level reference.
+    /// stored level reference. <paramref name="outline"/> is the box of an element that has no body of its own.
     /// </summary>
     private int ResolveStorey(Element elem, Dictionary<int, int> storeyIds, int defaultStoreyId,
-        IReadOnlyDictionary<int, Element> elemById, int buildingId)
+        IReadOnlyDictionary<int, Element> elemById, int buildingId, double[]? outline = null)
     {
         // The current profile reads STAIRS_BASE_LEVEL_PARAM, which is StairsElement.m_baseLevelId.
         if (CurrentProfile && elem.CategoryId == -2000120 && elem.SerializedStairBaseLevelId is int stairBaseLevelId
@@ -69668,14 +69669,14 @@ public partial class IfcExporter
             _ when elem.NativeMasterSymbolId is > 0 => [-1001350, -1001365, -1001383],
             _ => [],
         };
-        // A building-services element whose level is a Level that is not a project storey stands like a column
-        // on such a level: in the highest storey at or below it, in the building where no storey is that low.
+        // An element whose level is a Level that is not a project storey stands in the highest storey at or below
+        // that level, in the building where no storey is that low.
         Element? offStoreyLevel = null;
         foreach (int parameterId in baseLevelParameters)
             if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
             {
                 if (storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
-                if (CurrentProfile && offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                if (CurrentProfile && offStoreyLevel == null
                     && elemById.TryGetValue(levelId, out var baseLevel) && baseLevel.CategoryId == -2000240)
                     offStoreyLevel = baseLevel;
             }
@@ -69703,7 +69704,7 @@ public partial class IfcExporter
                 if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId)
                 {
                     if (storeyIds.TryGetValue(assocLevelId, out int assocStoreyId)) return assocStoreyId;
-                    if (offStoreyLevel == null && IsBuildingServicesCategory(elem.CategoryId)
+                    if (offStoreyLevel == null
                         && elemById.TryGetValue(assocLevelId, out var assocLevel) && assocLevel.CategoryId == -2000240)
                         offStoreyLevel = assocLevel;
                 }
@@ -69727,7 +69728,7 @@ public partial class IfcExporter
         if (CurrentProfile && storeyIds.Count > 0)
         {
             int byBottom = ResolveStoreyByBottomCurrent(
-                (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
+                (outline ?? elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
                 storeyIds, elemById);
             return byBottom != 0 ? byBottom : defaultStoreyId;
         }
@@ -69775,10 +69776,6 @@ public partial class IfcExporter
             }
         return chosen;
     }
-
-    /// <summary>Every category of the duct, pipe, cable tray and conduit range (segments, fittings, accessories, insulation, terminals, sprinklers), and the electrical, lighting, mechanical, plumbing and food service equipment and fixtures.</summary>
-    private static bool IsBuildingServicesCategory(int? categoryId) =>
-        categoryId is <= -2008000 and >= -2008999 or -2001040 or -2001043 or -2001060 or -2001120 or -2001140 or -2001160;
 
     /// <summary>10 cm in feet: the storey rule, how far below a level its storey starts.</summary>
     private const double StoreyExtensionFeet = 10.0 / (12.0 * 2.54);
