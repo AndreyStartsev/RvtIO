@@ -288,6 +288,64 @@ public partial class IfcExporter
         return (Math.Abs(twiceArea) / 2, perimeter);
     }
 
+    /// <summary>What the arcs of a profile outline add to its polygon. An arc is written as equal chords of at most a sixteenth of a
+    /// half turn (<see cref="ResampleRingCurrent"/>), so a run of them is read back as its circle: the area between each chord and
+    /// the arc (taken away where the arc is concave) and the length of the arc over its chord.</summary>
+    internal static (double Area, double Length) ArcsOverChordsCurrent(IReadOnlyList<(double X, double Y)> points)
+    {
+        int n = points.Count;
+        var chords = new double[n];
+        double twiceArea = 0;
+        for (int i = 0; i < n; i++)
+        {
+            var (ax, ay) = points[i];
+            var (bx, by) = points[(i + 1) % n];
+            chords[i] = Math.Sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+            twiceArea += ax * by - bx * ay;
+        }
+        // The circle through a vertex and its two neighbours, where the vertex is inside an arc: equal chords of a small angle.
+        var circles = new (double X, double Y, double Radius)?[n];
+        for (int i = 0; i < n; i++)
+        {
+            double before = chords[(i + n - 1) % n], after = chords[i];
+            if (Math.Abs(before - after) > 1e-7 * Math.Max(before, after)) continue;
+            var (ax, ay) = points[(i + n - 1) % n];
+            var (bx, by) = points[i];
+            var (cx, cy) = points[(i + 1) % n];
+            double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+            if (Math.Abs(d) < 1e-14) continue;
+            double a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+            double x = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d, y = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+            double radius = Math.Sqrt((ax - x) * (ax - x) + (ay - y) * (ay - y));
+            if (2 * Math.Asin(Math.Min(1, before / (2 * radius))) <= Math.PI / 16 + 1e-6) circles[i] = (x, y, radius);
+        }
+        // Two neighbouring vertices inside an arc of one circle put their three chords on it.
+        var arcOfChord = new (double X, double Y, double Radius)?[n];
+        for (int i = 0; i < n; i++)
+        {
+            int next = (i + 1) % n;
+            if (circles[i] is not { } circle || circles[next] is not { } other) continue;
+            double tolerance = 1e-6 * circle.Radius;
+            if (Math.Abs(circle.Radius - other.Radius) > tolerance
+                || Math.Sqrt((circle.X - other.X) * (circle.X - other.X) + (circle.Y - other.Y) * (circle.Y - other.Y)) > tolerance) continue;
+            arcOfChord[(i + n - 1) % n] = arcOfChord[i] = arcOfChord[next] = circle;
+        }
+        double area = 0, length = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (arcOfChord[i] is not { } circle) continue;
+            var (ax, ay) = points[i];
+            var (bx, by) = points[(i + 1) % n];
+            double angle = 2 * Math.Asin(Math.Min(1, chords[i] / (2 * circle.Radius)));
+            double segment = circle.Radius * circle.Radius / 2 * (angle - Math.Sin(angle));
+            // The centre on the inner side of the chord: the arc bulges out of the outline.
+            double side = (bx - ax) * (circle.Y - ay) - (by - ay) * (circle.X - ax);
+            area += side * twiceArea > 0 ? segment : -segment;
+            length += circle.Radius * angle - chords[i];
+        }
+        return (area, length);
+    }
+
     private static bool TryAnalyzeHollowRectWithFillets(
         IReadOnlyList<(double X, double Y)> outer,
         IReadOnlyList<List<(double X, double Y)>> inners,
@@ -1438,6 +1496,13 @@ public partial class IfcExporter
         if (ExtrusionDataCurrent(body, shells) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area, perimeter = extrusion.Perimeter;
+            // The section of a written profile is measured with its arcs, not with the chords the outline is written as.
+            if (body is { Polygon: { } outline, NominalArea: null })
+            {
+                var arcs = ArcsOverChordsCurrent(outline);
+                area += arcs.Area;
+                perimeter += arcs.Length;
+            }
             AddIfPositive(result, QuantityKind.Length, "Length", length);
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", area);
             AddIfPositive(result, QuantityKind.Area, "OuterSurfaceArea", perimeter * length);

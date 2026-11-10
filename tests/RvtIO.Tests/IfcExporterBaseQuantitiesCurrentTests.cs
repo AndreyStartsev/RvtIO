@@ -1850,6 +1850,49 @@ public class IfcExporterBaseQuantitiesCurrentTests
         AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * length), ("NetVolume", 10 * CubicFeet));
     }
 
+    [Fact]
+    public void Pass_BeamWithArcsInItsProfile_MeasuresTheSectionWithTheArcsNotTheirChords()
+    {
+        var (w, owner, placement) = NewWriter();
+        // An angle section (legs a, thickness t) with a concave root fillet r and a convex rounded heel R, each a quarter turn of 8 chords.
+        const double a = 0.2, t = 0.02, r = 0.012, R = 0.008, depth = 3;
+        var outline = new List<(double X, double Y)> { (R, 0), (a, 0), (a, t), (t + r, t) };
+        for (int k = 1; k <= 8; k++)
+            outline.Add((t + r + r * Math.Cos(-Math.PI / 2 - k * Math.PI / 16), t + r + r * Math.Sin(-Math.PI / 2 - k * Math.PI / 16)));
+        outline.AddRange([(t, a), (0, a), (0, R)]);
+        for (int k = 1; k < 8; k++)
+            outline.Add((R + R * Math.Cos(Math.PI + k * Math.PI / 16), R + R * Math.Sin(Math.PI + k * Math.PI / 16)));
+        var points = outline.Select(p => w.Add("IFCCARTESIANPOINT", $"({StepWriter.Real(p.X)},{StepWriter.Real(p.Y)})")).ToList();
+        int polyline = w.Add("IFCPOLYLINE", $"({string.Join(",", points.Append(points[0]).Select(id => "#" + id))})");
+        int profile = w.Add("IFCARBITRARYCLOSEDPROFILEDEF", $".AREA.,'L',#{polyline}");
+        int origin = w.Add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+        int position = w.Add("IFCAXIS2PLACEMENT3D", $"#{origin},$,$");
+        int direction = w.Add("IFCDIRECTION", "(0.,0.,1.)");
+        int solid = w.Add("IFCEXTRUDEDAREASOLID", $"#{profile},#{position},#{direction},{StepWriter.Real(depth)}");
+        int representation = w.Add("IFCSHAPEREPRESENTATION", $"#1,'Body','SweptSolid',(#{solid})");
+        int shape = w.Add("IFCPRODUCTDEFINITIONSHAPE", $"$,$,(#{representation})");
+        int beam = AddProduct(w, "IFCBEAM", "IZGD7y6S5209$mGLi_sPlj", owner, placement, shape);
+        var element = new Element { Id = 17, CategoryId = -2001320, Geometry = Box(1, 2, 5) };
+
+        Apply(w, owner, new() { [17] = element }, new() { [beam] = 17 });
+
+        double area = a * t + (a - t) * t + (1 - Math.PI / 4) * (r * r - R * R);
+        double perimeter = 4 * a - (2 - Math.PI / 2) * (r + R);
+        AssertQuantities(Quantities(w, "IFCQUANTITYAREA"),
+            ("CrossSectionArea", area), ("OuterSurfaceArea", perimeter * depth), ("GrossSurfaceArea", perimeter * depth + 2 * area),
+            ("NetSurfaceArea", 2 * (1 * 2 + 1 * 5 + 2 * 5) * SquareFeet));
+        AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("GrossVolume", area * depth), ("NetVolume", 10 * CubicFeet));
+    }
+
+    [Fact]
+    public void ArcsOverChords_AnOutlineOfStraightSidesOnly_AddsNothing()
+    {
+        // A regular octagon has equal sides on one circle, but each spans more than an arc chord does.
+        var octagon = Enumerable.Range(0, 8).Select(k => (Math.Cos(k * Math.PI / 4), Math.Sin(k * Math.PI / 4))).ToList();
+        Assert.Equal((0.0, 0.0), IfcExporter.ArcsOverChordsCurrent(octagon));
+        Assert.Equal((0.0, 0.0), IfcExporter.ArcsOverChordsCurrent([(0, 0), (3, 0), (3, 1), (1, 1), (1, 2), (0, 2)]));
+    }
+
     /// <summary>A space placed in a storey (the storey has a placement of its own, the space is placed relative to it).</summary>
     private static (StepWriter W, int Owner, int Storey, int Space) SpaceInStorey()
     {
