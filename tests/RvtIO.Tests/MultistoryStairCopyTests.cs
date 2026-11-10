@@ -27,7 +27,7 @@ public class MultistoryStairCopyTests
         Assert.Equal(($"'{StairCopy}'", "'stair : 2'", "$", "'100'"), (first[0], first[2], first[6], first[7]));
         Assert.Equal((StepWriter.Str(IfcGuid.FromMd5(Stair + "Sub-element:IfcStair Copy: 3")), "'stair : 3'"), (second[0], second[2]));
         // The stair stands on the placement the storeys hang from. Its copies keep its axis on a placement that is
-        // as far below the storey of the copy level as that placement is below the storey of the stair.
+        // as far below the storey of the copy level as that placement is below the base level of the stair.
         string firstOrigin = Placement(first[5]).Split(',')[0], secondOrigin = Placement(second[5]).Split(',')[0];
         Assert.Equal((firstOrigin + ",#903", secondOrigin + ",#903"), (Placement(first[5]), Placement(second[5])));
         Assert.Equal((("#7", "(0.,0.,-3800.)"), ("#10", "(0.,0.,-3800.)")), (Origin(firstOrigin), Origin(secondOrigin)));
@@ -84,7 +84,7 @@ public class MultistoryStairCopyTests
     [Theory]
     [InlineData("no_levels")] [InlineData("legacy_profile")] [InlineData("no_storeys")] [InlineData("level_is_not_a_storey")]
     [InlineData("stair_not_in_a_storey")] [InlineData("storey_is_turned")] [InlineData("storey_hangs_elsewhere")]
-    [InlineData("no_base_level")] [InlineData("base_level_is_not_a_level")]
+    [InlineData("no_base_level")] [InlineData("base_level_is_not_a_level")] [InlineData("base_level_of_unknown_height")]
     public void NothingIsRepeatedWithoutAResolvedCopyLevel(string scenario)
     {
         var (writer, elements, products, contents, storeys, placements) = Fixture();
@@ -94,13 +94,15 @@ public class MultistoryStairCopyTests
             case "level_is_not_a_storey": elements[0].SerializedStairCopyLevelIds = [77]; break;
             case "stair_not_in_a_storey": contents[20].Remove(15); break;
             case "no_base_level": elements[0].SerializedStairBaseLevelId = null; break;
-            case "base_level_is_not_a_level": elements[0].SerializedStairBaseLevelId = 77; break;
+            case "base_level_is_not_a_level": case "base_level_of_unknown_height": elements[0].SerializedStairBaseLevelId = 77; break;
             case "storey_is_turned": writer.ReplaceArgs(2, "#2,#901,$"); break;
             case "storey_hangs_elsewhere": writer.ReplaceArgs(3, "#10,#3"); break;
         }
         int before = writer.EntityCount;
         StairAggregation.Apply(writer, elements, products, contents, 99, scenario != "legacy_profile",
-            scenario == "no_storeys" ? null : storeys, scenario == "no_storeys" ? null : placements);
+            scenario == "no_storeys" ? null : storeys, scenario == "no_storeys" ? null : placements,
+            // The heights of the other levels are known, the one of the base level is not.
+            scenario == "base_level_of_unknown_height" ? new Dictionary<int, double> { [10] = 3800, [11] = 7600, [12] = 11400 } : null);
         // Only the relation of the stair itself is written.
         Assert.Equal(before + 1, writer.EntityCount);
         Assert.Equal("IFCRELAGGREGATES", writer.EntityAt(before).Type);
@@ -168,6 +170,73 @@ public class MultistoryStairCopyTests
                 return height;
             }
         }
+    }
+
+    [Fact]
+    public void TheExportMovesACopyFromTheBaseLevelWhetherOrNotThatLevelIsABuildingStorey()
+    {
+        // The base level of the stair stands 10 ft above the lowest storey, its copy level 12.5 ft (3810 mm) above the base level.
+        var onAStorey = ExportedHeights(baseLevelIsAStorey: true);
+        // Without the flag the base level is no storey and the lowest storey holds the stair.
+        var belowTheBaseLevel = ExportedHeights(baseLevelIsAStorey: false);
+        Assert.Equal([("IFCSTAIR", "lower", "copy"), ("IFCSTAIRFLIGHT", null, null)],
+            belowTheBaseLevel.Select(product => (product.Type, product.Storey, product.CopyStorey)));
+        Assert.Equal(["base", "copy"], onAStorey.Take(1).SelectMany(product => new[] { product.Storey, product.CopyStorey }));
+        Assert.All(onAStorey, product => Assert.Equal(3810, product.Copy - product.Original, 6));
+        Assert.Equal(onAStorey.Select(product => (product.Type, product.Original, product.Copy)),
+            belowTheBaseLevel.Select(product => (product.Type, product.Original, product.Copy)));
+
+        // The stair and its run with the storeys and the heights (sums of the placement chains) of the original and of its copy.
+        static List<(string Type, string? Storey, string? CopyStorey, double Original, double Copy)> ExportedHeights(bool baseLevelIsAStorey)
+        {
+            var parent = IfcExporterSlabCommonPropertySetTests.Slab(100, 101, "stair", -2000120, "OST_Stairs", null);
+            var child = IfcExporterSlabCommonPropertySetTests.Slab(200, 201, "run", -2000919, "OST_StairsRuns", null, 20);
+            parent.SerializedOwnElementClassId = 3681; parent.SerializedStairCore = [new(200, 3708)];
+            parent.SerializedStairBaseLevelId = 2; parent.SerializedStairCopyLevelIds = [3];
+            child.SerializedOwnElementClassId = 3708; child.SerializedOwningElementId = 100;
+            var info = new RevitFileInfo();
+            info.Elements.AddRange([Level(1, "lower", 0, true), Level(2, "base", 10, baseLevelIsAStorey), Level(3, "copy", 22.5, true), parent, child]);
+            string path = Path.Combine(Path.GetTempPath(), $"revitreader-stair-copies-{Guid.NewGuid():N}.ifc");
+            try
+            {
+                new IfcExporter { Profile = IfcProfile.Current }.Export(info, path);
+                var entities = System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(path), @"#(\d+)=(\w+)\(([^\r\n]*)\);")
+                    .ToDictionary(match => "#" + match.Groups[1].Value, match => (Type: match.Groups[2].Value, Args: match.Groups[3].Value));
+                var heights = new List<(string, string?, string?, double, double)>();
+                foreach (var (type, tag) in new[] { ("IFCSTAIR", "'100'"), ("IFCSTAIRFLIGHT", "'200'") })
+                {
+                    var products = entities.Where(entity => entity.Value.Type == type).OrderBy(entity => int.Parse(entity.Key[1..]))
+                        .Select(entity => (entity.Key, Args: IfcExporter.SplitStepArguments(entity.Value.Args))).Where(product => product.Args[7] == tag).ToList();
+                    Assert.Equal(2, products.Count);
+                    heights.Add((type, Storey(products[0].Key), Storey(products[1].Key), Height(products[0].Args[5]), Height(products[1].Args[5])));
+                }
+                return heights;
+
+                string? Storey(string product) => entities.Values.Where(entity => entity.Type == "IFCRELCONTAINEDINSPATIALSTRUCTURE")
+                    .Select(entity => IfcExporter.SplitStepArguments(entity.Args)).Where(args => args[4][1..^1].Split(',').Contains(product))
+                    .Select(args => IfcExporter.SplitStepArguments(entities[args[5]].Args)[2][1..^1]).SingleOrDefault();
+                double Height(string placement)
+                {
+                    double height = 0;
+                    for (; placement != "$"; placement = entities[placement].Args.Split(',')[0])
+                        height += double.Parse(entities[entities[entities[placement].Args.Split(',')[1]].Args.Split(',')[0]].Args[1..^1].Split(',')[2],
+                            System.Globalization.CultureInfo.InvariantCulture);
+                    return height;
+                }
+            }
+            finally { if (File.Exists(path)) File.Delete(path); }
+        }
+
+        static Element Level(int id, string name, double feet, bool buildingStorey) => new()
+        {
+            Id = id, Name = name, CategoryId = -2000240, Category = "OST_Levels", IsNativeLevel = true,
+            SerializedFamilyId = -1, SerializedUnplacedOwnerId = -1, SerializedOwnerDbViewId = -1,
+            Parameters =
+            [
+                new Parameter { Id = -1007102, Definition = new Definition { Name = "LEVEL_ELEV" }, StorageType = StorageType.Double, Value = feet },
+                new Parameter { Id = -1007111, StorageType = StorageType.Integer, Value = buildingStorey ? 1 : 0 },
+            ],
+        };
     }
 
     [Fact]
