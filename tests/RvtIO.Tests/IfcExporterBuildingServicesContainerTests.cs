@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>An element whose level is a Level that is not a project storey is contained in the highest storey at or below that level, and in the building where no storey is that low: a building-services element, and an element of any other kind by the level parameter of its kind. An element on a project storey keeps that storey. The assembly of a beam system has no level and no body: it is contained by the bottom of its own outline.</summary>
+/// <summary>An element whose level is a Level that is not a project storey is contained in the highest storey at or below that level, and in the building where no storey is that low: a building-services element, and an element of any other kind by the level parameter of its kind. An element on a project storey keeps that storey. The assembly of a beam system stays with its first beam; where that beam is on a level that is not a project storey, the assembly is contained by the bottom of its own outline.</summary>
 public class IfcExporterBuildingServicesContainerTests
 {
     private const int PhaseId = 3;
@@ -182,29 +182,17 @@ public class IfcExporterBuildingServicesContainerTests
     }
 
     [Fact]
-    public void BeamSystemAssembly_IsContainedByTheBottomOfItsOwnOutline_NotWithItsFirstBeam()
+    public void BeamSystemAssembly_WhoseFirstBeamIsOnANonStoreyLevel_IsContainedByTheBottomOfItsOwnOutline()
     {
         var info = new RevitFileInfo();
         info.Elements.Add(Level(id: 1, name: "Ground", elevation: 0, buildingStory: true));
         info.Elements.Add(Level(id: 2, name: "First", elevation: 3, buildingStory: true));
         info.Elements.Add(Level(id: 3, name: "Second", elevation: 6, buildingStory: true));
         info.Elements.Add(Level(id: 7, name: "Rafter line", elevation: 6.5, buildingStory: false));
-        Element Beam(int id)
-        {
-            var beam = Fitting(id, levelId: 0, bottom: 7, categoryId: -2001320);
-            beam.Category = "OST_StructuralFraming";
-            beam.Parameters = beam.Parameters.Where(parameter => parameter.Id != -1001952).ToList();
-            beam.Parameters.Add(new Parameter { Id = -1001383, StorageType = StorageType.ElementId, Value = 7 });   // level 6.5: Second
-            return beam;
-        }
-        Element System(int id, int firstBeamId, double[]? outline) => new()
-        {
-            Id = id, CategoryId = -2001327, Category = "OST_StructuralFramingSystem", BoundingBox = outline,
-            JoistSystem = new RvtIO.Parsing.JoistSystemData(1, "Joist type", [firstBeamId, firstBeamId + 1]),
-        };
+        Element Beam(int id) => SystemBeam(id, levelId: 7, bottom: 7);                        // level 6.5: Second
         info.Elements.AddRange([Beam(100), Beam(101), Beam(110), Beam(111)]);
-        info.Elements.Add(System(id: 200, firstBeamId: 100, outline: [0, 0, 4, 1, 1, 10]));   // its outline starts in First
-        info.Elements.Add(System(id: 201, firstBeamId: 110, outline: null));                  // no outline: with its first beam
+        info.Elements.Add(BeamSystem(id: 200, firstBeamId: 100, outline: [0, 0, 4, 1, 1, 10]));   // its outline starts in First
+        info.Elements.Add(BeamSystem(id: 201, firstBeamId: 110, outline: null));                  // no outline: with its first beam
         string path = TempIfcPath("beam-system-container");
 
         try
@@ -217,6 +205,45 @@ public class IfcExporterBuildingServicesContainerTests
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
+
+    [Theory]
+    [InlineData(2)]   // the beams are on First and hang below it
+    [InlineData(0)]   // the beams have no level: the bottom of the first one is in First
+    public void BeamSystemAssembly_WhoseFirstBeamIsNotOnANonStoreyLevel_StaysWithItsFirstBeam(int beamLevelId)
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(Level(id: 1, name: "Ground", elevation: 0, buildingStory: true));
+        info.Elements.Add(Level(id: 2, name: "First", elevation: 3, buildingStory: true));
+        info.Elements.Add(Level(id: 3, name: "Second", elevation: 6, buildingStory: true));
+        double firstBottom = beamLevelId == 0 ? 3.5 : 2;
+        info.Elements.AddRange([SystemBeam(100, beamLevelId, firstBottom), SystemBeam(101, beamLevelId, bottom: 2)]);
+        info.Elements.Add(BeamSystem(id: 200, firstBeamId: 100, outline: [0, 0, 2, 1, 1, 6.5]));   // its outline starts in Ground
+        string path = TempIfcPath("beam-system-first-beam");
+
+        try
+        {
+            new IfcExporter().Export(info, path);
+
+            Assert.Equal("First", ContainerOf(File.ReadAllText(path), "200"));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    /// <summary>A beam whose only level parameter is its reference level (none for level 0).</summary>
+    private static Element SystemBeam(int id, int levelId, double bottom)
+    {
+        var beam = Fitting(id, levelId: 0, bottom, categoryId: -2001320);
+        beam.Category = "OST_StructuralFraming";
+        beam.Parameters = beam.Parameters.Where(parameter => parameter.Id != -1001952).ToList();
+        if (levelId != 0) beam.Parameters.Add(new Parameter { Id = -1001383, StorageType = StorageType.ElementId, Value = levelId });
+        return beam;
+    }
+
+    private static Element BeamSystem(int id, int firstBeamId, double[]? outline) => new()
+    {
+        Id = id, CategoryId = -2001327, Category = "OST_StructuralFramingSystem", BoundingBox = outline,
+        JoistSystem = new RvtIO.Parsing.JoistSystemData(1, "Joist type", [firstBeamId, firstBeamId + 1]),
+    };
 
     /// <summary>A nested fitting whose only level parameter is the given one.</summary>
     private static Element NestedFitting(int id, int parentId, int ownLevelParameter, int ownLevelId)

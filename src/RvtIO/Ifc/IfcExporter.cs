@@ -186,6 +186,8 @@ public partial class IfcExporter
     /// themselves emitted - i.e. the elements that are the RelatingObject of a real decomposition.
     /// </summary>
     private readonly HashSet<int> _emittedAggregateParentElementIds = new();
+    /// <summary>Elements the storey rule placed by a level that is not a project storey.</summary>
+    private readonly HashSet<int> _offStoreyLevelElementIds = new();
 
     /// <summary>
     /// The exact placement frame each wall's geometry was written in (centre, base z, axis
@@ -380,6 +382,7 @@ public partial class IfcExporter
         ValidateRoomExportPhase(info);
         _geometryUndecoded = info.GeometryUndecoded;
         _usedExportIds.Clear();
+        _offStoreyLevelElementIds.Clear();
         _storeyLevels.Clear();
         _storeyGlobalIds.Clear();
         _recessOpeningEntityIds.Clear();
@@ -69682,7 +69685,11 @@ public partial class IfcExporter
             }
         // A base level that is not a storey outranks the element's own level parameters below, as one that is a
         // storey does. Among the base-level parameters one on a storey still outranks an earlier one that is not.
-        if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+        if (offStoreyLevel != null)
+        {
+            _offStoreyLevelElementIds.Add(elem.Id);
+            return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+        }
 
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
@@ -69708,7 +69715,11 @@ public partial class IfcExporter
                         && elemById.TryGetValue(assocLevelId, out var assocLevel) && assocLevel.CategoryId == -2000240)
                         offStoreyLevel = assocLevel;
                 }
-            if (offStoreyLevel != null) return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+            if (offStoreyLevel != null)
+            {
+                _offStoreyLevelElementIds.Add(elem.Id);
+                return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
+            }
         }
         // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
         else foreach (var p in elem.Parameters)
