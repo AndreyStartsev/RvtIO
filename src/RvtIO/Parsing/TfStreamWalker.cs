@@ -169,7 +169,9 @@ internal static partial class TfStreamWalker
         ushort ci = BitConverter.ToUInt16(buf, pos + 12);
         if (ds < 1_000_000 && pos + 16 + ds <= n && TfBlockDeserializer.Schemas.ContainsKey(ci))
         {
-            if (needFooter && (ds < 8 || BitConverter.ToUInt32(buf, pos + 16 + (int)ds - 4) != ds))
+            // The footer echo is required for every block: an id of the known set alone let item-shaped bytes
+            // inside another block pass as a block and hide the items behind them.
+            if (BitConverter.ToUInt32(buf, pos + 12 + (int)ds) != ds || (needFooter && ds < 8))
                 return null;
             return (true, 16 + (int)ds, eid, ci, ds);
         }
