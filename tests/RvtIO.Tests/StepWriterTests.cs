@@ -15,4 +15,21 @@ public class StepWriterTests
     {
         Assert.Equal(expected, StepWriter.Real(value));
     }
+
+    [Fact]
+    public void Rollback_ForgetsTheArcsOfThePolylinesItTakesBack()
+    {
+        var w = new StepWriter();
+        int kept = w.Add("IFCPOLYLINE", "()");
+        w.PolylineArcs[kept] = [new(0, 1, 0.1)];
+        var checkpoint = w.CreateCheckpoint();
+        int takenBack = w.Add("IFCPOLYLINE", "()");
+        w.PolylineArcs[takenBack] = [new(0, 2, 0.3)];
+
+        w.Rollback(checkpoint);
+
+        // the id is given out again, to a polyline whose writer knows of no arc
+        Assert.Equal(takenBack, w.Add("IFCPOLYLINE", "()"));
+        Assert.Equal([kept], w.PolylineArcs.Keys);
+    }
 }

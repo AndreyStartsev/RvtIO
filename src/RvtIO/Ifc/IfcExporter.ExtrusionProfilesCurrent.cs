@@ -99,25 +99,38 @@ public partial class IfcExporter
         return runs;
     }
 
+    /// <summary>An arc of a resampled ring: the <c>Chords</c> equal chords that start at the point <c>First</c> of the ring (cyclic)
+    /// stand for one circular arc of the angle <c>Sweep</c>, positive where the arc bulges out of the ring.</summary>
+    internal readonly record struct ArcChordsCurrent(int First, int Chords, double Sweep);
+
     internal static bool TryResampleArcsCurrent(IReadOnlyList<double[]> outer, IReadOnlyList<List<double[]>> inner, IReadOnlyList<Internal.Arc>? arcs,
-        out List<double[]> resampledOuter, out List<List<double[]>> resampledInner, out List<double[]> outerCorners)
+        out List<double[]> resampledOuter, out List<List<double[]>> resampledInner, out List<double[]> outerCorners) =>
+        TryResampleArcsCurrent(outer, inner, arcs, out resampledOuter, out resampledInner, out outerCorners, out _);
+
+    /// <summary><paramref name="outerArcs"/>: the arcs of the resampled outer ring, none when the method returns false.</summary>
+    internal static bool TryResampleArcsCurrent(IReadOnlyList<double[]> outer, IReadOnlyList<List<double[]>> inner, IReadOnlyList<Internal.Arc>? arcs,
+        out List<double[]> resampledOuter, out List<List<double[]>> resampledInner, out List<double[]> outerCorners,
+        out List<ArcChordsCurrent> outerArcs)
     {
-        (resampledOuter, resampledInner, outerCorners) = (outer.ToList(), inner.ToList(), outer.ToList());
+        (resampledOuter, resampledInner, outerCorners, outerArcs) = (outer.ToList(), inner.ToList(), outer.ToList(), []);
         if (arcs is not { Count: > 0 }) return false;
         var rings = new List<IReadOnlyList<double[]>> { outer };
         rings.AddRange(inner);
         var runsByRing = rings.Select(ring => FindArcRunsCurrent(ring, arcs)).ToList();
         if (runsByRing.Sum(runs => runs.Count) != arcs.Count) return false;
-        var results = rings.Select((ring, index) => ResampleRingCurrent(ring, runsByRing[index], out _)).ToList();
+        var results = rings.Select((ring, index) => ResampleRingCurrent(ring, runsByRing[index], out _, out _)).ToList();
         resampledOuter = results[0];
         resampledInner = results.Skip(1).ToList();
-        ResampleRingCurrent(outer, runsByRing[0], out outerCorners);
+        ResampleRingCurrent(outer, runsByRing[0], out outerCorners, out outerArcs);
         return true;
     }
 
-    private static List<double[]> ResampleRingCurrent(IReadOnlyList<double[]> ring, IReadOnlyList<ArcRunCurrent> runs, out List<double[]> corners)
+    private static List<double[]> ResampleRingCurrent(IReadOnlyList<double[]> ring, IReadOnlyList<ArcRunCurrent> runs, out List<double[]> corners,
+        out List<ArcChordsCurrent> arcChords)
     {
         int n = ring.Count;
+        // the normal the ring turns counter-clockwise about
+        double[] normal = OthersCurrentAreaVector(ring);
         var inside = new bool[n];
         var runAt = new Dictionary<int, ArcRunCurrent>();
         foreach (var run in runs)
@@ -127,6 +140,7 @@ public partial class IfcExporter
         }
         var points = new List<double[]>();
         corners = [];
+        arcChords = [];
         for (int i = 0; i < n; i++)
         {
             if (inside[i]) continue;
@@ -135,6 +149,9 @@ public partial class IfcExporter
             if (!runAt.TryGetValue(i, out var found)) continue;
             int steps = (int)Math.Ceiling(Math.Abs(found.Arc.Last - found.Arc.First) / (Math.PI / 16));
             double from = found.Reversed ? found.Arc.Last : found.Arc.First, to = found.Reversed ? found.Arc.First : found.Arc.Last;
+            // An arc that turns the way the ring does has its centre on the inner side of the ring: it bulges out.
+            bool outward = (to - from) * DotCurrent(CrossCurrent(found.Arc.X, found.Arc.Y), normal) > 0;
+            if (steps > 0) arcChords.Add(new ArcChordsCurrent(points.Count - 1, steps, outward ? Math.Abs(to - from) : -Math.Abs(to - from)));
             for (int step = 1; step < steps; step++) points.Add(found.Arc.At(from + (to - from) * step / steps));
         }
         return points;

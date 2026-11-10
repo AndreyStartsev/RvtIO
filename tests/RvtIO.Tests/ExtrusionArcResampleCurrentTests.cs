@@ -64,6 +64,28 @@ public class ExtrusionArcResampleCurrentTests
     }
 
     [Fact]
+    public void TheArcsOfTheOuterRing_ArePassedOnWithTheirPlaceAndTheSideTheyBulgeTo()
+    {
+        // the quarter disc, counter-clockwise and clockwise: the arc bulges out of the ring whichever way the ring runs
+        double[][] disc = [[0, 0, 0], [4, 0, 0], OnCircle(Math.PI / 4), [0, 4, 0]];
+        Assert.True(IfcExporter.TryResampleArcsCurrent(disc, [], [Quarter], out _, out _, out _, out var arcs));
+        Assert.Equal([new IfcExporter.ArcChordsCurrent(1, 8, Math.PI / 2)], arcs);
+        double[][] turned = [[0, 0, 0], [0, 4, 0], OnCircle(Math.PI / 4), [4, 0, 0]];
+        Assert.True(IfcExporter.TryResampleArcsCurrent(turned, [], [Quarter], out _, out _, out _, out arcs));
+        Assert.Equal([new IfcExporter.ArcChordsCurrent(1, 8, Math.PI / 2)], arcs);
+
+        // the square with the quarter disc cut out of it: the same arc bulges into the ring
+        double[][] cut = [[4, 4, 0], [0, 4, 0], OnCircle(Math.PI / 4), [4, 0, 0]];
+        Assert.True(IfcExporter.TryResampleArcsCurrent(cut, [], [Quarter], out _, out _, out _, out arcs));
+        Assert.Equal([new IfcExporter.ArcChordsCurrent(1, 8, -Math.PI / 2)], arcs);
+
+        // a ring that does not carry the arc passes none on
+        double[][] square = [[0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0]];
+        Assert.False(IfcExporter.TryResampleArcsCurrent(square, [], [Quarter], out _, out _, out _, out arcs));
+        Assert.Empty(arcs);
+    }
+
+    [Fact]
     public void AnArcOfAHole_IsResampledInTheHoleRing()
     {
         // a hole bounded by two half circles of radius 1 about (5, 5); the outer ring is a square
