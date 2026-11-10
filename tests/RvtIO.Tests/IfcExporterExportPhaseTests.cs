@@ -51,6 +51,19 @@ public class IfcExporterExportPhaseTests
     }
 
     [Fact]
+    public void ElementOutsideTheExportPhase_IsListedInTheSkipLog()
+    {
+        var info = Info(Floor(100, First, Second), Floor(101, First, -1));
+        int elements = info.Elements.Count;
+        var skipped = new SkipLog();
+        var exporter = new IfcExporter { SkipLog = skipped };
+        Assert.Equal([101], Floors(Export(info, exporter)));
+        var group = Assert.Single(skipped.Groups(), entry => entry.Reason == "outside-export-phase");
+        Assert.Equal([100], group.Examples);
+        Assert.Equal(elements, exporter.ExportedProducts + skipped.Total);
+    }
+
+    [Fact]
     public void AllPhases_KeepsTheDemolishedElements()
     {
         var info = Info(Floor(100, First, Second), Floor(101, First, -1));

@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\RvtIO\RvtIO.csproj" />
+    <!-- The command line tool, run through its entry point by CliExitCodeTests. -->
+    <ProjectReference Include="..\..\src\RvtIO.Cli\RvtIO.Cli.csproj" />
     <!-- Compile the research decoder itself: no copied test implementation or CLI dependency. -->
     <Compile Include="..\..\tools\RootProbe\HistoryBoundaryProbe.cs" Link="RootProbe\HistoryBoundaryProbe.cs" />
     <Compile Include="..\..\tools\RootProbe\StairBoundaryProbe.cs" Link="RootProbe\StairBoundaryProbe.cs" />

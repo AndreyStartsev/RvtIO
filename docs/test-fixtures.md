@@ -50,7 +50,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 
 ## Tests that need the private files
 
-279 test methods (409 cases, theory rows counted) are skipped without the files:
+280 test methods (410 cases, theory rows counted) are skipped without the files:
 
 | Class | Methods | Cases | Files |
 |---|---|---|---|
@@ -86,6 +86,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `IfcCurrentRoofTypeReferenceTests` | 1 | 2 | TestData blocks |
 | `IfcCurrentSourcePlaneSlopeTests` | 1 | 4 | TestData blocks |
 | `IfcExporterPlainWallBodyCurrentTests` | 4 | 4 | TestData blocks |
+| `IfcExporterSkipReasonTests` | 1 | 1 | TESTFILE.rvt |
 | `IfcExporterSlabQuantitiesSampleTests` | 2 | 2 | rstbasicsampleproject.rvt, struct25.rvt |
 | `PageCodecSampleTests` | 2 | 2 | any `.rvt` project files |
 | `PartitionFramingFuzzTests` | 1 | 1 | TESTFILE.rvt |

@@ -38,7 +38,7 @@ extension and label helpers carry the ids and names stored in the file format.
 |---|---|
 | `IfcExporter` | Writes IFC from a `RevitFileInfo` (`Export`). Properties: `Profile`, `BaseQuantities`, `OpeningQuantitiesSwapped` (true writes the legacy Width and Height of door and window openings; default false), `OpeningQuantitiesInHostAxes` (the opposite of it, kept for compatibility), `ExportPhaseId`, `ExportAllPhases`, `RoomExportPhaseId`, `ExportRoomsOfAllPhases`, `RevitParameterGroups`, `SkipLog`, `ExportedProducts`, `DiagnosticOutput`. |
 | `IfcProfile` | `Legacy` or `Current` (the default) output profile. |
-| `IfcUnitFamily` | The length unit family an export declares. |
+| `IfcUnitFamily` | The length unit family an export of the current profile declares, by the length format of the project: `Metre` for metres and for metres and centimetres, `Foot` for feet, feet and fractional inches and US survey feet, `Millimetre` for millimetres, for every other format and for an unreadable one. The legacy profile always declares millimetres. |
 | `CompactJsonExporter` | `Export(rvtPath, outputPath, readerOptions, options)` reads a file and writes the compact JSON. |
 | `CompactJsonExportOptions` | `JsonClassNamePrefix`: text put in front of every class name in the `name` field. |
 

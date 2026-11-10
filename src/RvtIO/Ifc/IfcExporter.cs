@@ -362,6 +362,11 @@ public partial class IfcExporter
         var phaseFilter = BuildExportPhaseFilter(info);
         info.Elements = allElements.Where(element => designOptions.InNonPrimaryOption(element) != true
             && phaseFilter?.Excludes(element) != true).ToList();
+        // The elements these two filters leave out never reach the product loop: they are listed here.
+        if (SkipLog != null)
+            foreach (var element in allElements)
+                if (designOptions.InNonPrimaryOption(element) == true) SkipLog.Add(element.Id, RvtIO.SkipLog.ClassOf(element), "non-primary-design-option");
+                else if (phaseFilter?.Excludes(element) == true) SkipLog.Add(element.Id, RvtIO.SkipLog.ClassOf(element), "outside-export-phase");
         if (CurrentProfile) info.Elements = RelinkRampTypes(info.Elements);
         if (phaseFilter != null)
             _diag?.WriteLine($"IFC export phase filter: {allElements.Count(phaseFilter.Excludes)} elements outside the export phase left out");
@@ -397,9 +402,11 @@ public partial class IfcExporter
         // The legacy profile writes millimetres whatever the document says; the current profile
         // follows the length unit of the project (IfcLengthUnitChoice).
         _unitFamily = CurrentProfile ? IfcLengthUnitChoice.Family(info.SerializedLengthUnit) : IfcUnitFamily.Millimetre;
-        _diag?.WriteLine(info.SerializedLengthUnit != null
-            ? $"IFC length unit: stored option {info.SerializedLengthUnit} -> {_unitFamily}"
-            : $"IFC length unit: stored option unreadable ({info.SerializedLengthUnitIssue ?? "not read"}); using the default {_unitFamily}");
+        _diag?.WriteLine(info.SerializedLengthUnit == null
+            ? $"IFC length unit: stored option unreadable ({info.SerializedLengthUnitIssue ?? "not read"}); using the default {_unitFamily}"
+            : !CurrentProfile || IfcLengthUnitChoice.OwnFamily(info.SerializedLengthUnit) != null
+                ? $"IFC length unit: stored option {info.SerializedLengthUnit} -> {_unitFamily}"
+                : $"IFC length unit: stored option {info.SerializedLengthUnit} has no unit family of its own; using the default {_unitFamily}");
 
         int orgId = w.Add("IFCORGANIZATION", $"$,{S("RvtIO")},$,$,$");
         int appId = w.Add("IFCAPPLICATION", $"{R(orgId)},{S("1.0")},{S("RvtIO IFC Exporter")},{S("RvtIO")}");
@@ -1856,9 +1863,11 @@ public partial class IfcExporter
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(axisId)}");
                     goto productWithoutGeometry;
                 }
+                // A container of written parts is written after them; any other product without bounds is left out.
                 if (ifcType == "IFCCURTAINWALL" && exactCurtainChildren.ContainsKey(elem.Id)
                     || ifcType == "IFCROOF" && roofContainerChildren.ContainsKey(elem.Id))
                     pendingCurtainParents[elem.Id] = (elem, elemStoreyId, false);
+                else Skip(elem, "product-without-bounds");
                 noGeom++;
                 continue;
             }
@@ -1866,6 +1875,7 @@ public partial class IfcExporter
             // bounding box in three.js-based viewers - skip the element instead.
             if (InvalidBbox(bbox))
             {
+                Skip(elem, "invalid-bounds");
                 noGeom++;
                 continue;
             }
@@ -1876,6 +1886,7 @@ public partial class IfcExporter
             {
                 if (ifcType == "IFCCURTAINWALL" && exactCurtainChildren.ContainsKey(elem.Id))
                     pendingCurtainParents[elem.Id] = (elem, elemStoreyId, false);
+                else Skip(elem, "bounds-under-one-centimetre");
                 noGeom++;
                 continue;
             }
@@ -4958,7 +4969,12 @@ public partial class IfcExporter
             if (exportedIfcElements.ContainsKey(parent.Id)) continue;
             bool roofContainer = parent.CategoryId == -2000035;
             var childEntityIds = ExportedChildEntityIds(roofContainer ? roofContainerChildren[parent.Id] : exactCurtainChildren[parent.Id]);
-            if (childEntityIds.Length == 0) continue;
+            if (childEntityIds.Length == 0)
+            {
+                // A container none of whose parts was written is left out; one that was counted before keeps that entry.
+                if (!pending.CountedSuppressed) Skip(parent, "container-without-written-parts");
+                continue;
+            }
 
             int placement = w.Add("IFCLOCALPLACEMENT", $"{R(bldgLocalPlacementId)},{R(axisId)}");
             string containerClass = roofContainer ? "IFCROOF" : "IFCCURTAINWALL";
