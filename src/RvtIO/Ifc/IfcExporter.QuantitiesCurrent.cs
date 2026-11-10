@@ -1423,9 +1423,10 @@ public partial class IfcExporter
     }
 
     /// <summary>Column quantities. A column written as a prism carries its extrusion data:
-    /// Length, CrossSectionArea (the profile), OuterSurfaceArea (the length and perimeter in millimetres, taken as square
-    /// metres) and GrossVolume (the length in millimetres times the area in square metres); otherwise the cross section is the
-    /// computed host area. NetVolume is the computed host volume, else the volume of the solids. A round column whose exact end
+    /// Length, CrossSectionArea (the profile), OuterSurfaceArea (the length times the perimeter) and GrossVolume (the length times
+    /// the area), where the length and the perimeter are numbers of the length unit of the file: a file in millimetres has the two
+    /// 1e6 and 1000 times too large (millimetres taken as square and cubic metres), a file in metres or feet has them right;
+    /// otherwise the cross section is the computed host area. NetVolume is the computed host volume, else the volume of the solids. A round column whose exact end
     /// faces are listed beside a tessellated side (see <see cref="RoundPrismCurrent"/>) has the extrusion data of its circle; a round
     /// column that is a vertical cylinder (see <see cref="RoundCylinderCurrent"/>) takes the volume and surface of the node that carries
     /// its end faces for the solid.</summary>
@@ -1440,11 +1441,13 @@ public partial class IfcExporter
         {
             double length = extrusion.Depth, area = extrusion.Area;
             // The outer surface counts the loops of the holes as well (outer + inner perimeter).
-            double lengthMm = length * 1000, perimeterMm = (extrusion.Perimeter + extrusion.InnerPerimeter) * 1000;
+            // The length and the perimeter count in the length unit of the file, the products are taken as its area and volume.
+            double lengthUnits = _unitFamily == IfcUnitFamily.Millimetre ? 1000 : 1;
+            double fileLength = length * lengthUnits, filePerimeter = (extrusion.Perimeter + extrusion.InnerPerimeter) * lengthUnits;
             AddIfPositive(result, QuantityKind.Length, "Length", length);
             AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", area);
-            AddIfPositive(result, QuantityKind.Area, "OuterSurfaceArea", lengthMm * perimeterMm);
-            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", lengthMm * area);
+            AddIfPositive(result, QuantityKind.Area, "OuterSurfaceArea", fileLength * filePerimeter);
+            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", fileLength * area);
             // The exporter measures the volume of the solids of the Medium level, which a tube family draws with sharp corners (the length times the
             // nominal area); where the Medium solids cannot be measured the nominal area stands in for them. A family without different
             // Medium solids has the volume of the solid it draws.
