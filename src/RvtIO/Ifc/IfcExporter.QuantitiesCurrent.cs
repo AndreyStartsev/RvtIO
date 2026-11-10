@@ -839,7 +839,7 @@ public partial class IfcExporter
                     : none;
             case "IFCWALLSTANDARDCASE":
                 return element != null && ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6]) is { } wall
-                    ? WallQuantitiesCurrent(wall, element) : none;
+                    ? WallQuantitiesCurrent(wall, element, context) : none;
             case "IFCSPACE":
                 return element != null ? SpaceQuantitiesCurrent(element, StoreyHeightOfSpaceCurrent(context, arguments)) : none;
         }
@@ -1047,9 +1047,11 @@ public partial class IfcExporter
 
     /// <summary>Quantities for a wall written as an extrusion: Height is the extrusion depth,
     /// Length and Width the profile sides, GrossFootprintArea its area; the side area is the largest vertical face of the
-    /// wall solids (the net and the gross side area agree), GrossVolume is Width times it, NetVolume the solid volume.</summary>
-    private List<QuantityValue> WallQuantitiesCurrent(ProfileExtrusion body, Element element)
+    /// wall solids (the net and the gross side area agree), GrossVolume is Width times it, NetVolume the solid volume.
+    /// Width is the total width of the layers of the wall type when the type holds decoded layers, else the profile side.</summary>
+    private List<QuantityValue> WallQuantitiesCurrent(ProfileExtrusion body, Element element, QuantityContextCurrent context)
     {
+        double width = WallTypeLayersWidthCurrent(context.Elements, element) ?? body.ExtentY;
         var result = new List<QuantityValue>();
         var shells = ShellsOfCurrent(element.Geometry);
         // A standard-case wall of several solids is the extrusion of its first solid; the others count neither in areas, volumes nor height.
@@ -1070,29 +1072,52 @@ public partial class IfcExporter
             if (trimmedLength > 1e-9 && Math.Abs(trimmedLength - length) > 1e-5) length = trimmedLength;
         }
         AddIfPositive(result, QuantityKind.Length, "Length", simple ? length : zRange ?? body.Depth);
-        AddIfPositive(result, QuantityKind.Length, "Width", body.ExtentY);
+        AddIfPositive(result, QuantityKind.Length, "Width", width);
         double topArea = LargestHorizontalFaceAreaCurrent(shells) * SquareFeetToSquareMetres;
         // A simple rectangular wall gets its footprint from the whole location curve and the total width of the layers,
         // not from the face trimmed at the joins; any other wall from the extrusion loops.
         double? curveLength = element.Location is { Length: > 0 } loc ? loc.Length * FeetToMetres
             : ExactParameterFeetCurrent(element, null, CurveElemLengthParamId) * FeetToMetres;
-        double footprint = (simple || element.Location?.CurveType == "Arc" || element.Location == null)
-            && curveLength != null && body.ExtentY > 1e-9 ? body.ExtentY * curveLength.Value
-            : topArea > 1e-12 ? topArea : body.Area;
-        if (element.Location?.CurveType == "Arc" && shells is [{ Closed: true } shell]
-            && shell.Faces.Select(RebuiltHorizontalCurveLoopAreaCurrent).FirstOrDefault(area => area != null) is { } rebuiltArea)
-            footprint = rebuiltArea * SquareFeetToSquareMetres;
+        double? rebuiltArea = element.Location?.CurveType == "Arc" && shells is [{ Closed: true } shell]
+            ? shell.Faces.Select(RebuiltHorizontalCurveLoopAreaCurrent).FirstOrDefault(area => area != null) * SquareFeetToSquareMetres
+            : null;
+        double Footprint(double across) => rebuiltArea
+            ?? ((simple || element.Location?.CurveType == "Arc" || element.Location == null)
+                && curveLength != null && across > 1e-9 ? across * curveLength.Value
+                : topArea > 1e-12 ? topArea : body.Area);
+        double footprint = Footprint(width);
+        // The net volume of an arc wall is measured on its solid: the footprint of the profile width, not of the layers of the type.
         double? netVolume = element.Location?.CurveType == "Arc" && body.Depth > 1e-9
             && !shells.Any(shell => shell.SourceMeasured)
-            ? footprint * (zRange ?? body.Depth)
+            ? Footprint(body.ExtentY) * (zRange ?? body.Depth)
             : SolidTotalsCurrent(shells)?.Volume;
         AddIfPositive(result, QuantityKind.Area, "GrossFootprintArea", footprint);
-        if (body.Depth > 1e-9 && body.ExtentY > 1e-9 && sideArea > 1e-12)
-            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", body.ExtentY * sideArea);
+        if (body.Depth > 1e-9 && width > 1e-9 && sideArea > 1e-12)
+            AddIfPositive(result, QuantityKind.Volume, "GrossVolume", width * sideArea);
         AddIfPositive(result, QuantityKind.Area, "GrossSideArea", sideArea);
         AddIfPositive(result, QuantityKind.Area, "NetSideArea", sideArea);
         AddIfPositive(result, QuantityKind.Volume, "NetVolume", netVolume);
         return result;
+    }
+
+    /// <summary>The total width of the layers of the type of a wall (the sum of the layer widths of its compound structure), in metres;
+    /// null when the type is not found, is not a wall type or holds no decoded layer of positive finite width.</summary>
+    private static double? WallTypeLayersWidthCurrent(IReadOnlyDictionary<int, Element> elements, Element wall)
+    {
+        if (wall.SerializedSystemTypeId is int typeId && typeId > 0 && typeId != wall.Id
+            && elements.TryGetValue(typeId, out var type)
+            && type.CategoryId == wall.CategoryId && type.SerializedSystemTypeClassId == 512
+            && type.SerializedHostTypeLayers is { Length: > 0 } layers)
+        {
+            double total = 0;
+            foreach (var layer in layers)
+            {
+                double feet = BitConverter.Int64BitsToDouble(layer.LayerWidthBits);
+                if (double.IsFinite(feet) && feet > 0) total += feet;
+            }
+            return total > 0 && double.IsFinite(total) ? total * FeetToMetres : null;
+        }
+        return null;
     }
 
     /// <summary>The height of a wall: the Z range of the bounding box of its stored solid, as long as none of its faces stands outside
