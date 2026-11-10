@@ -82,4 +82,22 @@ public class RailingQuantitySourceTests
         ElementBuilder.ApplyValidatedRailingLengths(elements, state);
         Assert.Equal(mutation == "valid" ? symbol.LengthFeet : null, element.ValidatedRailingLengthFeet);
     }
+
+    // A file with its own class schema: the schema index seeds the class root and the stream walk counts the same block again.
+    [Theory]
+    [InlineData(1, true)] [InlineData(2, false)]
+    public void SchemaSeededRootCountedAgainByTheWalkIsReadByTheWalkCount(int walkedBlocks, bool validated)
+    {
+        var state = new ParsingState();
+        foreach (var (id, cls) in new[] { (100u, (ushort)485), (101u, (ushort)492) })
+        {
+            state.OwnedElementClassRoots[id] = new(2, null);
+            state.WalkedElementClassRoots[id] = new(walkedBlocks, walkedBlocks == 1 ? cls : (ushort?)null);
+        }
+        state.RailingQuantityInputs[100] = (1, new(485, 100, 101, null, null));
+        state.RailingQuantityInputs[101] = (1, new(492, 101, null, 100, 12.5));
+        var element = new Element { Id = 100, CategoryId = -2000126 };
+        ElementBuilder.ApplyValidatedRailingLengths([element], state);
+        Assert.Equal(validated ? 12.5 : null, element.ValidatedRailingLengthFeet);
+    }
 }
