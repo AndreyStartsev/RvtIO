@@ -702,8 +702,9 @@ public partial class RvtFileReader
             + $"types with an own name={rvtInfo.Elements.Count(e => e.ValidatedMepTypeName != null)}");
         string? systemFamilyLocale = _options.SystemFamilyNameLocale ?? rvtInfo.Metadata.SavedLocale;
         var systemFamilyNames = Lookup.RevitSystemFamilyNames.Load(rvtInfo.Metadata.RevitVersion, systemFamilyLocale);
-        // an earlier release has no other name than those of the curtain wall, stair and MEP curve families, and only the type roots of those
-        // read them; the MEP curve names follow the locale in effect, the curtain wall and stair names only a locale a profile requests, so a
+        // an earlier release has no embedded names: its table holds the English names of the system families the reader names itself (curtain
+        // wall, walls, roofs, ceilings, railings, slabs, stairs and their runs, stringers and carriages, MEP curves), and only the type roots
+        // of those families read them; the MEP curve names follow the locale in effect, the others only a locale a profile requests, so a
         // reader without a requested locale (the legacy profile) is unchanged
         var familyNames = systemFamilyNames
             ?? Lookup.RevitSystemFamilyNames.LoadPreviousReleaseFamilies(rvtInfo.Metadata.RevitVersion, systemFamilyLocale, _options.SystemFamilyNameLocale);

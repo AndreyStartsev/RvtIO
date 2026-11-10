@@ -63,6 +63,22 @@ public class TfStreamWalkerStreamingTests
         => Assert.Throws<ArgumentOutOfRangeException>(() => TfStreamWalker.WalkStreaming([], [],
             (_, _, _, _, _) => { }, target));
 
+    [Fact]
+    public void BlockShapedBytesOfAKnownIdWithoutTheFooterEchoAreNotABlock()
+    {
+        // A header with a known id whose size spans the first real block exactly: the next item parses,
+        // so only the missing footer echo tells it from a block.
+        byte[] real = Blocks([102, 103]);
+        byte[] bytes = new byte[16 + real.Length];
+        BitConverter.GetBytes(101u).CopyTo(bytes, 0);
+        BitConverter.GetBytes(real.Length / 2).CopyTo(bytes, 8);
+        BitConverter.GetBytes((ushort)3524).CopyTo(bytes, 12);
+        real.CopyTo(bytes, 16);
+        var visits = new List<uint>();
+        TfStreamWalker.WalkStreaming([bytes], [101], (_, _, _, _, id) => visits.Add(id));
+        Assert.Equal([102u, 103u], visits);
+    }
+
     private static byte[] Blocks(uint[] ids)
     {
         const int size = 800_000, length = size + 16;
