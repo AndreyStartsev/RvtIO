@@ -235,6 +235,60 @@ public sealed class CoverageCensusTests : IDisposable
         }
     }
 
+    /// <summary>The decoded Global/ContentDocuments of one family document with the given key: its ContentMarker object, the length,
+    /// the document's ADocument (one that stores the entity schema of the Carrier), the length again, and the closing ContentMarker.</summary>
+    private static byte[] ContentDocuments(byte[] key, bool closed = true) =>
+    [
+        .. BitConverter.GetBytes(EntityId("ContentMarker")), 0xFF, 0xFF, 0xFF, 0xFF, .. BitConverter.GetBytes(EntityId("ContentKey")),
+        0xFF, 0xFF, 0xFF, 0xFF, .. key, .. BitConverter.GetBytes(EntityLatest.Length), .. EntityLatest, .. BitConverter.GetBytes(EntityLatest.Length),
+        .. closed ? [.. BitConverter.GetBytes(EntityId("ContentMarker")), 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0] : Array.Empty<byte>(),
+    ];
+
+    // the partition writer gives the keyed block of index 1 the key 1 and fifteen zero bytes
+    private static readonly byte[] FamilyKey = [1, .. new byte[15]];
+
+    /// <summary>A Carrier in the project's block and one in a family block (index 1), with the given Global streams.</summary>
+    private CoverageCensus.Result RunCarrierInBothBlocks(params (string Path, byte[] Bytes)[] streams)
+    {
+        string path = Path.Combine(_folder, Guid.NewGuid().ToString("N") + ".rvt");
+        WriteFile(path, [.. streams, ("Partitions/1", ElementCensusTests.Partition(EntityId, Block(false, R(1, CarrierBody)), Block(true, R(1, CarrierBody))))]);
+        using var root = RootStorage.OpenRead(path);
+        return CoverageCensus.Run(root, EntitySchema, 2022);
+    }
+
+    [Fact]
+    public void AnEntityOfAFamilyBlock_IsReadByTheSchemasOfItsOwnDocumentInGlobalContentDocuments()
+    {
+        var result = RunCarrierInBothBlocks(("Global/ContentDocuments", GzipMember.Write(ContentDocuments(FamilyKey))));
+
+        var family = Row(result, true, 102, "Carrier");
+        Assert.Equal((1, 1, CarrierBody.Length), (family.Sums.Items, family.Sums.Exact, family.Sums.ExactBytes));
+        // the schemas of a family document are not the project's
+        Assert.Equal("entity schema not stored at ESEntity.m_blob", Assert.Single(Row(result, false, 102, "Carrier").Stops).Reason);
+        AssertRowsAddUp(result);
+    }
+
+    [Fact]
+    public void AnEntityOfAFamilyBlock_IsReadByTheSchemasOfGlobalLatest_AsFromRevit2025()
+    {
+        var result = RunCarrierInBothBlocks(("Global/Latest", GzipMember.Write(EntityLatest)),
+            ("Global/ContentDocuments", GzipMember.Write(ContentDocuments([2, .. new byte[15]]))));
+
+        Assert.Equal((1, 1), (Row(result, true, 102, "Carrier").Sums.Items, Row(result, true, 102, "Carrier").Sums.Exact));
+        Assert.Equal((1, 1), (Row(result, false, 102, "Carrier").Sums.Items, Row(result, false, 102, "Carrier").Sums.Exact));
+    }
+
+    [Fact]
+    public void AnEntityOfAFamilyBlock_StopsWhenNoDocumentOfItsKeyStoresTheSchema()
+    {
+        // a document of another key, one that is not closed, and one whose stream does not decode
+        foreach (var bytes in new[] { GzipMember.Write(ContentDocuments([2, .. new byte[15]])), GzipMember.Write(ContentDocuments(FamilyKey, closed: false)), [1, 2, 3, 4] })
+        {
+            var family = Row(RunCarrierInBothBlocks(("Global/ContentDocuments", bytes)), true, 102, "Carrier");
+            Assert.Equal("entity schema not stored at ESEntity.m_blob", Assert.Single(family.Stops).Reason);
+        }
+    }
+
     [Fact]
     public void AClassTagOutsideTheSchema_AndABodyWithoutATag_HaveRowsOfTheirOwn()
     {

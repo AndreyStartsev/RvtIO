@@ -29,7 +29,7 @@ internal static class CoverageTrace
             || !root.TryOpenStorage("Partitions", out var storage))
             throw new RvtInputException("truncated-or-damaged", "The records of this file cannot be counted.");
         var walker = new WideBlockWalker(document, (_, _) => null, []);
-        walker.UseEntitySchemas(EntitySchemaReader.Read(root, document));
+        var entitySchemas = new CoverageCensus.BlockEntitySchemas(root, document, walker);
         var classes = document.ById;
         int printed = 0;
         foreach (var entry in storage.EnumerateEntries().Where(e => e.Type == EntryType.Stream).OrderBy(e => e.Name.Length).ThenBy(e => e.Name, StringComparer.Ordinal))
@@ -42,6 +42,7 @@ internal static class CoverageTrace
                 if (printed >= selection.Max || record.Channel != selection.Channel || (record.Key.Length != 0) != selection.Family || record.Body.Length < 2) return;
                 int tag = BinaryPrimitives.ReadUInt16LittleEndian(record.Body.Span);
                 if (walker.Class(tag) is not { } rootClass) return;
+                entitySchemas.Use(record.Key);
                 if (selection.Owners != null ? !selection.Owners.Contains(record.Owner) : rootClass.Name != selection.Class) return;
                 if (!MemoryMarshal.TryGetArray(record.Body, out var bytes)) bytes = record.Body.ToArray();
                 walker.StepBudget = 16L * bytes.Count + 65536;

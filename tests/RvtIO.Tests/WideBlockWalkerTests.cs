@@ -55,6 +55,21 @@ public class WideBlockWalkerTests
     private static WideBlockWalker Walker(IEnumerable<string>? records = null) =>
         new(Schema(), (declaring, field) => declaring.Name + "." + field.Name, records ?? []);
 
+    [Theory]
+    [InlineData(150_000u, true)]            // longer than any fixed limit, but in the body: read
+    [InlineData(150_001u, false)]           // one character more than the body holds
+    [InlineData(0x80000000u, false)]        // twice the count overflows 32 bits
+    [InlineData(0xFFFFFFFFu, false)]
+    public void Walk_ReadsATextAsLongAsItsCount_AndStopsAtOneLongerThanTheBody(uint count, bool exact)
+    {
+        var schema = new SchemaDocument { Classes = [new(1, "Note", 0, 1, [Field("m_text", 8, 0x60)], [])] };
+        var block = Block(1, w => { w.Write(count); w.Write(new byte[2 * 150_000]); });
+        var walk = new WideBlockWalker(schema, (declaring, field) => declaring.Name + "." + field.Name, []).Run(block, 0, block.Length, 1);
+
+        Assert.Equal(exact, walk.Exact);
+        Assert.Equal(exact ? null : "end of payload", walk.Error);
+    }
+
     [Fact]
     public void Walk_ReadsAClassReferenceAsATwoByteClassTag()
     {
