@@ -28,6 +28,8 @@ public class CoverageCensusSampleTests(ITestOutputHelper output)
             Assert.InRange(c.Sums.Exact, 0, c.Sums.Items);
             Assert.InRange(c.Sums.ExactBytes, 0, c.Sums.PayloadBytes);
         });
+        // the element header records are walked to their last byte in every release
+        Assert.All(result.Groups.Where(g => g.Channel == 101), g => Assert.Equal(g.Sums.Items, g.Sums.Exact));
         var project = result.Groups.Where(g => !g.Family).ToList();
         Assert.Equal([101, 102, 103], project.Select(g => g.Channel));
         Assert.Single(project.Select(g => g.Sums.Items).Distinct());

@@ -84,9 +84,10 @@ internal static class TfSchemaTools
 
 
     /// <summary>Byte widths of the scalar type codes whose width the file layout confirms (checked on the ElemRec rows of
-    /// Global/ElemTable, Revit 2020/2022/2025): bool/u8 1, i32/u32/f32 4, f64/i64 8, GUID 16.
+    /// Global/ElemTable, Revit 2020/2022/2025): bool/u8 1, i32/u32/f32 4, f64/i64 8, GUID 16; a class reference (type 10) is its
+    /// 2-byte class tag, as the element header records store it.
     /// Type 3 (1 or 2 bytes), strings, containers and pointers have none.</summary>
-    private static readonly Dictionary<int, int> ScalarWidth = new() { [1] = 1, [2] = 1, [4] = 4, [5] = 4, [6] = 4, [7] = 8, [9] = 16, [10] = 8, [11] = 8 };
+    private static readonly Dictionary<int, int> ScalarWidth = new() { [1] = 1, [2] = 1, [4] = 4, [5] = 4, [6] = 4, [7] = 8, [9] = 16, [10] = 2, [11] = 8 };
 
     /// <summary>Serialized size of an instance of the class (base fields first), or null when any field has no fixed width.</summary>
     internal static int? FixedSize(Dictionary<int, SchemaClass> ids, int classId, int depth = 0)

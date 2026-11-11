@@ -35,8 +35,8 @@ classes 2025 lacks) hold for any project of those releases, because the class ta
 
 `CoverageCensusSampleTests` runs the coverage census (`rvtio coverage`, see [the coverage report](coverage-report.md)) on the three
 `Test_20xx.rvt` projects and prints the counts per block kind and channel to the test output. It asserts only what holds for every file
-(every partition stream frames, the rows add up, the three channels of the project block hold the same number of records) and pins no
-measured count, because the counts grow as the decoding does.
+(every partition stream frames, the rows add up, every record of channel 101 is exact, the three channels of the project block hold
+the same number of records) and pins no measured count, because the counts grow as the decoding does.
 
 The attributes `[SkippableFact]` and `[SkippableTheory]` (`SkippableFact.cs`) report a test that throws `SkipException` as
 skipped; xunit 2.9.3 has no runtime skip of its own. `TestFiles.Find`, `FindRelative` and `OpenBlock` throw it, so a test
@@ -45,7 +45,7 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 
 ## What runs without the private files
 
-With no private file at all, 9656 of the 10074 test cases run and pass and 418 are skipped: 412 need private files (listed
+With no private file at all, 9657 of the 10075 test cases run and pass and 418 are skipped: 412 need private files (listed
 below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`) and 6 need other inputs (two need symbolic links, three
 need `RVTIO_FREEFORM_FULL`, `RVTIO_CYL_FULL` or `RVTIO_MESH_FULL`, one is a known gap). The tests that run use synthetic data built
 in the tests and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
