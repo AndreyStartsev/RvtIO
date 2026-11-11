@@ -57,11 +57,11 @@ public sealed class RvtWriteCapabilities
     /// <summary>Byte width of stored element identifiers (<c>4</c> up to Revit 2023, <c>8</c> from Revit 2024), or null when unknown.</summary>
     public required int? ElementIdWidth { get; init; }
 
-    /// <summary>True when <c>BasicFileInfo</c> reports worksharing enabled.</summary>
-    public required bool IsWorkshared { get; init; }
+    /// <summary>True when <c>BasicFileInfo</c> reports worksharing enabled, false when explicitly disabled, or null when unavailable or unrecognised.</summary>
+    public required bool? IsWorkshared { get; init; }
 
-    /// <summary>True when <c>BasicFileInfo</c> marks a cloud model or cloud central path.</summary>
-    public required bool IsCloudModel { get; init; }
+    /// <summary>True when <c>BasicFileInfo</c> marks a cloud model or cloud central path, false when explicitly non-cloud, or null when unavailable or unrecognised.</summary>
+    public required bool? IsCloudModel { get; init; }
 
     /// <summary>Total number of streams in the compound file container.</summary>
     public required int StreamCount { get; init; }
@@ -163,9 +163,7 @@ public static class RvtWriter
     public static RvtWriteCapabilities InspectCapabilities(string sourcePath)
     {
         ArgumentNullException.ThrowIfNull(sourcePath);
-        RvtContainerCheck.Verify(sourcePath);
-        using var root = RootStorage.OpenRead(sourcePath);
-        return InspectRoot(root, sourcePath).Capabilities;
+        return InspectContainer(sourcePath);
     }
 
     /// <summary>Writes a verified lossless copy of <paramref name="sourcePath"/> to <paramref name="outputPath"/>.</summary>
@@ -217,10 +215,16 @@ public static class RvtWriter
                 replacements = BuildReplacements(root, inspection, request);
         }
 
+        string outputKindHint = KindFromPath(fullOutput) is not RvtFileKind.Unknown ? fullOutput : sourcePath;
+        Action<string>? verifyEditedOutput = replacements is null
+            ? null
+            : temporaryPath => VerifyOutputEligibility(temporaryPath, outputKindHint, capabilities, request);
+
         var containerResult = ContainerRewriter.Rewrite(
             sourcePath,
             fullOutput,
-            replacements ?? NoStreamReplacements);
+            replacements ?? NoStreamReplacements,
+            verifyEditedOutput);
 
         return new RvtWriteResult
         {
@@ -237,6 +241,27 @@ public static class RvtWriter
         RvtWriteCapabilities Capabilities,
         PartitionFraming.Tags? FramingTags,
         IReadOnlyDictionary<string, string> CanonicalStreamPaths);
+
+    private static RvtWriteCapabilities InspectContainer(string containerPath, string? pathHint = null)
+    {
+        RvtContainerCheck.Verify(containerPath);
+        using var root = RootStorage.OpenRead(containerPath);
+        return InspectRoot(root, pathHint ?? containerPath).Capabilities;
+    }
+
+    private static void VerifyOutputEligibility(
+        string temporaryPath,
+        string pathHint,
+        RvtWriteCapabilities sourceCapabilities,
+        RvtWriteRequest request)
+    {
+        var outputCapabilities = InspectContainer(temporaryPath, pathHint);
+        RequireSupported(outputCapabilities, RvtWriteOperation.SaveAs);
+        if (request.PagedStreamEdits.Count > 0 || sourceCapabilities.Supports(RvtWriteOperation.PagedStreamRewrite))
+            RequireSupported(outputCapabilities, RvtWriteOperation.PagedStreamRewrite);
+        if (request.PartitionRecordEdits.Count > 0 || sourceCapabilities.Supports(RvtWriteOperation.PartitionRecordRewrite))
+            RequireSupported(outputCapabilities, RvtWriteOperation.PartitionRecordRewrite);
+    }
 
     private static string ValidateOutputPath(string outputPath)
     {
@@ -267,13 +292,28 @@ public static class RvtWriter
 
     private static Inspection InspectRoot(RootStorage root, string sourcePath)
     {
-        var bfi = BasicFileInfoReader.Read(root);
+        bool hasBasicFileInfo = false;
+        Dictionary<string, string> bfi;
+        if (root.TryOpenStream("BasicFileInfo", out var bfiStream))
+        {
+            hasBasicFileInfo = true;
+            using (bfiStream)
+            {
+                byte[] bfiBytes = new byte[checked((int)bfiStream.Length)];
+                bfiStream.ReadExactly(bfiBytes);
+                bfi = BasicFileInfoReader.Parse(bfiBytes);
+            }
+        }
+        else
+        {
+            bfi = new Dictionary<string, string>();
+        }
+
         int? savedRelease = SchemaRelease.Saved(bfi.GetValueOrDefault("RevitVersion"));
-        bool isWorkshared = bfi.TryGetValue("Worksharing", out string? ws)
-            && !string.IsNullOrWhiteSpace(ws)
-            && !string.Equals(ws.Trim(), "Not enabled", StringComparison.OrdinalIgnoreCase);
-        bool isCloudModel = string.Equals(bfi.GetValueOrDefault("IsSingleUserCloudModel"), "True", StringComparison.OrdinalIgnoreCase)
-            || IsCloudCentralPath(bfi.GetValueOrDefault("Central Model Path"));
+        bool? isWorkshared = ParseWorksharingState(bfi.GetValueOrDefault("Worksharing"));
+        bool? isCloudModel = ParseCloudModelState(
+            bfi.GetValueOrDefault("IsSingleUserCloudModel"),
+            bfi.GetValueOrDefault("Central Model Path"));
 
         var streamEntries = new List<(string Path, Storage Parent, string Name, long Length)>();
         CollectStreams(root, "", streamEntries);
@@ -323,6 +363,7 @@ public static class RvtWriter
 
         (string Code, string Reason)? baseFailure = EvaluateBaseEligibility(
             fileKind,
+            hasBasicFileInfo,
             isCloudModel,
             isWorkshared,
             parityFailure,
@@ -373,10 +414,34 @@ public static class RvtWriter
         return new Inspection(capabilities, framingTags, canonicalPaths);
     }
 
+    private static bool? ParseWorksharingState(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        string trimmed = value.Trim();
+        if (trimmed.Equals("Not enabled", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (trimmed.Equals("Local", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("Central", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("Enabled", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return null;
+    }
+
+    private static bool? ParseCloudModelState(string? singleUserCloudValue, string? centralPath)
+    {
+        if (IsCloudCentralPath(centralPath)) return true;
+        if (string.IsNullOrWhiteSpace(singleUserCloudValue)) return null;
+        string trimmed = singleUserCloudValue.Trim();
+        if (trimmed.Equals("True", StringComparison.OrdinalIgnoreCase)) return true;
+        if (trimmed.Equals("False", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
+    }
+
     private static (string Code, string Reason)? EvaluateBaseEligibility(
         RvtFileKind fileKind,
-        bool isCloudModel,
-        bool isWorkshared,
+        bool hasBasicFileInfo,
+        bool? isCloudModel,
+        bool? isWorkshared,
         (string Code, string Reason)? parityFailure,
         SchemaDocument? schemaDoc,
         int? savedRelease,
@@ -384,18 +449,26 @@ public static class RvtWriter
     {
         if (fileKind == RvtFileKind.Unknown)
             return ("unknown-file-kind", "The file kind (.rvt project or .rfa family) could not be determined from container streams or file extension.");
-        if (isCloudModel)
+        if (isCloudModel == true)
             return ("cloud-model", "Cloud-hosted Revit models are outside the supported local-file write scope.");
-        if (isWorkshared)
+        if (isWorkshared == true)
             return ("workshared-model", "Workshared Revit models are outside the supported non-workshared local-file write scope.");
+        if (!hasBasicFileInfo)
+            return ("missing-metadata", "BasicFileInfo is missing from the container, so sharing, hosting, and saving-release state cannot be established.");
+        if (isWorkshared is null)
+            return ("missing-metadata", "BasicFileInfo lacks a recognised Worksharing field, so non-workshared state cannot be established.");
+        if (isCloudModel is null)
+            return ("missing-metadata", "BasicFileInfo lacks a recognised IsSingleUserCloudModel field, so local non-cloud hosting cannot be established.");
+        if (savedRelease is null)
+            return ("missing-metadata", "BasicFileInfo lacks a recognised saving release, so compatibility with Formats/Latest cannot be established.");
         if (parityFailure is not null)
             return parityFailure;
         if (schemaDoc is null)
             return ("missing-schema", "The embedded class schema (Formats/Latest) is missing or unreadable.");
         if (schemaRelease is null)
             return ("unrecognised-release", "The Revit release of Formats/Latest is not recognised.");
-        if (savedRelease is int saved && saved != schemaRelease.Value)
-            return ("release-mismatch", $"The file was saved by Revit {saved} while Formats/Latest carries the schema of Revit {schemaRelease.Value}.");
+        if (savedRelease.Value != schemaRelease.Value)
+            return ("release-mismatch", $"The file was saved by Revit {savedRelease.Value} while Formats/Latest carries the schema of Revit {schemaRelease.Value}.");
         if (schemaRelease.Value is < OldestSupportedRelease or > NewestSupportedRelease)
             return ("unsupported-release", $"Revit release {schemaRelease.Value} is outside the supported write range ({OldestSupportedRelease}-{NewestSupportedRelease}).");
         return null;
@@ -476,11 +549,7 @@ public static class RvtWriter
                 throw new RvtWriteRefusedException("duplicate-edit", $"Stream '{canonical}' is targeted more than once.");
 
             if (string.Equals(canonical, "Formats/Latest", StringComparison.OrdinalIgnoreCase))
-            {
-                var parsed = TfSchemaReader.TryParse(pagedEdit.UncompressedPayload.ToArray());
-                if (parsed is null)
-                    throw new RvtWriteRefusedException("invalid-schema-payload", "Replacement payload for Formats/Latest does not parse as a valid class schema.");
-            }
+                ValidateReplacementSchema(pagedEdit.UncompressedPayload.ToArray(), inspection);
 
             byte[] originalStored = ReadStreamByPath(root, canonical);
             replacements[canonical] = PagedStreamCodec.Reencode(originalStored, pagedEdit.UncompressedPayload.Span);
@@ -526,6 +595,49 @@ public static class RvtWriter
         }
 
         return replacements;
+    }
+
+    private static void ValidateReplacementSchema(byte[] schemaBytes, Inspection inspection)
+    {
+        var parsed = TfSchemaReader.TryParse(schemaBytes);
+        if (parsed is null)
+            throw new RvtWriteRefusedException(
+                "invalid-schema-payload",
+                "Replacement payload for Formats/Latest does not parse as a valid class schema.");
+
+        var replacementFormats = new FormatsSchema(parsed);
+        int? replacementRelease = SchemaRelease.FromSchema(replacementFormats);
+        if (replacementRelease is null)
+            throw new RvtWriteRefusedException(
+                "unrecognised-release",
+                "Replacement Formats/Latest schema does not match a recognised Revit release.");
+
+        if (inspection.Capabilities.SavedRelease is int saved && replacementRelease.Value != saved)
+            throw new RvtWriteRefusedException(
+                "release-mismatch",
+                $"Replacement Formats/Latest carries the schema of Revit {replacementRelease.Value} while the container was saved by Revit {saved}.");
+
+        if (replacementRelease.Value is < OldestSupportedRelease or > NewestSupportedRelease)
+            throw new RvtWriteRefusedException(
+                "unsupported-release",
+                $"Replacement Formats/Latest release {replacementRelease.Value} is outside the supported write range ({OldestSupportedRelease}-{NewestSupportedRelease}).");
+
+        int? replacementIdWidth = SchemaRelease.IdWidth(replacementRelease);
+        if (replacementIdWidth != inspection.Capabilities.ElementIdWidth)
+            throw new RvtWriteRefusedException(
+                "incompatible-schema-payload",
+                $"Replacement Formats/Latest changes element identifier byte width from {inspection.Capabilities.ElementIdWidth} to {replacementIdWidth}.");
+
+        var replacementTags = PartitionFraming.TagsOf(replacementFormats);
+        if (replacementTags is null && inspection.Capabilities.PartitionStreamCount > 0)
+            throw new RvtWriteRefusedException(
+                "missing-framing-markers",
+                "Replacement Formats/Latest lacks the partition framing marker classes required by existing partition streams.");
+
+        if (inspection.Capabilities.PartitionStreamCount > 0 && replacementTags != inspection.FramingTags)
+            throw new RvtWriteRefusedException(
+                "incompatible-schema-payload",
+                "Replacement Formats/Latest changes partition framing marker class identifiers required by existing partition streams.");
     }
 
     private static string ClassifyRecordEditArgumentError(string message)

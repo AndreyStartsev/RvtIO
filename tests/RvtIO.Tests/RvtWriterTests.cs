@@ -73,8 +73,8 @@ public sealed class RvtWriterTests : IDisposable
 
     internal static byte[] BuildBasicFileInfoBytes(
         int? savedRelease,
-        string worksharing = "Not enabled",
-        string cloudModel = "False",
+        string? worksharing = "Not enabled",
+        string? cloudModel = "False",
         string? centralPath = null,
         string? lastSavePath = null)
     {
@@ -94,12 +94,14 @@ public sealed class RvtWriterTests : IDisposable
         bw.Write(0); // Separator before the UTF-16 key-value lines block
 
         var lines = new StringBuilder();
-        lines.Append("Worksharing: ").Append(worksharing).Append("\r\n");
+        if (worksharing is not null)
+            lines.Append("Worksharing: ").Append(worksharing).Append("\r\n");
         if (savedRelease is int formatYear)
             lines.Append("Format: ").Append(formatYear).Append("\r\n");
         if (centralPath is not null)
             lines.Append("Central Model Path: ").Append(centralPath).Append("\r\n");
-        lines.Append("IsSingleUserCloudModel: ").Append(cloudModel).Append("\r\n");
+        if (cloudModel is not null)
+            lines.Append("IsSingleUserCloudModel: ").Append(cloudModel).Append("\r\n");
         bw.Write(Encoding.Unicode.GetBytes(lines.ToString()));
         bw.Write((ushort)0); // Trailing UTF-16 NUL terminator ending the text run in BasicFileInfo
         return ms.ToArray();
@@ -121,9 +123,11 @@ public sealed class RvtWriterTests : IDisposable
         public RvtFileKind Kind { get; init; } = RvtFileKind.Project;
         public int SchemaRelease { get; init; } = 2025;
         public int? SavedRelease { get; init; } = 2025;
-        public string Worksharing { get; init; } = "Not enabled";
-        public string CloudModel { get; init; } = "False";
+        public string? Worksharing { get; init; } = "Not enabled";
+        public string? CloudModel { get; init; } = "False";
         public string? CentralPath { get; init; }
+        public bool IncludeBasicFileInfo { get; init; } = true;
+        public byte[]? RawBasicFileInfoBytes { get; init; }
         public OpenMcdf.Version SectorVersion { get; init; } = OpenMcdf.Version.V4;
         public bool IncludeSchema { get; init; } = true;
         public bool IncludeFramingMarkers { get; init; } = true;
@@ -143,18 +147,26 @@ public sealed class RvtWriterTests : IDisposable
         using var root = RootStorage.Create(path, opt.SectorVersion);
 
         // BasicFileInfo
-        using (var bfi = root.CreateStream("BasicFileInfo"))
+        if (opt.IncludeBasicFileInfo)
         {
-            string defaultLastSave = opt.Kind == RvtFileKind.Family ? @"C:\Models\Sample.rfa" : opt.Kind == RvtFileKind.Project ? @"C:\Models\Sample.rvt" : "";
-            bfi.Write(BuildBasicFileInfoBytes(
-                opt.SavedRelease,
-                opt.Worksharing,
-                opt.CloudModel,
-                opt.CentralPath,
-                string.IsNullOrEmpty(defaultLastSave) ? null : defaultLastSave));
+            using var bfi = root.CreateStream("BasicFileInfo");
+            if (opt.RawBasicFileInfoBytes is not null)
+            {
+                bfi.Write(opt.RawBasicFileInfoBytes);
+            }
+            else
+            {
+                string defaultLastSave = opt.Kind == RvtFileKind.Family ? @"C:\Models\Sample.rfa" : opt.Kind == RvtFileKind.Project ? @"C:\Models\Sample.rvt" : "";
+                bfi.Write(BuildBasicFileInfoBytes(
+                    opt.SavedRelease,
+                    opt.Worksharing,
+                    opt.CloudModel,
+                    opt.CentralPath,
+                    string.IsNullOrEmpty(defaultLastSave) ? null : defaultLastSave));
+            }
         }
 
-        // Kind-defining stream + custom opaque vendor stream
+        // Kind-defining stream + custom opaque vendor stream + custom opaque vendor storage with metadata
         if (opt.Kind == RvtFileKind.Family)
         {
             using var atom = root.CreateStream("PartAtom");
@@ -174,6 +186,14 @@ public sealed class RvtWriterTests : IDisposable
 
         using (var custom = root.CreateStream("CustomOpaqueVendorStream"))
             custom.Write([0xCA, 0xFE, 0xBA, 0xBE, 0x42]);
+
+        var vendorStorage = root.CreateStorage("CustomOpaqueVendorStorage");
+        using (var vendorStream = vendorStorage.CreateStream("OpaqueBlob"))
+            vendorStream.Write([0xDE, 0xAD, 0xBE, 0xEF]);
+        vendorStorage.CLSID = Guid.Parse("01020304-0506-0708-090a-0b0c0d0e0f10");
+        vendorStorage.StateBits = 0x12345678u;
+        vendorStorage.CreationFileTime = 130_111_222_333_444_555UL;
+        vendorStorage.ModifiedFileTime = 131_222_333_444_555_666UL;
 
         // Global storage with 8-byte prefixes matching real Revit files
         var global = root.CreateStorage("Global");
@@ -393,13 +413,28 @@ public sealed class RvtWriterTests : IDisposable
         Assert.Equal(censusSource.Totals.Exact, censusCopy.Totals.Exact);
         Assert.Contains(censusCopy.Classes, c => c.Class == "(class 65000)");
 
-        // Opaque custom stream preserved byte-for-byte
-        using (var root = RootStorage.OpenRead(copy2))
-        using (var custom = root.OpenStream("CustomOpaqueVendorStream"))
+        // Opaque custom stream and opaque vendor storage directory-entry metadata preserved across both SaveAs hops
+        foreach (string savedCopy in new[] { copy1, copy2 })
         {
-            byte[] buf = new byte[custom.Length];
-            custom.ReadExactly(buf);
-            Assert.Equal(new byte[] { 0xCA, 0xFE, 0xBA, 0xBE, 0x42 }, buf);
+            using var root = RootStorage.OpenRead(savedCopy);
+            using (var custom = root.OpenStream("CustomOpaqueVendorStream"))
+            {
+                byte[] buf = new byte[custom.Length];
+                custom.ReadExactly(buf);
+                Assert.Equal(new byte[] { 0xCA, 0xFE, 0xBA, 0xBE, 0x42 }, buf);
+            }
+
+            var vendorStorage = root.OpenStorage("CustomOpaqueVendorStorage");
+            Assert.Equal(Guid.Parse("01020304-0506-0708-090a-0b0c0d0e0f10"), vendorStorage.CLSID);
+            Assert.Equal(0x12345678u, vendorStorage.StateBits);
+            Assert.Equal(130_111_222_333_444_555UL, vendorStorage.CreationFileTime);
+            Assert.Equal(131_222_333_444_555_666UL, vendorStorage.ModifiedFileTime);
+            using (var vendorStream = vendorStorage.OpenStream("OpaqueBlob"))
+            {
+                byte[] blob = new byte[vendorStream.Length];
+                vendorStream.ReadExactly(blob);
+                Assert.Equal(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF }, blob);
+            }
         }
 
         Assert.Equal(sourceSha, FileSha256(source));
@@ -546,5 +581,176 @@ public sealed class RvtWriterTests : IDisposable
         Assert.Equal(
             new[] { existing, source }.Order(StringComparer.Ordinal),
             Directory.EnumerateFileSystemEntries(_folder).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void InspectCapabilities_AndWrite_RefuseMissingUnreadableOrIncompleteBasicFileInfo()
+    {
+        // 1. Workshared + cloud 2025 container stays refused even after BasicFileInfo is deleted
+        string cloudWorkshared = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "stripped_cloud_ws.rvt",
+            SchemaRelease = 2025,
+            SavedRelease = 2025,
+            Worksharing = "Enabled",
+            CloudModel = "True",
+        });
+        var initialCaps = RvtWriter.InspectCapabilities(cloudWorkshared);
+        Assert.True(initialCaps.IsWorkshared);
+        Assert.True(initialCaps.IsCloudModel);
+        Assert.False(initialCaps.Supports(RvtWriteOperation.SaveAs));
+
+        using (var root = RootStorage.Open(cloudWorkshared, FileMode.Open))
+            root.Delete("BasicFileInfo");
+
+        var strippedCaps = RvtWriter.InspectCapabilities(cloudWorkshared);
+        Assert.Null(strippedCaps.IsWorkshared);
+        Assert.Null(strippedCaps.IsCloudModel);
+        Assert.Null(strippedCaps.SavedRelease);
+        foreach (RvtWriteOperation op in Enum.GetValues<RvtWriteOperation>())
+        {
+            Assert.False(strippedCaps.Supports(op));
+            Assert.Equal("missing-metadata", strippedCaps.Operations[op].RefusalCode);
+        }
+        var exStripped = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(cloudWorkshared, P("stripped_out.rvt")));
+        Assert.Equal("missing-metadata", exStripped.Kind);
+        Assert.False(File.Exists(P("stripped_out.rvt")));
+
+        // 2. Worksharing: Enabled with IsSingleUserCloudModel: False -> workshared-model
+        string wsEnabled = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "ws_enabled.rvt",
+            Worksharing = "Enabled",
+            CloudModel = "False",
+        });
+        var wsEnabledCaps = RvtWriter.InspectCapabilities(wsEnabled);
+        Assert.True(wsEnabledCaps.IsWorkshared);
+        Assert.False(wsEnabledCaps.IsCloudModel);
+        Assert.Equal("workshared-model", Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(wsEnabled, P("ws_enabled_out.rvt"))).Kind);
+
+        // 3. Truncated / undecodable BasicFileInfo -> missing-metadata
+        string truncatedBfi = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "truncated_bfi.rvt",
+            RawBasicFileInfoBytes = [1, 2, 3, 4],
+        });
+        var truncCaps = RvtWriter.InspectCapabilities(truncatedBfi);
+        Assert.Null(truncCaps.IsWorkshared);
+        Assert.Null(truncCaps.IsCloudModel);
+        Assert.Equal("missing-metadata", Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(truncatedBfi, P("trunc_out.rvt"))).Kind);
+
+        // 4. Missing or unrecognised Worksharing field -> missing-metadata
+        string missingWs = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "missing_ws.rvt",
+            Worksharing = null,
+        });
+        Assert.Null(RvtWriter.InspectCapabilities(missingWs).IsWorkshared);
+        Assert.Equal("missing-metadata", Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(missingWs, P("mws_out.rvt"))).Kind);
+
+        string unknownWs = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "unknown_ws.rvt",
+            Worksharing = "CustomMode",
+        });
+        Assert.Null(RvtWriter.InspectCapabilities(unknownWs).IsWorkshared);
+        Assert.Equal("missing-metadata", Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(unknownWs, P("uws_out.rvt"))).Kind);
+
+        // 5. Missing or unrecognised IsSingleUserCloudModel field -> missing-metadata
+        string missingCloud = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "missing_cloud.rvt",
+            CloudModel = null,
+        });
+        Assert.Null(RvtWriter.InspectCapabilities(missingCloud).IsCloudModel);
+        Assert.Equal("missing-metadata", Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(missingCloud, P("mc_out.rvt"))).Kind);
+
+        string unknownCloud = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "unknown_cloud.rvt",
+            CloudModel = "Maybe",
+        });
+        Assert.Null(RvtWriter.InspectCapabilities(unknownCloud).IsCloudModel);
+        Assert.Equal("missing-metadata", Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(unknownCloud, P("uc_out.rvt"))).Kind);
+
+        // 6. Missing saving release in BasicFileInfo -> missing-metadata
+        string missingSavedRel = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "missing_rel.rvt",
+            SavedRelease = null,
+        });
+        Assert.Null(RvtWriter.InspectCapabilities(missingSavedRel).SavedRelease);
+        Assert.Equal("missing-metadata", Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(missingSavedRel, P("mr_out.rvt"))).Kind);
+    }
+
+    [Fact]
+    public void Rewrite_RefusesValidButIncompatibleReplacementSchema_AndWritesNoOutput()
+    {
+        string source = CreateSyntheticRevitFile(new SyntheticFileOptions
+        {
+            FileName = "source_2025.rvt",
+            SchemaRelease = 2025,
+            SavedRelease = 2025,
+        });
+        string sourceSha = FileSha256(source);
+
+        // 1. Valid 2024 schema into a 2025 file -> release-mismatch, no output published
+        byte[] valid2024Schema = BuildSchemaBytesForRelease(2024);
+        var exMismatch = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.Rewrite(source, P("out_2024.rvt"), new RvtWriteRequest
+        {
+            PagedStreamEdits = [new RvtPagedStreamEdit("Formats/Latest", valid2024Schema)],
+        }));
+        Assert.Equal("release-mismatch", exMismatch.Kind);
+
+        // 2. Valid 2019 schema into a 2025 file -> release-mismatch, no output published
+        byte[] valid2019Schema = BuildSchemaBytesForRelease(2019);
+        var ex2019 = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.Rewrite(source, P("out_2019.rvt"), new RvtWriteRequest
+        {
+            PagedStreamEdits = [new RvtPagedStreamEdit("Formats/Latest", valid2019Schema)],
+        }));
+        Assert.Equal("release-mismatch", ex2019.Kind);
+
+        // 3. Syntactically valid schema with unrecognised release -> unrecognised-release
+        var customWriter = new SchemaStreamEditorTests.Writer();
+        for (int i = 0; i < 64; i++)
+            customWriter.Top(new Cls("Custom" + i, new NoRef(), 1, [], []));
+        var exUnrec = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.Rewrite(source, P("out_unrec.rvt"), new RvtWriteRequest
+        {
+            PagedStreamEdits = [new RvtPagedStreamEdit("Formats/Latest", customWriter.Build())],
+        }));
+        Assert.Equal("unrecognised-release", exUnrec.Kind);
+
+        // 4. Release-2025 class count without framing markers when Partitions/1 exists -> missing-framing-markers
+        byte[] missingMarkers2025 = BuildSchemaBytesForRelease(2025, includeFramingMarkers: false);
+        var exNoMarkers = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.Rewrite(source, P("out_nomarkers.rvt"), new RvtWriteRequest
+        {
+            PagedStreamEdits = [new RvtPagedStreamEdit("Formats/Latest", missingMarkers2025)],
+        }));
+        Assert.Equal("missing-framing-markers", exNoMarkers.Kind);
+
+        // 5. Release-2025 schema with ContentMarker still at 913 and 4600 classes, but swapped SegmentMarker / SegmentCheckback IDs -> incompatible-schema-payload
+        var shiftedWriter = new SchemaStreamEditorTests.Writer();
+        int currentId = 12;
+        while (currentId < 912)
+        {
+            shiftedWriter.Top(new Cls("Filler" + currentId, new NoRef(), 1, [], []));
+            currentId++;
+        }
+        shiftedWriter.Top(new Cls("ContentKey", new NoRef(), 1, [], []));       // 912
+        shiftedWriter.Top(new Cls("ContentMarker", new NoRef(), 1, [], []));    // 913 (still matches 2025!)
+        shiftedWriter.Top(new Cls("SegmentCheckback", new NoRef(), 1, [], [])); // 914 (swapped!)
+        shiftedWriter.Top(new Cls("SegmentMarker", new NoRef(), 1, [], []));    // 915 (swapped!)
+        shiftedWriter.Top(new Cls("SignatureMarker", new NoRef(), 1, [], []));  // 916
+        while (shiftedWriter.Placed.Count < 4600)
+            shiftedWriter.Top(new Cls("TailClass" + shiftedWriter.Placed.Count, new NoRef(), 1, [], []));
+
+        var exShifted = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.Rewrite(source, P("out_shifted.rvt"), new RvtWriteRequest
+        {
+            PagedStreamEdits = [new RvtPagedStreamEdit("Formats/Latest", shiftedWriter.Build())],
+        }));
+        Assert.Equal("incompatible-schema-payload", exShifted.Kind);
+
+        Assert.Equal(sourceSha, FileSha256(source));
+        Assert.Equal(new[] { source }, Directory.EnumerateFileSystemEntries(_folder).Order(StringComparer.Ordinal));
     }
 }

@@ -72,6 +72,25 @@ public sealed class ContainerRewriterTests : IDisposable
         return tree;
     }
 
+    private static (StorageDirectoryMetadata Root, Dictionary<string, StorageDirectoryMetadata> Storages) ReadStorageMetadata(string path)
+    {
+        var storages = new Dictionary<string, StorageDirectoryMetadata>(StringComparer.Ordinal);
+        using var root = RootStorage.OpenRead(path);
+        var rootMeta = new StorageDirectoryMetadata(root.CLSID, root.StateBits, root.CreationFileTime, root.ModifiedFileTime, root.HeaderCLSID);
+        void Walk(Storage storage, string prefix)
+        {
+            foreach (var entry in storage.EnumerateEntries())
+            {
+                if (entry.Type != EntryType.Storage) continue;
+                var child = storage.OpenStorage(entry.Name);
+                storages.Add(prefix + entry.Name, new StorageDirectoryMetadata(child.CLSID, child.StateBits, child.CreationFileTime, child.ModifiedFileTime));
+                Walk(child, prefix + entry.Name + "/");
+            }
+        }
+        Walk(root, "");
+        return (rootMeta, storages);
+    }
+
     private static string Sha(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 
     private static readonly IReadOnlyDictionary<string, byte[]> NoReplacements = new Dictionary<string, byte[]>();
@@ -108,9 +127,18 @@ public sealed class ContainerRewriterTests : IDisposable
 
         Assert.Equal((ushort)major, MajorVersion(P("out.rvt")));
         Assert.Equal(0, result.Replaced);
+        var expectedStorages = ReadStorageMetadata(source);
+        var actualStorages = ReadStorageMetadata(P("out.rvt"));
+        Assert.Equal(expectedStorages.Root, result.RootStorage);
+        Assert.Equal(expectedStorages.Root, actualStorages.Root);
+        Assert.Equal(expectedStorages.Storages, actualStorages.Storages);
         Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), result.Entries.Keys.Order(StringComparer.Ordinal));
         foreach (var (path, bytes) in expected)
-            Assert.Equal(bytes is null ? new ContainerEntry(false, 0, "") : new ContainerEntry(true, bytes.Length, Sha(bytes)), result.Entries[path]);
+            Assert.Equal(
+                bytes is null
+                    ? new ContainerEntry(false, 0, "", expectedStorages.Storages[path])
+                    : new ContainerEntry(true, bytes.Length, Sha(bytes)),
+                result.Entries[path]);
 
         Assert.Equal(sourceHash, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(source))));
         AssertOnlyFiles("source.rvt", "out.rvt");
@@ -522,5 +550,104 @@ public sealed class ContainerRewriterTests : IDisposable
 
         var error = Assert.Throws<InvalidDataException>(() => ContainerRewriter.CheckWritten(other, result.Entries));
         Assert.Contains("'Small'", error.Message);
+    }
+
+    [Fact]
+    public void Copy_PreservesRootAndChildStorageMetadata_ClsidStateBitsAndTimestamps()
+    {
+        string source = P("storage_meta.rvt");
+        var rootHeaderClsid = Guid.Parse("aabbccdd-1122-3344-5566-77889900aabb");
+        var rootClsid = Guid.Parse("11223344-5566-7788-99aa-bbccddeeff00");
+        var childClsid = Guid.Parse("01020304-0506-0708-090a-0b0c0d0e0f10");
+        var nestedClsid = Guid.Parse("f0e1d2c3-b4a5-9687-7869-5a4b3c2d1e0f");
+
+        using (var root = RootStorage.Create(source, OpenMcdf.Version.V4))
+        {
+            var custom = root.CreateStorage("CustomVendorStorage");
+            var nested = custom.CreateStorage("Nested");
+            using (var payload = nested.CreateStream("Payload"))
+                payload.Write([0x10, 0x20, 0x30]);
+
+            nested.CLSID = nestedClsid;
+            nested.StateBits = 0xCAFEBABEu;
+            nested.CreationFileTime = 129_000_000_000_000_000UL;
+            nested.ModifiedFileTime = 129_500_000_000_000_000UL;
+
+            custom.CLSID = childClsid;
+            custom.StateBits = 0x12345678u;
+            custom.CreationFileTime = 130_000_000_000_000_000UL;
+            custom.ModifiedFileTime = 131_000_000_000_000_000UL;
+
+            root.HeaderCLSID = rootHeaderClsid;
+            root.CLSID = rootClsid;
+            root.StateBits = 0x89ABCDEFu;
+            root.ModifiedFileTime = 132_000_000_000_000_000UL;
+        }
+
+        string copy = P("storage_meta_copy.rvt");
+        var result = ContainerRewriter.Rewrite(source, copy, NoReplacements);
+
+        var (actualRoot, actualStorages) = ReadStorageMetadata(copy);
+        Assert.Equal(new StorageDirectoryMetadata(rootClsid, 0x89ABCDEFu, 0UL, 132_000_000_000_000_000UL, rootHeaderClsid), actualRoot);
+        Assert.Equal(actualRoot, result.RootStorage);
+        Assert.Equal(
+            new StorageDirectoryMetadata(childClsid, 0x12345678u, 130_000_000_000_000_000UL, 131_000_000_000_000_000UL),
+            actualStorages["CustomVendorStorage"]);
+        Assert.Equal(
+            new StorageDirectoryMetadata(nestedClsid, 0xCAFEBABEu, 129_000_000_000_000_000UL, 129_500_000_000_000_000UL),
+            actualStorages["CustomVendorStorage/Nested"]);
+    }
+
+    [Fact]
+    public void CheckWritten_RejectsTamperedChildOrRootStorageMetadata_AndRewriteCleansTemporaryFile()
+    {
+        string source = CreateSource();
+        using (var root = RootStorage.Open(source, FileMode.Open))
+        {
+            var emptyStorage = root.OpenStorage("EmptyStorage");
+            emptyStorage.StateBits = 0x12345678u;
+            emptyStorage.CLSID = Guid.Parse("01020304-0506-0708-090a-0b0c0d0e0f10");
+            emptyStorage.CreationFileTime = 130_000_000_000_000_000UL;
+            emptyStorage.ModifiedFileTime = 131_000_000_000_000_000UL;
+            root.StateBits = 0x55AA55AAu;
+        }
+
+        // Tampering StateBits in beforeCheck aborts Rewrite, removes temporary file, and leaves no output.
+        var rewriteErr = Assert.Throws<InvalidDataException>(() => ContainerRewriter.Rewrite(
+            source,
+            P("aborted.rvt"),
+            NoReplacements,
+            temporary =>
+            {
+                using var root = RootStorage.Open(temporary, FileMode.Open);
+                root.OpenStorage("EmptyStorage").StateBits = 0u;
+            }));
+        Assert.Contains("'EmptyStorage'", rewriteErr.Message);
+        Assert.Contains("0x12345678", rewriteErr.Message);
+        AssertOnlyFiles("source.rvt");
+
+        // Verify CheckWritten catches CLSID, CreationFileTime, ModifiedFileTime, and root metadata tampering.
+        string okCopy = P("ok.rvt");
+        var result = ContainerRewriter.Rewrite(source, okCopy, NoReplacements);
+        ContainerRewriter.CheckWritten(okCopy, result.Entries, result.RootStorage);
+
+        using (var root = RootStorage.Open(okCopy, FileMode.Open))
+            root.OpenStorage("EmptyStorage").CLSID = Guid.Empty;
+        Assert.Contains("CLSID", Assert.Throws<InvalidDataException>(() => ContainerRewriter.CheckWritten(okCopy, result.Entries, result.RootStorage)).Message);
+
+        using (var root = RootStorage.Open(okCopy, FileMode.Open))
+        {
+            var s = root.OpenStorage("EmptyStorage");
+            s.CLSID = Guid.Parse("01020304-0506-0708-090a-0b0c0d0e0f10");
+            s.ModifiedFileTime = 139_000_000_000_000_000UL;
+        }
+        Assert.Contains("modified FILETIME", Assert.Throws<InvalidDataException>(() => ContainerRewriter.CheckWritten(okCopy, result.Entries, result.RootStorage)).Message);
+
+        using (var root = RootStorage.Open(okCopy, FileMode.Open))
+        {
+            root.OpenStorage("EmptyStorage").ModifiedFileTime = 131_000_000_000_000_000UL;
+            root.StateBits = 0u;
+        }
+        Assert.Contains("'<root>'", Assert.Throws<InvalidDataException>(() => ContainerRewriter.CheckWritten(okCopy, result.Entries, result.RootStorage)).Message);
     }
 }

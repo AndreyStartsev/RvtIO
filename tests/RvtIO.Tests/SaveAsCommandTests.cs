@@ -83,6 +83,8 @@ public sealed class SaveAsCommandTests : IDisposable
         Assert.Equal("project", srcNode.GetProperty("fileKind").GetString());
         Assert.Equal(2025, srcNode.GetProperty("effectiveRelease").GetInt32());
         Assert.Equal(8, srcNode.GetProperty("elementIdWidth").GetInt32());
+        Assert.False(srcNode.GetProperty("workshared").GetBoolean());
+        Assert.False(srcNode.GetProperty("cloudModel").GetBoolean());
         Assert.Equal(3, srcNode.GetProperty("operations").GetArrayLength());
     }
 
@@ -127,6 +129,26 @@ public sealed class SaveAsCommandTests : IDisposable
             Assert.Equal(SaveAsCommand.ReportSchema, json.RootElement.GetProperty("schema").GetString());
             Assert.Equal("refused", json.RootElement.GetProperty("status").GetString());
             Assert.Equal("workshared-model", json.RootElement.GetProperty("kind").GetString());
+        }
+
+        // Missing BasicFileInfo -> refused with missing-metadata and null workshared/cloudModel in check report
+        string noBfi = RvtWriterTests.CreateSyntheticRevitFile(
+            P("missing_bfi_2025.rvt"),
+            new RvtWriterTests.SyntheticFileOptions
+            {
+                FileName = "missing_bfi_2025.rvt",
+                SchemaRelease = 2025,
+                IncludeBasicFileInfo = false,
+            });
+        string noBfiReport = P("missing_bfi_check.json");
+        var (noBfiExit, noBfiOut, _) = Run(noBfi, "--check", "--report", noBfiReport);
+        Assert.Equal(SaveAsCommand.Refused, noBfiExit);
+        Assert.Contains("save-as: refused (missing-metadata:", noBfiOut);
+        using (var json = JsonDocument.Parse(File.ReadAllText(noBfiReport)))
+        {
+            var srcNode = json.RootElement.GetProperty("source");
+            Assert.False(srcNode.TryGetProperty("workshared", out _));
+            Assert.False(srcNode.TryGetProperty("cloudModel", out _));
         }
     }
 
