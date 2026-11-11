@@ -121,7 +121,8 @@ internal static partial class RebarReader
         schema.ByName("RebarSystemLayer") is { } layer && layer.Fields.All(f => f.Name != "m_uncutCurves");
 
     internal static ReinforcementData Read(
-        IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted)
+        IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted,
+        IReadOnlyDictionary<Guid, SchemaField[]?>? entitySchemas = null, bool passUnknownEntities = false)
     {
         var result = new Dictionary<uint, RebarBars>();
         var joists = new Dictionary<uint, JoistSystemData>();
@@ -142,6 +143,7 @@ internal static partial class RebarReader
         var joistType = schema.ByName("JoistSystemAttr")?.Id;
         if (rebar == null || system == null || inSystem == null || barType == null || settings == null || shape == null || joist == null || joistType == null) return empty;
         var walker = new WideBlockWalker(schema.Document, Key, []);
+        if (entitySchemas != null) walker.UseEntitySchemas(entitySchemas, passUnknownEntities);
         var layers = new Dictionary<uint, List<Layer>>();
         var members = new Dictionary<uint, (int System, int Layer, int Index, bool InAssembly)>();
         var diameters = new Dictionary<int, (double Nominal, double Model, string? Name)>();

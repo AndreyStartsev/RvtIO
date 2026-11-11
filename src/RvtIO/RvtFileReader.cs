@@ -942,7 +942,7 @@ public partial class RvtFileReader
         IReadOnlyList<IReadOnlyList<byte[]>> partitionStreams, FileSchema? wideSchema)
     {
         if ((wideSchema ?? FileSchema.Read(root)) is not { } schema) return;
-        var reinforcement = RebarReader.Read(partitionStreams, schema, state.AllKnownIds);
+        var reinforcement = RebarReader.Read(partitionStreams, schema, state.AllKnownIds, EntitySchemaReader.Read(root, schema.Document), passUnknownEntities: true);
         foreach (var (id, bars) in reinforcement.Bars) state.RebarBars[id] = bars;
         foreach (var (id, joist) in reinforcement.Joists) state.JoistSystems[id] = joist;
     }
@@ -958,7 +958,12 @@ public partial class RvtFileReader
         SchemaDocument? schemaDocument = null;
         if (PagedGzipStream.Read(root, "Formats", "Latest") is { } schemaBytes)
         {
-            try { fields = new WideNativeParams(schemaDocument = TfSchemaReader.Parse(schemaBytes)); }
+            try
+            {
+                fields = new WideNativeParams(schemaDocument = TfSchemaReader.Parse(schemaBytes));
+                // the values of an extensible storage entity are read by its schema, so the objects behind them are read in place
+                fields.Walker.UseEntitySchemas(EntitySchemaReader.Read(root, schemaDocument), passUnknown: true);
+            }
             catch (FormatException) { diag?.WriteLine("Wide element records: Formats/Latest does not parse for the field walk"); }
         }
         var walks = new Dictionary<uint, List<(WideBlockWalker.Walk Walk, int Class)>>();

@@ -42,6 +42,8 @@ internal static class RebarDump
         int limit = args.Length > 2 ? int.Parse(args[2], CultureInfo.InvariantCulture) : 3;
         string only = args.Length > 3 ? args[3] : "";
         var walker = new WideBlockWalker(doc, (d, f) => ((f.Name.StartsWith("m_included", StringComparison.Ordinal) || f.Name is "m_doubles" or "m_ints") ? WideBlockWalker.AllItemsKeyPrefix : "") + d.Name + "." + f.Name, doc.Classes.Select(c => c.Name));
+        // the walk of the rebar reader: the values of an entity read by its schema, an entity that cannot be read passed
+        walker.UseEntitySchemas(EntitySchemaReader.Read(root, doc), passUnknown: true);
         var partStor = root.OpenStorage("Partitions");
         var decompressor = new ChunkDecompressor();
         var streams = new List<IReadOnlyList<byte[]>>();

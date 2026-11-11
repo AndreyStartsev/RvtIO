@@ -43,7 +43,9 @@ internal sealed class WideBlockWalker
         /// <summary>Per queued object the length of the queue after its fields were read (the entries it queued are the ones before).</summary>
         public readonly List<int> QueueEnd = [];
         public readonly List<int> QueueCountAtStart = [];
-        /// <summary>Queue index of the first object that held an extensible storage entity without stored values, which the walk passes; -1 when none.</summary>
+        /// <summary>Queue index of the first object that held an extensible storage entity: without the entity schemas one without stored values,
+        /// which the walk passes; with them any entity whose values it queues. -1 when none. The readers keep what lies behind it out of their
+        /// output as before the values were read (<see cref="UseEntitySchemas"/>).</summary>
         public int EmptyEntityAt = -1;
         /// <summary>For a walk that stopped with an error: "Declaring.field" of the field that was being read; null when it stopped before any field.</summary>
         public string? StopField;
@@ -90,6 +92,7 @@ internal sealed class WideBlockWalker
     private readonly SchemaClass _entityBlob;
     private Dictionary<Guid, int>? _entityLayoutOf;
     private SchemaField[]?[] _entityLayouts = [];
+    private bool _passUnknownEntities;
 
     /// <summary>The most objects and scalars one walk reads (the error is "step budget" beyond it), so that a misaligned walk does not
     /// loop over millions of items without bytes.</summary>
@@ -115,8 +118,11 @@ internal sealed class WideBlockWalker
     /// <summary>The fields an entity of each extensible storage schema of the file stores, by schema GUID (<see cref="EntitySchemaReader"/>;
     /// null for a schema with a field type that is not read). With them, also with an empty set, an entity is read by its schema or
     /// stops the walk; without this call the walk passes an entity as it did before.</summary>
-    internal void UseEntitySchemas(IReadOnlyDictionary<Guid, SchemaField[]?> schemas)
+    /// <param name="passUnknown">An entity whose schema is not given or not read is passed as without the schemas (the readers behind the
+    /// output); otherwise it stops the walk (the census).</param>
+    internal void UseEntitySchemas(IReadOnlyDictionary<Guid, SchemaField[]?> schemas, bool passUnknown = false)
     {
+        _passUnknownEntities = passUnknown;
         _entityLayouts = [.. schemas.Values];
         _entityLayoutOf = schemas.Keys.Select((guid, index) => (guid, index)).ToDictionary(pair => pair.guid, pair => pair.index);
     }
@@ -299,15 +305,20 @@ internal sealed class WideBlockWalker
 
     // ESEntity.m_blob is an owned pointer whose class tag is not written: a handle of 0 is no entity and nothing follows; behind
     // 0xFFFFFFFF the 16-byte GUID of the entity's schema stands where the class tag would, and the values are queued like any owned object.
-    private void QueueEntityPayload(Context c, uint handle)
+    // False when the entity is to be passed as without the schemas: nothing is read then.
+    private bool QueueEntityPayload(Context c, uint handle)
     {
-        if (handle == 0) return;
+        if (handle == 0) return true;
+        if (_passUnknownEntities && !(handle == 0xFFFFFFFF && c.Pos + 16 <= c.End
+            && _entityLayoutOf!.TryGetValue(new Guid(c.D.AsSpan(c.Pos, 16)), out int known) && _entityLayouts[known] != null)) return false;
         if (handle != 0xFFFFFFFF) throw new Fail("entity handle");
         var guid = new Guid(c.D.AsSpan(Take(c, 16), 16));
         if (!_entityLayoutOf!.TryGetValue(guid, out int layout)) throw new Fail("entity schema not stored");
         if (_entityLayouts[layout] == null) throw new Fail("entity field type");
         if (c.Walk.Queue.Count >= 1_000_000) throw new Fail("queue");
         c.Walk.Queue.Add(-1 - layout);
+        if (c.Walk.EmptyEntityAt < 0) c.Walk.EmptyEntityAt = c.QueueIndex;
+        return true;
     }
 
     private void ReadField(Context c, SchemaClass declaring, SchemaField f, int depth, Dictionary<string, object?>? record)
@@ -474,7 +485,7 @@ internal sealed class WideBlockWalker
         {
             uint handle = U32(c);
             int tag = 0;
-            if (_entityLayoutOf != null && declaring.Name == "ESEntity" && f.Name == "m_blob") { QueueEntityPayload(c, handle); return; }
+            if (_entityLayoutOf != null && declaring.Name == "ESEntity" && f.Name == "m_blob" && QueueEntityPayload(c, handle)) return;
             // Without the entity schemas: an extensible storage entity whose schema GUID behind the handle repeats the pair key in
             // front of it is passed, and nothing is queued for its values.
             if (handle == 0xFFFFFFFF && declaring.Name == "ESEntity" && f.Name == "m_blob" && c.Pos >= 20 && c.Pos + 16 <= c.End
