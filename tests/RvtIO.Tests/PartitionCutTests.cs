@@ -1,0 +1,106 @@
+using RvtIO.Parsing;
+using RvtIO.Writing;
+using Xunit;
+using static RvtIO.Tests.CoverageCensusTests;
+
+namespace RvtIO.Tests;
+
+/// <summary>How the reader cuts a partition stream into chunks (<see cref="RvtFileReader.CutPartition"/>): by its segments when the framing
+/// holds, else by a search for gzip members.</summary>
+public class PartitionCutTests
+{
+    private static (PartitionFraming.Tags Tags, int IdWidth) Framing => (PartitionFraming.TagsOf(new FormatsSchema(Schema))!.Value, 4);
+
+    private static byte[] TwoBlocks() => Partition(Block(false, R(1, Body("Plain", 5, 0, 0, 0))), Block(true, R(2, Body("Plain", 5, 0, 0, 0))));
+
+    [Fact]
+    public void AStreamWhoseFramingHolds_IsCutIntoItsSegments()
+    {
+        byte[] raw = TwoBlocks();
+
+        var chunks = RvtFileReader.CutPartition(raw, Framing, new ChunkDecompressor(), out var stats, out string? failure);
+
+        Assert.Null(failure);
+        Assert.Equal((6, 6, 0, 0, 0), stats);
+        Assert.Equal(new ChunkDecompressor().DecompressAll(raw), chunks);
+    }
+
+    [Fact]
+    public void AStreamWhoseFramingDoesNotHold_IsSearchedForGzipMembers()
+    {
+        byte[] raw = TwoBlocks();
+        raw[^10] ^= 0xFF;   // the class tag of the terminal marker: the framing does not end, the members are intact
+
+        var search = new ChunkDecompressor();
+        var chunks = RvtFileReader.CutPartition(raw, Framing, search, out var stats, out string? failure);
+
+        Assert.NotNull(failure);
+        Assert.Equal(search.LastStats, stats);
+        Assert.Equal(new ChunkDecompressor().DecompressAll(raw), chunks);
+        // without the framing classes the stream is searched as well, and the reason says so
+        RvtFileReader.CutPartition(TwoBlocks(), null, new ChunkDecompressor(), out _, out failure);
+        Assert.Equal("the class table names no framing classes or the id width is not known", failure);
+    }
+
+    [Fact]
+    public void TheSegmentsOfAChain_AreTheOutputOfEachOfItsMembers()
+    {
+        // one block whose channel 101 is a chain of two segments (the first continues into the second), channels 102 and 103 one segment each
+        byte[] first = Records(101, R(1, Body("Plain", 5, 0, 0, 0))), second = Records(101, R(2, Body("Plain", 5, 0, 0, 0)));
+        using var stream = new MemoryStream();
+        using (var w = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            w.Write(9ul);
+            w.Write(Id("ContentMarker")); w.Write(0u); w.Write(2u);
+            Segment(w, 101, 2u, first, 1);
+            Segment(w, 101, 1u, second, 1);
+            Segment(w, 102, 0u, Records(102, R(1, Body("Plain", 5, 0, 0, 0)), R(2, Body("Plain", 5, 0, 0, 0))), 2);
+            Segment(w, 103, 0u, Records(103, R(1, Body("Plain", 5, 0, 0, 0)), R(2, Body("Plain", 5, 0, 0, 0))), 2);
+            w.Write(Id("SegmentMarker")); w.Write(new byte[16]);
+            w.Write(Id("SignatureMarker")); w.Write(0u); w.Write(0u);
+            w.Write(Id("ContentMarker")); w.Write(0u); w.Write(uint.MaxValue);
+        }
+        byte[] raw = stream.ToArray();
+
+        var chunks = RvtFileReader.CutPartition(raw, Framing, new ChunkDecompressor(), out _, out string? failure);
+
+        Assert.Null(failure);
+        Assert.Equal(4, chunks.Count);
+        Assert.Equal(first, chunks[0]);
+        Assert.Equal(second, chunks[1]);
+        Assert.Equal(new ChunkDecompressor().DecompressAll(raw), chunks);
+    }
+
+    // the items of records as a segment holds them inflated: owner, the checksum on channels 102 and 103, size, body, size
+    private static byte[] Records(uint channel, params ElementCensusTests.Rec[] records)
+    {
+        using var items = new MemoryStream();
+        using var item = new BinaryWriter(items);
+        foreach (var record in records)
+        {
+            item.Write(record.Owner);
+            if (channel != 101) item.Write(record.Extra);
+            item.Write((uint)record.Body.Length);
+            item.Write(record.Body);
+            item.Write((uint)record.Body.Length);
+        }
+        item.Flush();
+        return items.ToArray();
+    }
+
+    private static void Segment(BinaryWriter w, uint channel, uint flags, byte[] records, uint count)
+    {
+        byte[] payload = GzipMember.Write(records);
+        uint size = (uint)payload.Length + 8;
+        w.Write(Id("SegmentMarker"));
+        w.Write(flags);
+        w.Write(count);
+        w.Write(size);
+        w.Write((uint)(records.Length - count * (channel == 101 ? 12u : 16u)));
+        w.Write(channel);
+        w.Write(19u);
+        w.Write(payload);
+        w.Write(Id("SegmentCheckback"));
+        w.Write(size);
+    }
+}

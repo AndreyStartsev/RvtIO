@@ -42,7 +42,7 @@ internal static class PartitionFraming
     /// <summary>Walks the stream; <paramref name="onRecord"/> sees every record of every block in file order. Returns false
     /// with the reason in <paramref name="failure"/> when the framing does not hold. <paramref name="idWidth"/> is 4 or 8.</summary>
     internal static bool Walk(byte[] raw, Tags tags, int idWidth, Action<Record> onRecord, out string? failure, out int blocks,
-        List<int>? segmentLengths = null)
+        List<int>? segmentLengths = null, List<byte[]>? segmentBytes = null)
     {
         failure = null;
         blocks = 0;
@@ -65,6 +65,7 @@ internal static class PartitionFraming
                 if (expectedOwners == uint.MaxValue)
                 {
                     Require(pointer == 0 && blocks > 0, "terminal-marker");
+                    // what follows the terminal is no part of the stream (measured: 432 of 434 partition streams of 52 files have bytes after it)
                     return true;
                 }
                 Require((blocks != 0 || pointer == 0) && keys.Add(key), "map-key");
@@ -94,6 +95,7 @@ internal static class PartitionFraming
                     int before = (int)chain.Length;
                     Inflate(payload, chain);
                     segmentLengths?.Add((int)chain.Length - before);
+                    segmentBytes?.Add(chain.GetBuffer().AsSpan(before, (int)chain.Length - before).ToArray());
                     countSum += count;
                     sizeSum += unc;
                     if (mode is not (0 or 1)) continue;

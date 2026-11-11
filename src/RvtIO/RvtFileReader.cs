@@ -1120,6 +1120,10 @@ public partial class RvtFileReader
         partitionStreams = new List<IReadOnlyList<byte[]>>();
         ownPartitionWallParts = null;
         var routing = _options.ResolveCurrentCopies && partEntries.Count > 1 ? PlanRecordRouting(root, partStor, partEntries.Select(e => e.Name).ToList(), diag) : null;
+        // the exact framing of the partition streams (PartitionFraming), when the class table names its marker classes and the id width is known
+        var framing = FormatsSchema.TryRead(root) is { } formats && PartitionFraming.TagsOf(formats) is { } framingTags
+            && SchemaRelease.IdWidth(SchemaRelease.Effective(SchemaRelease.Saved(BasicFileInfoReader.Read(root).GetValueOrDefault("RevitVersion")),
+                SchemaRelease.FromSchema(formats))) is int framingIdWidth ? (Tags: framingTags, IdWidth: framingIdWidth) : ((PartitionFraming.Tags Tags, int IdWidth)?)null;
 
         foreach (var partEntry in partEntries)
         {
@@ -1140,11 +1144,10 @@ public partial class RvtFileReader
                 diag?.WriteLine($"  Own partition wall parts: {ownPartitionWallParts?.Count.ToString() ?? "unavailable"} ({failure ?? "exact"})");
             }
 
-            var chunks = decompressor.DecompressAll(raw);
-            var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
-            RecordStream("Partitions/" + partEntry.Name, raw.Length, members, decodedMembers,
-                failedMembers, recoveredMembers, unverifiedMembers);
-            diag?.WriteLine($"  Chunks: {chunks.Count} decompressed");
+            var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure);
+            RecordStream("Partitions/" + partEntry.Name, raw.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified);
+            diag?.WriteLine(framingFailure == null ? $"  Chunks: {chunks.Count} segments of the exact framing"
+                : $"  Chunks: {chunks.Count} decompressed by a search for gzip members (framing: {framingFailure})");
             if (routing != null && int.TryParse(partEntry.Name, out int partitionNumber)
                 && RecordRouting.Stale(routing.Census, routing.Current, partitionNumber) is { Count: > 0 } stale)
             {
@@ -1165,6 +1168,24 @@ public partial class RvtFileReader
     }
 
     private static Dictionary<uint, OwnPartitionParts.WallParts>? Fail(string reason, out string? failure) { failure = reason; return null; }
+
+    /// <summary>The chunks of a partition stream: when its framing holds (<see cref="PartitionFraming"/>), the output of each segment, every one a
+    /// gzip member checked by its CRC and length, and <paramref name="framingFailure"/> null; otherwise the members a search for gzip headers
+    /// finds, with the recovery of damaged ones (<see cref="ChunkDecompressor"/>), and the reason the framing does not hold.</summary>
+    internal static List<byte[]> CutPartition(byte[] raw, (PartitionFraming.Tags Tags, int IdWidth)? framing, ChunkDecompressor decompressor,
+        out (int Members, int Decoded, int Failed, int Recovered, int Unverified) stats, out string? framingFailure)
+    {
+        var segments = new List<byte[]>();
+        framingFailure = "the class table names no framing classes or the id width is not known";
+        if (framing is var (tags, idWidth) && PartitionFraming.Walk(raw, tags, idWidth, _ => { }, out framingFailure, out _, null, segments))
+        {
+            stats = (segments.Count, segments.Count, 0, 0, 0);
+            return segments;
+        }
+        var chunks = decompressor.DecompressAll(raw);
+        stats = decompressor.LastStats;
+        return chunks;
+    }
 
     private sealed record RoutingPlan(RecordRouting.Census Census, Dictionary<ulong, int> Current);
 
