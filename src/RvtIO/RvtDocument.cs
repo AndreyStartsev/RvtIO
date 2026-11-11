@@ -10,6 +10,7 @@ namespace RvtIO;
 public class RvtDocument
 {
     private readonly RevitFileInfo _info;
+    private readonly string? _sourcePath;
     private readonly Dictionary<int, Element> _elemById;
     private readonly Dictionary<string, Element>? _elemByUniqueId;
     private readonly HashSet<int> _typeElementIds;
@@ -19,6 +20,9 @@ public class RvtDocument
 
     /// <summary>Project metadata (Revit version, build, file path).</summary>
     public FileMetadata Metadata => _info.Metadata;
+
+    /// <summary>Full local file path when opened via <see cref="Open"/>; null when created via <see cref="FromInfo"/>.</summary>
+    public string? SourcePath => _sourcePath;
 
     /// <summary>Project information (name, number, client, address, etc.).</summary>
     public ProjectInfo ProjectInformation => _info.ProjectInfo;
@@ -32,9 +36,10 @@ public class RvtDocument
     /// <summary>Number of elements in the document.</summary>
     public int ElementCount => _info.Elements.Count;
 
-    private RvtDocument(RevitFileInfo info)
+    private RvtDocument(RevitFileInfo info, string? sourcePath = null)
     {
         _info = info;
+        _sourcePath = sourcePath;
 
         _elemById = new Dictionary<int, Element>(info.Elements.Count);
         foreach (var e in info.Elements)
@@ -231,7 +236,7 @@ public class RvtDocument
     {
         var reader = new RvtFileReader(options);
         var info = reader.Read(rvtPath);
-        return new RvtDocument(info);
+        return new RvtDocument(info, Path.GetFullPath(rvtPath));
     }
 
     /// <summary>
@@ -239,6 +244,16 @@ public class RvtDocument
     /// Useful when you already have the data from RvtFileReader.Read().
     /// </summary>
     public static RvtDocument FromInfo(RevitFileInfo info) => new(info);
+
+    /// <summary>Writes a verified lossless copy of this document's backing file to <paramref name="outputPath"/>.</summary>
+    /// <exception cref="InvalidOperationException">This document was constructed via <see cref="FromInfo"/> and has no backing file path.</exception>
+    /// <exception cref="RvtWriteRefusedException">The backing file is outside the supported write-capability matrix.</exception>
+    public RvtWriteResult SaveAs(string outputPath)
+    {
+        if (string.IsNullOrEmpty(_sourcePath))
+            throw new InvalidOperationException("This document has no backing source file path; use RvtWriter.SaveAs(sourcePath, outputPath).");
+        return RvtWriter.SaveAs(_sourcePath, outputPath);
+    }
 
 
     /// <summary>Get element by ID. Returns null if not found.</summary>

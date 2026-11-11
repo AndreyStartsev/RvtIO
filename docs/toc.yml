@@ -7,6 +7,8 @@
       href: public-api.md
     - name: Scene adapter
       href: scene.md
+    - name: Writing and save-as
+      href: writing.md
     - name: Export report and exit codes
       href: export-report.md
     - name: Coverage report
