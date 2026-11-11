@@ -188,7 +188,7 @@ public sealed class ExportReport
     /// <summary>What the export wrote.</summary>
     public sealed class ReportExport
     {
-        /// <summary><c>ifc</c>, <c>json</c> (the BM export) or <c>json-full</c>.</summary>
+        /// <summary><c>ifc</c>, <c>glb</c>, <c>html</c>, <c>scene-json</c>, <c>json</c> (the BM export) or <c>json-full</c>.</summary>
         public string Format { get; set; } = "";
         /// <summary>Parsed elements the export considered.</summary>
         public int Considered { get; set; }

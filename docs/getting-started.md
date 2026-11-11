@@ -11,15 +11,17 @@ dotnet tool install --global RvtIO.Cli
 rvtio project.rvt project.ifc
 ```
 
-A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default.
+A `.ifc` output path selects IFC, `.glb` selects a binary glTF 2.0 scene, `.html` / `.htm` selects a standalone 3D HTML viewer, and `.scene.json` (or `--scene-json`) selects the versioned `rvtio-scene/1` JSON contract. Any other output path selects data JSON, which is compact by default.
 
 ```sh
+rvtio project.rvt project.glb
+rvtio project.rvt viewer.html
 rvtio project.rvt project.compact.json --compact-json
 rvtio project.rvt project.full.json --json-full
 rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 ```
 
-Run `rvtio --help` for all options. The exit codes and the `--report` file are described in [Export report and exit codes](export-report.md).
+Run `rvtio --help` for all options. Scene and viewer options are described in [Scene and HTML 3D viewer export](scene-export.md); the exit codes and the `--report` file are described in [Export report and exit codes](export-report.md).
 
 ## Library
 

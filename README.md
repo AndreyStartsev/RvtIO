@@ -9,6 +9,8 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 - Reads elements, parameters, geometry, file metadata and project information.
 - Queries elements through `FilteredElementCollector`.
 - Exports IFC2X3 coordination view, with optional Revit parameters as property sets.
+- Exports browser-ready 3D scenes as binary glTF 2.0 (`.glb`) or versioned `rvtio-scene/1` JSON with reusable meshes, instancing, materials and element metadata.
+- Exports a single-file offline 3D HTML viewer (`.html`) with an embedded WebGL inspection app and zero external network dependencies.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 
 ## Install
@@ -57,7 +59,15 @@ Export IFC with Revit parameters as property sets:
 rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 ```
 
-A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. If the output path is omitted, the tool writes `output.json`. Diagnostics go to standard error.
+Export a binary glTF 2.0 scene or a self-contained offline 3D HTML viewer:
+
+```sh
+rvtio project.rvt project.glb
+rvtio project.rvt project.html --viewer-title "Project Review"
+rvtio project.rvt project.scene.json
+```
+
+A `.ifc` output path selects IFC, `.glb` selects glTF 2.0, `.html`/`.htm` selects the standalone 3D HTML viewer, `.scene.json` (or `--scene-json`) selects the `rvtio-scene/1` JSON contract, and any other output path selects data JSON, which is compact by default. If the output path is omitted, the tool writes `output.json`. Diagnostics go to standard error. See [3D scene export and standalone HTML viewer](docs/scene-export.md) for the scene contract and viewer options.
 
 Export the state of one project phase:
 

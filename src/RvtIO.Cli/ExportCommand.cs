@@ -11,12 +11,14 @@ internal static partial class Program
     /// <summary>The values of the command line that decide the export.</summary>
     private sealed record ExportArguments(string[] Args, string RvtPath, string OutputPath, string? ExternalDumpPath, string? ExternalDumpClassPrefix,
         IfcProfile Profile, bool IsIfcOutput, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
-        string JsonClassPrefix, bool CompactJson, bool OpeningLegacyAxes);
+        string JsonClassPrefix, bool CompactJson, bool OpeningLegacyAxes,
+        RvtIO.Cli.SceneCliOptions SceneOptions, bool IsGlbOutput, bool IsHtmlOutput, bool IsSceneJsonOutput);
 
-    // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
+    // The export: reads the file and writes IFC, 3D scene (.glb / --scene-json), standalone HTML viewer (.html), compact JSON or full JSON dump.
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes) = arguments;
+        var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes, sceneOptions, isGlbOutput, isHtmlOutput, isSceneJsonOutput) = arguments;
+        bool isSceneOutput = isGlbOutput || isHtmlOutput || isSceneJsonOutput;
         WarnIfRevitLocalization(args);
         var options = new RvtReaderOptions
         {
@@ -25,8 +27,8 @@ internal static partial class Program
             ExternalDumpClassPrefix = externalDumpClassPrefix,
             SystemFamilyNameLocale = profile == RvtIO.Ifc.IfcProfile.Current ? "ENU" : null,
             SeparateFacesWithDistinctOpenings = profile == RvtIO.Ifc.IfcProfile.Current,
-            // IFC export reads the geometry with the Revit 2022 readers; --no-r22-layout keeps the 64-bit schema path alone
-            R22Layout = isIfcOutput && !args.Contains("--no-r22-layout") || args.Contains("--r22-layout"),
+            // IFC and 3D scene exports read geometry with the Revit 2022 readers; --no-r22-layout keeps the 64-bit schema path alone
+            R22Layout = (isIfcOutput || isSceneOutput) && !args.Contains("--no-r22-layout") || args.Contains("--r22-layout"),
             ResolveCurrentCopies = RvtIO.Cli.CurrentCopiesOption.Resolve(args),
         };
 
@@ -120,6 +122,36 @@ internal static partial class Program
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
             Console.Error.WriteLine($"IFC written to {outputPath}");
             report.SetExport("ifc", exporter.ExportedProducts, skipLog);
+        }
+        else if (isSceneOutput)
+        {
+            if (rvtInfo.GeometryUndecoded && reader.LastParsingState != null)
+                RvtIO.Parsing.ValidatedElementNames.Apply(rvtInfo, reader.LastParsingState);
+            var skipLog = new SkipLog();
+            var viewerOptions = sceneOptions.ToViewerOptions(skipLog, Console.Error);
+            var swExport = System.Diagnostics.Stopwatch.StartNew();
+            var scene = RvtIO.Scene.SceneExporter.Build(rvtInfo, viewerOptions);
+            string formatName;
+            if (isGlbOutput)
+            {
+                RvtIO.Scene.SceneExporter.ExportGlb(scene, outputPath, convertZUpToYUp: !sceneOptions.GlbZUp);
+                formatName = "glb";
+                Console.Error.WriteLine($"GLB scene written to {outputPath} ({scene.Elements.Count} elements, {scene.Meshes.Count} meshes)");
+            }
+            else if (isHtmlOutput)
+            {
+                RvtIO.Scene.HtmlViewerExporter.Export(scene, outputPath, viewerOptions);
+                formatName = "html";
+                Console.Error.WriteLine($"HTML viewer written to {outputPath} ({scene.Elements.Count} elements, {scene.Meshes.Count} meshes)");
+            }
+            else
+            {
+                RvtIO.Scene.SceneExporter.ExportJson(scene, outputPath, indented: sceneOptions.PrettyJson);
+                formatName = "scene-json";
+                Console.Error.WriteLine($"Scene JSON written to {outputPath} ({scene.Elements.Count} elements, {scene.Meshes.Count} meshes)");
+            }
+            Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
+            report.SetExport(formatName, scene.Completeness.ExportedElements, skipLog);
         }
         else if (compactJson)
         {

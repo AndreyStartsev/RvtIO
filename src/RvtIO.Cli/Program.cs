@@ -7,16 +7,29 @@ using RvtIO.Ifc;
 internal static partial class Program
 {
     private const string UsageText = """
-        Usage: rvtio <file.rvt|file.rfa> [output.ifc|output.json] [options]
+        Usage: rvtio <file.rvt|file.rfa> [output.ifc|output.glb|output.html|output.json] [options]
                rvtio --help | --version
 
-        Reads a Revit file and writes IFC or JSON. A .ifc output path writes IFC; any other path writes JSON
-        (default output.json). Diagnostics go to standard error.
+        Reads a Revit file and writes IFC (.ifc), binary glTF 2.0 scene (.glb), a standalone 3D HTML viewer
+        (.html/.htm), a browser-ready scene JSON (--scene-json or .scene.json), or data JSON (any other path,
+        default output.json). Diagnostics go to standard error.
 
         Export options:
           --json-full                       write the full JSON dump (every parameter and the geometry) instead of the compact JSON
           --compact-json                    write the compact JSON, which is the default for a JSON output
           --json-class-prefix <text>        text put in front of the class names in the compact JSON "name" field
+          --scene-json                      write the rvtio-scene/1 3D scene JSON instead of the compact data JSON
+          --scene-pretty                    indent the rvtio-scene/1 JSON output
+          --scene-categories <c1,c2,...>    include only the listed categories (IDs, OST_* names, or English names)
+          --scene-ids <id1,id2,...>         include only the listed Revit element IDs
+          --scene-no-parameters             omit element and type parameters from scene and HTML viewer exports
+          --scene-parameter-names <p1,...>  include only the named parameters in scene and HTML viewer exports
+          --scene-shared-coordinates        apply the active project location shared transform to scene coordinates
+          --scene-include-rooms             include room volumes as translucent 3D enclosures
+          --scene-no-grids                  omit datum grid lines from scene and HTML viewer exports
+          --glb-z-up                        keep Revit Z-up coordinates in .glb instead of converting to glTF Y-up
+          --viewer-title <text>             custom page and header title for the standalone HTML viewer
+          --viewer-theme <dark|light>       initial color theme for the standalone HTML viewer (default: dark)
           --ifc-profile <legacy|current>    IFC output profile (default: current)
           --ifc-revit-parameters            write the Revit parameters as IFC property sets
           --ifc-revit-parameter-groups      write them as one property set per parameter group (implies --ifc-revit-parameters)
@@ -94,6 +107,7 @@ internal static partial class Program
         "--dev-fact-names", "--dev-user-params", "--dev-collisions", "--dev-solids", "--dev-native", "--class-census", "--episode-check",
         "--test-decoders", "--dump-chunks", "--block-dump", "--search-global", "--hex-search", "--chunk-dump", "--block-scan", "--rec-dump",
         "--grep-inspect", "--wide-at", "--wide-lo", "--wide-hi", "--sweep", "--pin1", "--force", "--report",
+        ..RvtIO.Cli.SceneCliOptions.OneValueNames,
     ];
 
     private static readonly HashSet<string> TwoValueOptions = ["--dump-storage", "--inspect-batch", "--list-category"];
@@ -103,6 +117,7 @@ internal static partial class Program
         "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities", ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
         "--no-r22-layout", ..RvtIO.Cli.CurrentCopiesOption.Names, "--allow-partial", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
         "--decode-blocks", "--decode-catc", "--wide", "--blocks", "--no-recover", "--no-d64", "--trim", "--dump-partial",
+        ..RvtIO.Cli.SceneCliOptions.SwitchNames,
     ];
 
     private static int Main(string[] args)
@@ -195,10 +210,24 @@ internal static partial class Program
             Console.Error.WriteLine(jsonClassPrefixError);
             return 1;
         }
+        if (!RvtIO.Cli.SceneCliOptions.TryParse(args, out var sceneOptions, out string? sceneOptionError))
+        {
+            Console.Error.WriteLine(sceneOptionError);
+            return 1;
+        }
         // A JSON output is the compact data export (the properties collection); --json-full writes the full legacy dump
         // (every parameter, geometry, all fields). --compact-json is kept as the explicit spelling of the default.
         bool jsonFull = args.Contains("--json-full");
         bool isIfcOutput = outputPath.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase);
+        bool isGlbOutput = outputPath.EndsWith(".glb", StringComparison.OrdinalIgnoreCase);
+        bool isHtmlOutput = outputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || outputPath.EndsWith(".htm", StringComparison.OrdinalIgnoreCase);
+        bool isSceneJsonOutput = sceneOptions.SceneJson || outputPath.EndsWith(".scene.json", StringComparison.OrdinalIgnoreCase);
+        bool isSceneOutput = isGlbOutput || isHtmlOutput || isSceneJsonOutput;
+        if (sceneOptions.SceneJson && (isIfcOutput || isGlbOutput || isHtmlOutput))
+        {
+            Console.Error.WriteLine("--scene-json writes JSON: use a .json or .scene.json output path.");
+            return 1;
+        }
         if (jsonFull && args.Contains("--compact-json"))
         {
             Console.Error.WriteLine("--compact-json and --json-full exclude each other.");
@@ -209,7 +238,12 @@ internal static partial class Program
             Console.Error.WriteLine("--compact-json and --json-full write JSON: use a non-.ifc output path.");
             return 1;
         }
-        bool compactJson = !jsonFull && !isIfcOutput;
+        if ((jsonFull || args.Contains("--compact-json")) && isSceneOutput)
+        {
+            Console.Error.WriteLine("--compact-json and --json-full cannot be combined with .glb, .html, or --scene-json output.");
+            return 1;
+        }
+        bool compactJson = !jsonFull && !isIfcOutput && !isSceneOutput;
         if (exportPhaseOption != null && !isIfcOutput)
         {
             Console.Error.WriteLine("--ifc-phase requires IFC output.");
@@ -286,7 +320,8 @@ internal static partial class Program
         if (listCategoryOutPath != null) return ListCategory(rvtPath, listCategoryId, listCategoryOutPath);
 
         return Export(new ExportArguments(args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput,
-            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes));
+            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes,
+            sceneOptions, isGlbOutput, isHtmlOutput, isSceneJsonOutput));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>

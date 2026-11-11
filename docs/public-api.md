@@ -41,12 +41,16 @@ extension and label helpers carry the ids and names stored in the file format.
 | `IfcUnitFamily` | The length unit family an export of the current profile declares, by the length format of the project: `Metre` for metres and for metres and centimetres, `Foot` for feet, feet and fractional inches and US survey feet, `Millimetre` for millimetres, for every other format and for an unreadable one. The legacy profile always declares millimetres. |
 | `CompactJsonExporter` | `Export(rvtPath, outputPath, readerOptions, options)` reads a file and writes the compact JSON. |
 | `CompactJsonExportOptions` | `JsonClassNamePrefix`: text put in front of every class name in the `name` field. |
+| `SceneExporter` | Builds a `ModelScene` (`Build`, `OpenAndBuild`), writes and reads the versioned `rvtio-scene/1` JSON (`ExportJson`, `LoadJson`), and writes binary glTF 2.0 `.glb` (`ExportGlb`); see [3D scene export](scene-export.md). |
+| `HtmlViewerExporter` | Writes a single-file offline 3D HTML viewer (`Export`, `ExportToString`) embedding a `ModelScene` and WebGL viewer. |
+| `SceneExportOptions`, `HtmlViewerOptions` | Filtering (`ElementIds`, `CategoryIds`, `ElementFilter`), metadata (`IncludeParameters`, `IncludeTypeParameters`, `IncludedParameterNames`, `MaxParametersPerElement`), coordinate (`ApplySharedCoordinates`, `IncludeGrids`, `IncludeRooms`), viewer (`Title`, `InitialTheme`, `ShowGridsByDefault`) and diagnostic (`SkipLog`, `DiagnosticOutput`) options. |
+| `ModelScene` and scene records | `ModelScene`, `SceneMaterial`, `SceneMeshPrototype`, `SceneMeshInstance`, `SceneElement`, `ScenePropertyGroup`, `SceneProperty`, `SceneCategoryNode`, `SceneGridLine`, `SceneCompletenessSummary`, `SceneOmittedGroup` (`RvtIO.Scene`). |
 
 ## Diagnostics
 
 The library never writes to the console. A diagnostic message is written only when the caller gives a `TextWriter`:
 `RvtReaderOptions.DiagnosticOutput` for a read (and for `CompactJsonExporter.Export`), `IfcExporter.DiagnosticOutput` (or the
-constructor argument) for an IFC export. The default is `null`, which is silent. The writer is scoped to the call that
+constructor argument) for an IFC export, `SceneExportOptions.DiagnosticOutput` for a scene or HTML viewer export. The default is `null`, which is silent. The writer is scoped to the call that
 received it, so concurrent calls with different writers do not mix.
 
 The `rvtio` command line tool sets the writer to standard error.

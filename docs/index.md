@@ -9,6 +9,7 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 - Reads elements, parameters, geometry, file metadata and project information.
 - Queries elements through `FilteredElementCollector`.
 - Exports IFC2X3 coordination view, with optional Revit parameters as property sets.
+- Exports browser-ready 3D scenes as binary glTF 2.0 (`.glb`), versioned `rvtio-scene/1` JSON, or a self-contained offline 3D HTML viewer (`.html`).
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 
 The library targets .NET 8 and .NET 10, uses managed code only, and supports Windows, Linux and macOS.
@@ -17,6 +18,7 @@ The library targets .NET 8 and .NET 10, uses managed code only, and supports Win
 
 - [Getting started](getting-started.md): install the tool or the package and run a first export.
 - [Public API](public-api.md): the supported surface of the library.
+- [Scene and HTML 3D viewer export](scene-export.md): `.glb`, `rvtio-scene/1` JSON and standalone `.html` 3D viewer options.
 - [Export report and exit codes](export-report.md): how a complete export is told from a partial one.
 - [API reference](api/RvtIO.yml): every public type, generated from the XML documentation.
 - [Source on GitHub](https://github.com/IOExtend/RvtIO) and [DeepWiki](https://deepwiki.com/IOExtend/RvtIO) for an automatically generated overview of the repository.
