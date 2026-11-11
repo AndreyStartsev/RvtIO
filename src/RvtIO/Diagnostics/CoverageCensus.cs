@@ -10,7 +10,8 @@ namespace RvtIO;
 /// <summary>
 /// Counts, for one file, how many records of its partition streams the file's own class schema walks to their last byte
 /// (<see cref="WideBlockWalker"/>), and lists every stream of the compound file. A record is one item of channel 101, 102 or 103 of a
-/// content block (<see cref="PartitionFraming"/>); its body opens with the class tag the walk starts from. The count is strict: no byte
+/// content block (<see cref="PartitionFraming"/>); its body opens with the class tag the walk starts from. The values of an extensible
+/// storage entity are read by the entity schemas of the file (<see cref="EntitySchemaReader"/>). The count is strict: no byte
 /// scan, no resynchronisation, no recovery. A partition stream whose framing does not hold adds no record; the reason stands in its row.
 /// </summary>
 internal static class CoverageCensus
@@ -88,6 +89,9 @@ internal static class CoverageCensus
         var streams = new List<StreamRow>();
         var total = new Dictionary<(bool Family, int Channel, string Class), Tally>();
         var walker = failure == null ? new WideBlockWalker(document, (_, _) => null, []) : null;
+        // the values of an extensible storage entity are read by the entity schemas of the file; when those cannot be read the set
+        // is empty and an entity with values stops its record: the count never passes one by the bytes around it
+        walker?.UseEntitySchemas(EntitySchemaReader.Read(root, document));
         var adler = new Adler32();
         ulong terminator = width == 8 ? ulong.MaxValue : uint.MaxValue;
         int partitions = 0;
@@ -216,7 +220,7 @@ internal static class CoverageCensus
         return true;
     }
 
-    private static string Reason(WideBlockWalker.Walk walk, int end)
+    internal static string Reason(WideBlockWalker.Walk walk, int end)
     {
         if (walk.Error == null)
             return end - walk.Position <= 64 ? "short by " + (end - walk.Position).ToString(CultureInfo.InvariantCulture) + " bytes" : "short by more than 64 bytes";

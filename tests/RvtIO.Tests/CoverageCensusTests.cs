@@ -41,6 +41,48 @@ public sealed class CoverageCensusTests : IDisposable
 
     internal static ushort Id(string name) => (ushort)Schema.Classes.Single(c => c.Name == name).Id;
 
+    /// <summary>The decoded class table of a file with an extensible storage entity: Carrier (an entity and an int), the classes of the
+    /// document that lists the entity schemas, and the framing classes. Its ContentMarker names no release: the tests give one.</summary>
+    internal static readonly byte[] EntityTableBytes = BuildEntityTable();
+
+    internal static readonly SchemaDocument EntitySchema = TfSchemaReader.Parse(EntityTableBytes);
+
+    private static byte[] BuildEntityTable()
+    {
+        static Fld Of(string name, int classId, byte mods = 0) => new(name, 14, mods, Target: new SchemaStreamEditorTests.Back(classId));
+        var writer = new SchemaStreamEditorTests.Writer();
+        // the writer numbers the classes from 12 on
+        writer.Top(C("GUIDvalue", new Fld("m_guid", 9))).Top(C("ESEntity", new Fld("m_blob", 14, 1)));
+        writer.Top(C("Carrier", Of("m_entity", 13), new Fld("m_value", 4)));
+        writer.Top(C("ESField", new Fld("m_fieldName", 8, 0x60), new Fld("m_fieldTypeName", 8, 0x60), new Fld("m_containerType", 4), new Fld("m_entryIndex", 4)));
+        writer.Top(C("ESSchema", Of("m_fields", 15, 0x50), Of("m_guid", 12))).Top(C("std::pair< GUIDvalue, ESSchema >", Of("first", 12), Of("second", 16)));
+        writer.Top(C("ESSchemaStorage", Of("m_storedSchemas", 17, 0x50))).Top(C("ADocument", new Fld("m_pStorage", 14, 1)));
+        foreach (string name in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" }) writer.Top(C(name));
+        return writer.Build();
+    }
+
+    internal static ushort EntityId(string name) => (ushort)EntitySchema.Classes.Single(c => c.Name == name).Id;
+
+    private static readonly byte[] EntityGuid = [.. Enumerable.Range(0x21, 16).Select(i => (byte)i)];
+
+    private static byte[] Utf16(string text) => [.. BitConverter.GetBytes(text.Length), .. System.Text.Encoding.Unicode.GetBytes(text)];
+
+    /// <summary>The body of a Carrier: its entity names a schema, m_value, and behind the fields the values of the entity, a text and an int.</summary>
+    internal static readonly byte[] CarrierBody =
+        [.. BitConverter.GetBytes(EntityId("Carrier")), 0xFF, 0xFF, 0xFF, 0xFF, .. EntityGuid, 7, 0, 0, 0, .. Utf16("ab"), 3, 0, 0, 0];
+
+    /// <summary>The decoded Global/Latest: an ADocument whose storage holds the schema of that entity, the fields listed by name
+    /// (Number, Text) with the entry indexes 1 and 0, and the four bytes behind the last object.</summary>
+    internal static readonly byte[] EntityLatest =
+    [
+        .. BitConverter.GetBytes(EntityId("ADocument")), 0xFF, 0xFF, 0xFF, 0xFF, .. BitConverter.GetBytes(EntityId("ESSchemaStorage")),
+        1, 0, 0, 0, .. EntityGuid,
+        2, 0, 0, 0, .. Utf16("Number"), .. Utf16("int"), 0, 0, 0, 0, 1, 0, 0, 0, .. Utf16("Text"), .. Utf16("TCHAR"), 0, 0, 0, 0, 0, 0, 0, 0,
+        .. EntityGuid, 0, 0, 0, 0,
+    ];
+
+    internal static byte[] EntityPartition(params Rec[] records) => ElementCensusTests.Partition(EntityId, Block(false, records));
+
     /// <summary>A record body: the tag of the class and the bytes behind it.</summary>
     internal static byte[] Body(string className, params byte[] rest) => [.. BitConverter.GetBytes(Id(className)), .. rest];
 
@@ -88,6 +130,14 @@ public sealed class CoverageCensusTests : IDisposable
     }
 
     private CoverageCensus.Result RunProject(params Rec[] records) => Run(("Partitions/1", Partition(Block(false, records))));
+
+    private CoverageCensus.Result RunCarrier(params (string Path, byte[] Bytes)[] streams)
+    {
+        string path = Path.Combine(_folder, Guid.NewGuid().ToString("N") + ".rvt");
+        WriteFile(path, [.. streams, ("Partitions/1", EntityPartition(R(1, CarrierBody)))]);
+        using var root = RootStorage.OpenRead(path);
+        return CoverageCensus.Run(root, EntitySchema, 2022);
+    }
 
     private static CoverageCensus.ClassRow Row(CoverageCensus.Result result, bool family, int channel, string className) =>
         result.Classes.Single(c => c.Family == family && c.Channel == channel && c.Class == className);
@@ -162,6 +212,27 @@ public sealed class CoverageCensusTests : IDisposable
         Assert.Equal("end of payload at Store.m_value, in Store", Assert.Single(holder.Stops).Reason);
         // the count itself is left out of the reason, so that every such record falls under one reason
         Assert.Equal("count at Listed.m_items", Assert.Single(Row(result, false, 102, "Listed").Stops).Reason);
+    }
+
+    [Fact]
+    public void TheValuesOfAnEntity_AreReadByTheEntitySchemasOfGlobalLatest()
+    {
+        var result = RunCarrier(("Global/Latest", GzipMember.Write(EntityLatest)));
+
+        var row = Row(result, false, 102, "Carrier");
+        Assert.Equal((1, 1, CarrierBody.Length), (row.Sums.Items, row.Sums.Exact, row.Sums.ExactBytes));
+        Assert.Empty(row.Stops);
+    }
+
+    [Fact]
+    public void WhenTheEntitySchemasCannotBeRead_AnEntityWithValuesStopsItsRecord()
+    {
+        // no Global/Latest, one that does not decode, and one whose walk stops (cut inside the GUID of the schema)
+        foreach (var streams in new (string, byte[])[][] { [], [("Global/Latest", [1, 2, 3, 4])], [("Global/Latest", GzipMember.Write(EntityLatest[..^8]))] })
+        {
+            var row = Row(RunCarrier(streams), false, 102, "Carrier");
+            Assert.Equal("entity schema not stored at ESEntity.m_blob", Assert.Single(row.Stops).Reason);
+        }
     }
 
     [Fact]

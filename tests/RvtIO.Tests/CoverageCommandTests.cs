@@ -167,6 +167,32 @@ public sealed class CoverageCommandTests : IDisposable
     }
 
     [Fact]
+    public void Trace_PrintsTheWalkOfSingleRecords_WithTheValuesOfAnEntityReadByItsSchema()
+    {
+        // owner 1 holds an entity and is exact, owner 2 is the same record with one byte more
+        string source = P("entity.rvt");
+        WriteFile(source, ("Formats/Latest", PageCodec.EncodePadded(GzipMember.Write(EntityTableBytes))), ("BasicFileInfo", SavedBy2022),
+            ("Global/Latest", GzipMember.Write(EntityLatest)), ("Partitions/1", EntityPartition(R(1, CarrierBody), R(2, [.. CarrierBody, 9]))));
+        string[] before = Listing();
+
+        var byOwner = Run(source, "--trace", "1");
+        var byClass = Run(source, "--trace", "Carrier");
+
+        Assert.Equal((0, ""), (byOwner.Exit, byOwner.Error));
+        Assert.Equal($"=== Partitions/1 channel 102 owner 1 class Carrier ({EntityId("Carrier")}) body {CarrierBody.Length} bytes: exact", byOwner.Out[0]);
+        // the values of the entity are the one queued object: 12 bytes behind the tag, the entity and the int of the record
+        Assert.Contains("  queue 0: ESBlob (-1) at 26 (12 read)", byOwner.Out);
+        // a window larger than the body prints the whole body, also the largest number the option takes
+        Assert.Contains(byOwner.Out, line => line.StartsWith("bytes of the object, 26..", StringComparison.Ordinal));
+        Assert.Equal(byOwner.Out, Run(source, "--trace", "1", "--trace-bytes", "2147483647").Out);
+        // a class name selects the records of the class that are not exact
+        Assert.Equal($"=== Partitions/1 channel 102 owner 2 class Carrier ({EntityId("Carrier")}) body {CarrierBody.Length + 1} bytes: short by 1 bytes",
+            Assert.Single(byClass.Out, line => line.StartsWith("===", StringComparison.Ordinal)));
+        Assert.Equal(["No record matches."], Run(source, "--trace", "Carrier", "--trace-reason", "end of payload").Out);
+        Assert.Equal(before, Listing());
+    }
+
+    [Fact]
     public void AFileWhoseRecordsCannotBeCounted_IsStillMeasured_AndTheReasonIsGiven()
     {
         string report = P("report.json");
@@ -246,6 +272,9 @@ public sealed class CoverageCommandTests : IDisposable
             [source, "--top", "many"],
             [source, "--top", "-1"],
             [source, "--top", "1.5"],
+            [source, "--trace"],
+            [source, "--trace", "Plain", "--trace-max", "many"],
+            [source, "--trace", "Plain", "--report", P("report.json")],
         ];
         foreach (var args in bad)
         {

@@ -6,7 +6,8 @@ namespace RvtIO.Cli;
 /// <c>rvtio coverage &lt;file.rvt&gt; [--report &lt;report.json&gt;] [--top &lt;n&gt;]</c>: counts how many records of the partition streams of one file
 /// the file's own class schema walks to their last byte (<see cref="CoverageCensus"/>) and prints the counts. It writes nothing but the
 /// report. Exit codes: 0 measured (also when a partition stream does not frame or the records cannot be counted), 1 usage error (also a
-/// report that cannot be written), 2 the file cannot be read.
+/// report that cannot be written), 2 the file cannot be read. With <c>--trace</c> it prints the walk of single records instead
+/// (<see cref="CoverageTrace"/>), a developer aid.
 /// </summary>
 internal static class CoverageCommand
 {
@@ -19,13 +20,25 @@ internal static class CoverageCommand
 
     internal static int Run(string[] args, TextWriter output, TextWriter error)
     {
-        string? file = null, reportPath = null;
-        int top = 15;
+        string? file = null, reportPath = null, trace = null, traceReason = null;
+        int top = 15, traceMax = 3, traceChannel = 102, traceBytes = 256;
+        bool traceFamily = false;
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
             switch (arg)
             {
+                case "--trace-family": traceFamily = true; break;
+                case "--trace" or "--trace-reason" or "--trace-max" or "--trace-channel" or "--trace-bytes":
+                    if (i + 1 >= args.Length) return Usage(error, $"{arg} requires one value.");
+                    string traceValue = args[++i];
+                    if (arg == "--trace") trace = traceValue;
+                    else if (arg == "--trace-reason") traceReason = traceValue;
+                    else if (!int.TryParse(traceValue, NumberStyles.None, Inv, out int number)) return Usage(error, $"{arg} requires a whole number.");
+                    else if (arg == "--trace-max") traceMax = number;
+                    else if (arg == "--trace-channel") traceChannel = number;
+                    else traceBytes = number;
+                    break;
                 case "--report" or "--top":
                     if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
                         return Usage(error, $"{arg} requires one value.");
@@ -41,9 +54,23 @@ internal static class CoverageCommand
             }
         }
         if (file == null) return Usage(error, "coverage requires the file.");
+        if (trace != null && reportPath != null) return Usage(error, "--trace writes no report.");
         if (ReportProblem(file, reportPath) is { } problem) return Usage(error, problem + " Nothing was read or written.");
 
         string name = Path.GetFileName(file);
+        if (trace != null)
+        {
+            // --trace <class name | owner ids>: print the walk of single records instead of counting
+            var owners = trace.Split(',').Select(t => ulong.TryParse(t, NumberStyles.None, Inv, out ulong id) ? id : (ulong?)null).ToList();
+            bool byOwner = owners.All(o => o != null);
+            try
+            {
+                CoverageTrace.Write(file, new(byOwner ? null : trace, byOwner ? owners.Select(o => o!.Value).ToHashSet() : null, traceReason, traceChannel, traceFamily, traceMax, traceBytes), output);
+            }
+            catch (RvtInputException exception) { return Unreadable(error, null, exception.Kind, exception.Message, name); }
+            catch (RvtLimitException exception) { return Unreadable(error, null, "limit-exceeded", exception.Message, name); }
+            return RvtExitCodes.Success;
+        }
         CoverageCensus.Result result;
         try { result = CoverageCensus.Read(file); }
         catch (RvtInputException exception) { return Unreadable(error, reportPath, exception.Kind, exception.Message, name); }
@@ -115,7 +142,8 @@ internal static class CoverageCommand
 
     private static int Usage(TextWriter error, string message)
     {
-        error.WriteLine($"{message} Usage: rvtio coverage <file.rvt> [--report <report.json>] [--top <n>]");
+        error.WriteLine($"{message} Usage: rvtio coverage <file.rvt> [--report <report.json>] [--top <n>], or rvtio coverage <file.rvt> " +
+            "--trace <class|owner,...> [--trace-reason <text>] [--trace-max <n>] [--trace-channel <n>] [--trace-bytes <n>] [--trace-family]");
         return RvtExitCodes.Usage;
     }
 

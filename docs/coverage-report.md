@@ -31,6 +31,7 @@ The numbers and class names of this example are made up.
 | --- | --- |
 | `--report <report.json>` | Write the JSON report to this path. Written when the file was measured and when it cannot be read. The path must not name the input file or a directory. |
 | `--top <n>` | The number of class lines printed under `Not exact` (default 15). `0` prints none. The report always holds every class. |
+| `--trace <class\|owner,...>` | Print the walk of single records instead of counting; see [Tracing single records](#tracing-single-records). |
 
 `coverage` must be the first argument. The file name is printed and reported without its directory.
 
@@ -57,7 +58,8 @@ measured fact, not an error: the reason stands in the row of the stream and the 
 
 A record is **exact** when the walk of its body by the class schema of the file ends at the last byte of the body: the fields of the
 class its tag names, base class first, and then every object those fields queue, in queue order. The walk reads nothing but the
-schema and the body. It never scans for a position, never resynchronises and never skips what it cannot read: at the first thing it
+schema and the body, with one exception: the values of an extensible storage entity (see below), which it reads by the entity schemas
+the file stores. It never scans for a position, never resynchronises and never skips what it cannot read: at the first thing it
 cannot read it stops, and the record is not exact.
 
 Exact means that every byte of the record was assigned to a field of the schema. It does not mean that the value of a field is
@@ -65,6 +67,30 @@ understood, or that the record is exported.
 
 For a record of channel 102 or 103, the value stored in front of its length is compared with the Adler-32 checksum of its body. A
 difference is counted as a checksum mismatch; it does not change whether the record is exact.
+
+### Extensible storage entities
+
+An element can carry extensible storage entities (`ESEntity`). The class schema does not describe what an entity stores: its values
+are the fields of the entity's own schema, and those schemas are data of the file. To the count an entity is no record of its own:
+its values are bytes of the body of the record that carries it, and the record is exact only when they are read as well.
+
+`ESEntity.m_blob` is a 4-byte handle. `0` is no entity: nothing follows and nothing is queued. `0xFFFFFFFF` is followed by the
+16-byte GUID of the entity's schema, where a pointer to an object has its class tag, and the values of the entity are queued like an
+object: they lie behind every object queued earlier and in front of the objects queued later. The walk reads them as the fields of
+that schema in the order of `ESField.m_entryIndex` (the schema lists its fields by name, which is another order): one value, or a
+count and the values of an array, or a count and the pairs of a map, each of the type the field names: a text, a scalar, or a class
+of the class schema read inline. An entity that is itself a value queues its own values in turn.
+
+The entity schemas are read once per file from `Global/Latest`, an `ADocument` that the same walk reads. Its `ESSchemaStorage` holds
+them in `m_storedSchemas` (pairs of GUID and `ESSchema`) in the class schemas up to release 2024, and in `m_schemaUsageMap` (pairs of
+GUID and `SchemaUsageInfo`, whose `m_schema` is the `ESSchema`) from release 2025. That walk has the step budget of a record walk and
+its result is used only when it ends without an error. When `Global/Latest` is missing, does not decode or is not walked without an
+error, no entity schema is known, and every entity that has values stops the walk of its record with `entity schema not stored`. An
+entity is never passed by the look of the bytes around it.
+
+A stop inside the values of an entity ends with `, in ESBlob`. The field is `ESBlob.<field>` when the stop is in a value itself: a
+name from the entity schema stored in the file, which the add-in that wrote the entity defined, not from the class schema. When the
+stop is inside a value of a class type, the field is that of the inline class (for example `second` of a pair class).
 
 ## Stop reasons
 
@@ -79,6 +105,9 @@ being read, and with `, in <Class>` when that field belongs to a queued object a
 | `class N has no schema` | The schema does not declare class N: the class tag of the record, a base class, or the class of an inline structure. |
 | `end of payload` | A field needs more bytes than the body has left. |
 | `class tag N` | A pointer names class N, which the schema does not declare. |
+| `entity handle` | The handle of an extensible storage entity (`ESEntity.m_blob`) is neither `0` nor `0xFFFFFFFF`. |
+| `entity schema not stored` | An extensible storage entity names a schema that `Global/Latest` of the file does not hold. An entity in the document of a loaded family can name a schema that only that document uses. Also every entity with values of a file whose entity schemas cannot be read. |
+| `entity field type` | The schema of an extensible storage entity has a field the walk does not read: its type name is neither `TCHAR` (a text), one of the scalars `bool`, `char`, `short`, `int`, `float`, `double` and `int64_t`, nor a class of the class schema, or it is an array of texts, or its container type is not 0, 1 or 2. The same reason stands for a schema whose fields are not numbered from 0 without a gap or a repeat. |
 | `count` | The count of an array is above 5,000,000. The count itself is left out, so that all such records share one reason. |
 | `text length` | A text is longer than 100,000 characters. |
 | `type N` | The field has a type code the walk does not read. |
@@ -168,10 +197,45 @@ A percentage is rounded down, so `100.00%` is printed only when nothing is missi
 | 1 | The command line is wrong, or the report cannot be written. |
 | 2 | The file cannot be read: it is missing, empty, not a compound file, cut or damaged, its class table cannot be read, or a stream is longer than one array. One line on standard error. |
 
+## Tracing single records
+
+`--trace` is a developer aid for finding the rule a stopped walk is missing; it is not a stable interface. It prints the walk of
+single records instead of counting them. Nothing is counted and no report is written (`--report` with it is a usage error); the exit
+codes are the same, except that a file whose records cannot be counted is exit code 2.
+
+```
+rvtio coverage project.rvt --trace Alpha --trace-reason "end of payload"
+rvtio coverage project.rvt --trace 1204,1207
+```
+
+| Option | Effect |
+| --- | --- |
+| `--trace <class>` | The records whose class tag names this class and that are not exact. |
+| `--trace <owner>[,<owner>...]` | The records of these owner ids, exact or not. A value of whole numbers only is read as owner ids. |
+| `--trace-reason <text>` | With a class: only the records whose stop reason contains this text. |
+| `--trace-channel <n>` | The channel of the records (default 102). |
+| `--trace-family` | The records of the family blocks instead of those of the project block. |
+| `--trace-max <n>` | The most records printed (default 3). |
+| `--trace-bytes <n>` | The number of bytes shown behind the stop and at the end of the body (default 256). |
+
+For each record it prints:
+
+- the partition stream, the channel, the owner id, the class and its tag, the length of the body, and the stop reason or `exact`;
+- the position of the walk and the bytes left behind it, whether the fields of the record's own class were read, and every object
+  the walk queued, with the offset it starts at and its length. The values of an extensible storage entity are listed as `ESBlob`
+  with a negative number in place of a class tag;
+- the fields of the class of the object the walk stopped in (of the object read last when it did not stop): type code, modifiers,
+  fixed count and referenced class, as the class schema of the file gives them;
+- the bytes of that object in hexadecimal, with `>` in front of the byte the walk stopped at, and the end of the body when that is
+  further away.
+
+Offsets count from the first byte of the body. `No record matches.` is printed when the selection is empty. The walk is the one the
+count uses, with the entity schemas of the file.
+
 ## What it does not measure
 
 - The content of the `Global`, `Formats` and plain streams. A paged stream is only inflated; what it holds (the element table, the
-  history, the class table itself) is not walked.
+  history, the class table itself) is not walked. `Global/Latest` is walked for the entity schemas only and has no row in the counts.
 - The meaning of fields. An exact record is fully assigned to the fields of its class; whether a reader then uses those fields is
   another question, as is whether an element is exported. The export report (`--report` of an export, see
   [the export report](export-report.md)) answers that one.
