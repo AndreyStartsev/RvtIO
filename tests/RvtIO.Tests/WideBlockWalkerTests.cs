@@ -56,6 +56,27 @@ public class WideBlockWalkerTests
         new(Schema(), (declaring, field) => declaring.Name + "." + field.Name, records ?? []);
 
     [Fact]
+    public void Walk_ReadsAClassReferenceAsATwoByteClassTag()
+    {
+        // the shape of ElementHeader.m_classDef: an inline structure whose only field is a class reference (type 10)
+        var schema = new SchemaDocument
+        {
+            Classes =
+            [
+                new(1, "ClassDefinitionRef", 0, 1, [Field("m_ref", 10)], []),
+                new(2, "Header", 0, 1, [Field("m_classDef", 14, 0, 1), Field("m_next", 4)], []),
+            ],
+        };
+        var block = Block(2, w => { w.Write((ushort)0x1234); w.Write(77); });
+        var walk = new WideBlockWalker(schema, (declaring, field) => declaring.Name + "." + field.Name, []).Run(block, 0, block.Length, 2);
+
+        Assert.True(walk.Exact, walk.Error);
+        var captures = walk.Captures.ToDictionary(c => c.Key);
+        Assert.Equal(0x1234, captures["ClassDefinitionRef.m_ref"].Integer);
+        Assert.Equal(77, captures["Header.m_next"].Integer);
+    }
+
+    [Fact]
     public void Walk_ConsumesAllFieldKindsToTheLastByte()
     {
         var block = DerivedBlock(withStore: true);

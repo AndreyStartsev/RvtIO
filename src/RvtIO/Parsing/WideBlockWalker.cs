@@ -10,7 +10,7 @@ namespace RvtIO.Parsing;
 /// A block payload is the class id (u16) followed by the fields of the class chain, base class first, in schema order:
 /// the "root" fields, and then one object per pointer the root (and every object) queued, in queue order. Field grammar:
 ///   container (mods high nibble): 0 single, 1 fixed array of Fixed items, 5 u32 count (0xFFFFFFFF = empty) and items, 6 text
-///   scalar by type: 1,2 = 1 byte; 3 = 2; 4,5,6 = 4; 7,10,11 = 8; 8 = u32 length and UTF-16 text; 9 = 16 (GUID);
+///   scalar by type: 1,2 = 1 byte; 3 = 2; 4,5,6 = 4; 7,11 = 8; 10 = 2 (class tag); 8 = u32 length and UTF-16 text; 9 = 16 (GUID);
 ///     13 = array of Args[0].Fixed items of Args[0].Type; 14 by the low mods nibble:
 ///       3 back reference: u32;  1, 2, 4 owned pointer: u32 handle, and when it is not 0 a u16 class tag, the object follows later;
 ///       0 with a class reference: the class's fields inline (an ElementId is Identifier.m_id64, 8 bytes); 0 without: u32 handle,
@@ -376,7 +376,16 @@ internal sealed class WideBlockWalker
                 if (record != null) record[f.Name] = v;
                 return;
             }
-            case 10: case 11:
+            case 10:
+            {
+                // a class reference is the 2-byte class tag (ElementHeader.m_classDef)
+                int p = Take(c, 2);
+                int v = BitConverter.ToUInt16(c.D, p);
+                Note(CaptureKind.Integer, v, 0, null);
+                if (record != null) record[f.Name] = (long)v;
+                return;
+            }
+            case 11:
             {
                 int p = Take(c, 8);
                 long v = BitConverter.ToInt64(c.D, p);
