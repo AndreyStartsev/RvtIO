@@ -90,8 +90,8 @@ entity is never passed by the look of the bytes around it.
 
 An entity in the block of a loaded family (a keyed block) can name a schema that only the family's own document holds. Up to release
 2024 that document stores its schemas itself: `Global/ContentDocuments` holds, per content document, a `ContentMarker` object (the
-handle `0xFFFFFFFF`, the `ContentKey` tag and its `m_guidKey`, 16 bytes, which is the key of the keyed block; then `m_nElementCount`,
-4 bytes), a 4-byte length, the document's own `ADocument` of that length, and the length again; a `ContentMarker` with the handle `0`,
+handle `0xFFFFFFFF`, the `ContentKey` tag, a 4-byte count, then `m_guidKey` of the `ContentKey`, 16 bytes, which is the key of the
+keyed block; the same layout as a content block of a partition stream), a 4-byte length, the document's own `ADocument` of that length, and the length again; a `ContentMarker` with the handle `0`,
 its count and a length of `0` closes the stream at its last byte. Each of those `ADocument`s is read like `Global/Latest`. From
 release 2025 the documents of `Global/ContentDocuments` store no schema: `m_schemaUsageMap` of `Global/Latest` holds them, and
 `SchemaUsageInfo.m_contentDocsKeys` lists the keys of the content documents that use each one. So a record of a keyed block is read by

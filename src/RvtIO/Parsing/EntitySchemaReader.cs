@@ -21,8 +21,8 @@ internal static class EntitySchemaReader
 
     /// <summary>The entity schemas of each loaded family document, by the key of its content block (<see cref="PartitionFraming"/>, the
     /// same text): an entity in a family block names a schema of its own document, which Global/Latest need not hold. Global/ContentDocuments
-    /// holds per content document a ContentMarker object as the class schema lays it out (m_oContentKey: handle 0xFFFFFFFF, the ContentKey
-    /// tag and its m_guidKey, 16 bytes; m_nElementCount: u32, which is 0xFFFFFFFF), u32 length, that many bytes of the document's own
+    /// holds per content document a ContentMarker object laid out as a content block of a partition stream (handle 0xFFFFFFFF, the
+    /// ContentKey tag, a u32 count, which is 0xFFFFFFFF, then m_guidKey, 16 bytes), u32 length, that many bytes of the document's own
     /// ADocument, and the length again; a ContentMarker with the handle 0, its count and a length of 0 ends it at its last byte. Each
     /// ADocument is read like Global/Latest; a document whose ADocument is not walked without an error has no schemas. Empty when the
     /// stream is missing, does not decode or does not end so.</summary>
