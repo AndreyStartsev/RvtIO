@@ -11,8 +11,10 @@ namespace RvtIO.Parsing;
 /// m_id, m_OwningElementId, m_partitionId); the rows are in strictly increasing m_id order. Revit's UniqueId of a row is
 /// the episode GUID episodes[count - 1 - m_creationDate] and m_originalElementId (see <see cref="ElementExportIds"/>).
 ///
-/// Partition stream: back-to-back items found by a position-by-position walk. Every item opens with the 8-byte element id
-/// and closes with a 4-byte echo of its length, which is what validates a candidate:
+/// Partition stream: read by its framing (<see cref="PartitionFraming"/>) where it holds, the header records being the channel-101
+/// records and the blocks the channel-102 records of the project's own block; otherwise back-to-back items found by a
+/// position-by-position walk. Every item opens with the 8-byte element id and closes with a 4-byte echo of its length, which is
+/// what validates a candidate:
 ///   record  [id:8][size:4][ElementHeader class id:2 ...][size:4]                 (item length 16 + size)
 ///   block   [id:8][u32:4][size:4][class id:2 ...][size:4]                        (item length 20 + size)
 /// The ElementHeader record opens with m_regenHistory (u32 count + count entries of the schema-declared fixed size), then
@@ -115,11 +117,14 @@ internal static class WideElementRecords
 
     /// <summary>Walks every partition stream (each given as its decoded chunks, which are concatenated) and collects,
     /// for the ids in <paramref name="wanted"/>, the ElementHeader category and the Element-derived block class.
-    /// Null when the schema does not declare the expected ElementHeader shape.</summary>
+    /// A stream whose entry in <paramref name="framed"/> is set is read by its framing instead: the header records are the
+    /// channel-101 records and the blocks the channel-102 records of the project's own block, and the documents of loaded
+    /// families are not read. Null when the schema does not declare the expected ElementHeader shape.</summary>
     internal static Index? BuildIndex(
         IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted,
-        Action<uint, byte[], int, int, int>? onRootBlock = null)
+        Action<uint, byte[], int, int, int>? onRootBlock = null, IReadOnlyList<PartitionFraming.Framed?>? framed = null)
     {
+        if (framed != null && framed.Count != streams.Count) throw new ArgumentException("one framing entry per stream", nameof(framed));
         var header = schema.ByName("ElementHeader");
         var element = schema.ByName("Element");
         if (header == null || element == null || header.Fields.Count < 2
@@ -143,8 +148,10 @@ internal static class WideElementRecords
         var conflictCategory = new HashSet<uint>();
         var conflictDesignOption = new HashSet<uint>();
         var conflictClass = new HashSet<uint>();
-        foreach (var chunks in streams)
+        for (int s = 0; s < streams.Count; s++)
         {
+            var frame = framed?[s] is { } f && f.IdWidth == width ? f : null;
+            var chunks = frame?.Segments ?? streams[s];
             long total = 0;
             foreach (var c in chunks) total += c.Length;
             if (total > int.MaxValue - 64) return null;
@@ -154,7 +161,32 @@ internal static class WideElementRecords
             var recordIds = new HashSet<uint>();
             var blockClasses = new Dictionary<uint, int>();   // -1: the stream holds blocks of two classes for the id
             var rootBlocks = onRootBlock == null ? null : new List<(uint Id, int Offset, int Size, int Class)>();
-            Walk(buf, header.Id, width, categoryWidth, known, isElement, entry, wanted, index, conflictCategory, conflictDesignOption, recordIds, blockClasses, rootBlocks, outlineTags);
+            void Header(int p, int size, uint id)
+            {
+                index.Records++;
+                if (!wanted.Contains(id)) return;
+                recordIds.Add(id);
+                RecordCategory(buf, p + width - 8, size, categoryWidth, entry, id, index, conflictCategory, conflictDesignOption, outlineTags);
+            }
+            void Block(int p, int size, uint id, int cls)
+            {
+                index.Blocks++;
+                if (!isElement[cls] || !wanted.Contains(id)) return;
+                blockClasses[id] = blockClasses.TryGetValue(id, out int prior) && prior != cls ? -1 : cls;
+                rootBlocks?.Add((id, p + width + 8, size, cls));
+            }
+            if (frame == null) Walk(buf, header.Id, width, known, Header, Block);
+            else
+                foreach (var item in frame.Items)
+                {
+                    // an id the 32-bit element table cannot hold is skipped, as the scan skips it
+                    if (item.Owner > uint.MaxValue) continue;
+                    int p = (int)item.Offset;
+                    if (item.Channel == 101 && item.Length >= width + 16 && BitConverter.ToUInt16(buf, p + width + 4) == header.Id)
+                        Header(p, item.Length - width - 8, (uint)item.Owner);
+                    else if (item.Channel == 102 && item.Length >= width + 20 && BitConverter.ToUInt16(buf, p + width + 8) is var cls && cls < known.Length && known[cls])
+                        Block(p, item.Length - width - 12, (uint)item.Owner, cls);
+                }
             // payload (class id first) of every Element-derived block whose stream holds the header record of its id
             if (rootBlocks != null)
                 foreach (var (blockId, offset, size, cls) in rootBlocks)
@@ -173,10 +205,8 @@ internal static class WideElementRecords
         return index;
     }
 
-    private static void Walk(byte[] b, int headerId, int w, int categoryWidth, bool[] known, bool[] isElement, int entry,
-        IReadOnlySet<uint> wanted, Index index, HashSet<uint> conflictCategory, HashSet<uint> conflictDesignOption,
-        HashSet<uint> recordIds, Dictionary<uint, int> blockClasses,
-        List<(uint Id, int Offset, int Size, int Class)>? rootBlocks, (int Outline, int Parents)? outlineTags)
+    /// <summary>The position-by-position scan: every candidate whose length echo holds is a header record or a block (item start, size, id).</summary>
+    private static void Walk(byte[] b, int headerId, int w, bool[] known, Action<int, int, uint> header, Action<int, int, uint, int> block)
     {
         int n = b.Length;
         int p = 0;
@@ -189,12 +219,7 @@ internal static class WideElementRecords
             if (BitConverter.ToUInt16(b, p + w + 4) == headerId && size >= 8 && size < 4_000_000
                 && p + w + 8L + size <= n && BitConverter.ToUInt32(b, p + w + 4 + (int)size) == size)
             {
-                index.Records++;
-                if (wanted.Contains(id))
-                {
-                    recordIds.Add(id);
-                    RecordCategory(b, p + w - 8, (int)size, categoryWidth, entry, id, index, conflictCategory, conflictDesignOption, outlineTags);
-                }
+                header(p, (int)size, id);
                 p += w + 8 + (int)size;
                 continue;
             }
@@ -204,12 +229,7 @@ internal static class WideElementRecords
             if (blockSize >= 8 && blockSize < 8_000_000 && cls < known.Length && known[cls]
                 && p + w + 12L + blockSize <= n && BitConverter.ToUInt32(b, p + w + 8 + (int)blockSize) == blockSize)
             {
-                index.Blocks++;
-                if (isElement[cls] && wanted.Contains(id))
-                {
-                    blockClasses[id] = blockClasses.TryGetValue(id, out int prior) && prior != cls ? -1 : cls;
-                    rootBlocks?.Add((id, p + w + 8, (int)blockSize, cls));
-                }
+                block(p, (int)blockSize, id, cls);
                 p += w + 12 + (int)blockSize;
                 continue;
             }

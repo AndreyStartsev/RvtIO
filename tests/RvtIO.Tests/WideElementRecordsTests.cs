@@ -305,6 +305,33 @@ public class WideElementRecordsTests
         Assert.Equal(ids.Wall, index.RootClasses[11]);
     }
 
+    [Fact]
+    public void BuildIndex_ReadsAFramedStreamByTheRecordsOfTheProjectBlockOnly()
+    {
+        var (stream, ids) = BuildSchema();
+        var schema = FileSchema.Parse(stream)!;
+        byte[] header = Record(ids, 10, [], -2000011), root = Block(10, ids.Level);
+        // the same id in the document of a loaded family, a keyed block the framing does not list
+        var data = Join(header, root, Record(ids, 10, [], -5), Block(10, ids.Wall));
+        var framed = new PartitionFraming.Framed([data[..20], data[20..]],
+            [new(101, 10, 0, header.Length), new(102, 10, header.Length, root.Length)], 8);
+        var roots = new List<(uint Id, int Offset, int Size, int Class)>();
+
+        var index = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 10 }, (id, _, offset, size, cls) => roots.Add((id, offset, size, cls)), [framed])!;
+
+        Assert.Equal(-2000011, index.HeaderCategories[10]);
+        Assert.Equal(ids.Level, index.RootClasses[10]);
+        Assert.Equal((1, 1), (index.Records, index.Blocks));
+        Assert.Equal([(10u, header.Length + 16, root.Length - 20, ids.Level)], roots);
+        // the scan takes the family's records for a second copy of the element, and the copies disagree
+        var scanned = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 10 })!;
+        Assert.Null(scanned.HeaderCategories[10]);
+        Assert.False(scanned.RootClasses.ContainsKey(10));
+        // a framing read with another id width is not used: the stream is scanned
+        var otherWidth = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 10 }, null, [framed with { IdWidth = 4 }])!;
+        Assert.Null(otherWidth.HeaderCategories[10]);
+    }
+
     private sealed record OutlineIds(int Header, int Outline, int Parents, int Level);
 
     /// <summary>A schema whose ElementHeader has the layout of the files: ids, m_viewRules, m_abFlags4Bytes, m_classDef and the pointers
