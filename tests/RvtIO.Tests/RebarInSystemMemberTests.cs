@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>The layers of a RebarSystem behind an empty extensible storage entity are not read: the bars of its RebarInSystem members are not written yet.</summary>
+/// <summary>The layers of a RebarSystem are read whether or not an extensible storage entity lies in front of them.</summary>
 public class RebarInSystemMemberTests
 {
     private const int IdentifierId = 1, ElementIdId = 2, GuidId = 3, PairId = 4, EntityId = 5, CellId = 6, CurveId = 7, LineId = 8, LayerId = 9, SystemId = 10;
@@ -61,5 +61,5 @@ public class RebarInSystemMemberTests
     public void ReadLayers_ReadsASystemWithoutAnEntity() => Assert.Single(ReadLayers(emptyEntity: false)!);
 
     [Fact]
-    public void ReadLayers_SkipsASystemBehindAnEmptyEntity() => Assert.Null(ReadLayers(emptyEntity: true));
+    public void ReadLayers_ReadsASystemBehindAnEmptyEntity() => Assert.Single(ReadLayers(emptyEntity: true)!);
 }

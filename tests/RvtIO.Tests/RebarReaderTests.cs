@@ -192,6 +192,28 @@ public class RebarReaderTests
         Assert.Contains(lines, l => l.StartsWith("#") && l.Contains("=IFCBUILDING(") && containment.EndsWith(l[..l.IndexOf('=')] + ");"));
     }
 
+    [Fact]
+    public void Export_GivesTheOneBarOfASystemTheGlobalIdOfTheSystem()
+    {
+        Guid alone = Guid.NewGuid(), aloneSystem = Guid.NewGuid(), member = Guid.NewGuid();
+        var only = Bar(500, 600);
+        only.SerializedExportId = alone;
+        only.RebarBars = only.RebarBars! with { OnlyBarOfSystem = true };
+        var other = Bar(501, 601);
+        other.SerializedExportId = member;
+        string ifc = Export(only, other,
+            new Element { Id = 600, CategoryId = -2009003, Name = "Area Reinforcement 1", SerializedExportId = aloneSystem },
+            new Element { Id = 601, CategoryId = -2009003, Name = "Area Reinforcement 2", SerializedExportId = Guid.NewGuid() });
+        string[] lines = ifc.Split('\n');
+
+        // the one RebarInSystem of its system takes the GlobalId of the system; a bar of a system with more takes its own sub-element (bars + 3)
+        Assert.Contains(lines, l => l.Contains("IFCREINFORCINGBAR('" + IfcGuid.ToIfcGuid(aloneSystem) + "'") && l.Contains("'500'"));
+        Assert.Contains(lines, l => l.Contains("IFCREINFORCINGBAR('" + IfcGuid.ToIfcGuid(ElementExportIds.SubElementId(member, 5)) + "'") && l.Contains("'501'"));
+        // the system whose GlobalId the bar carries is written as no group; the other one is
+        Assert.DoesNotContain(lines, l => l.Contains("IFCGROUP(") && l.Contains("Area Reinforcement 1"));
+        Assert.Contains(lines, l => l.Contains("IFCGROUP(") && l.Contains("Area Reinforcement 2"));
+    }
+
     /// <summary>A container of two items (one bar each) of the container type "Container 1".</summary>
     private static Element Container(int id)
     {
