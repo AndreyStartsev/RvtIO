@@ -109,7 +109,6 @@ being read, and with `, in <Class>` when that field belongs to a queued object a
 | `entity schema not stored` | An extensible storage entity names a schema that `Global/Latest` of the file does not hold. An entity in the document of a loaded family can name a schema that only that document uses. Also every entity with values of a file whose entity schemas cannot be read. |
 | `entity field type` | The schema of an extensible storage entity has a field the walk does not read: its type name is neither `TCHAR` (a text), one of the scalars `bool`, `char`, `short`, `int`, `float`, `double` and `int64_t`, nor a class of the class schema, or it is an array of texts, or its container type is not 0, 1 or 2. The same reason stands for a schema whose fields are not numbered from 0 without a gap or a repeat. |
 | `count` | The count of an array is above 5,000,000. The count itself is left out, so that all such records share one reason. |
-| `text length` | A text is longer than 100,000 characters. |
 | `type N` | The field has a type code the walk does not read. |
 | `template field` | A template field without exactly one argument of a fixed count. |
 | `depth` | Inline structures nest deeper than 40 levels. |

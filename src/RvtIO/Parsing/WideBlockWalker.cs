@@ -444,7 +444,8 @@ internal sealed class WideBlockWalker
             case 8:
             {
                 uint len = U32(c);
-                if (len > 100_000) throw new Fail("text length");
+                // a text is as long as its count says (no other limit); twice the count may not fit an int
+                if (2L * len > c.End - c.Pos) throw new Fail("end of payload");
                 int p = Take(c, 2 * (int)len);
                 string s = Encoding.Unicode.GetString(c.D, p, 2 * (int)len);
                 Note(CaptureKind.Text, 0, 0, s);
