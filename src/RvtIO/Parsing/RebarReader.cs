@@ -123,7 +123,8 @@ internal static partial class RebarReader
 
     internal static ReinforcementData Read(
         IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted,
-        IReadOnlyDictionary<Guid, SchemaField[]?>? entitySchemas = null, bool passUnknownEntities = false)
+        IReadOnlyDictionary<Guid, SchemaField[]?>? entitySchemas = null, bool passUnknownEntities = false,
+        IReadOnlyList<PartitionFraming.Framed?>? framed = null)
     {
         var result = new Dictionary<uint, RebarBars>();
         var joists = new Dictionary<uint, JoistSystemData>();
@@ -220,7 +221,7 @@ internal static partial class RebarReader
                     foreach (var ((layer, index), bar) in ReadHeld(walk.Captures)) held.TryAdd((id, layer, index), bar);
             }
             else if (ReadMember(walker, walk, byQueue) is { } member) members.TryAdd(id, member);
-        });
+        }, framed);
         RebarBars? Solve(PendingBar bar) =>
             diameters.TryGetValue(bar.BarTypeId, out var barDiameters) && barKinds.TryGetValue(bar.BarTypeId, out var kind)
             && shapeDefinitions.TryGetValue(bar.ShapeId, out var definition) ? SolveShapeDriven(bar, definition, hookKinds, kind, barDiameters.Model) : null;
@@ -228,7 +229,7 @@ internal static partial class RebarReader
             if (Solve(bar) is { } solved) result.TryAdd(id, solved);
         // the items of a container that can be solved; their bar types come with the pass, like those of the other bars. They are in the
         // coordinates of the host instance, so a container whose host has no frame is not written.
-        var hostFrames = ReadHostFrames(walker, streams, schema, containers.Values.Select(c => (uint)c.HostId).ToHashSet());
+        var hostFrames = ReadHostFrames(walker, streams, framed, schema, containers.Values.Select(c => (uint)c.HostId).ToHashSet());
         foreach (var (id, (typeId, hostId, inAssembly, items)) in containers)
         {
             if (!hostFrames.TryGetValue((uint)hostId, out var hostFrame)) continue;
@@ -299,7 +300,8 @@ internal static partial class RebarReader
     /// <summary>The frame (row-major 3x3 of the columns x direction (m_RefDir), its cross product with the axis, axis, then the origin: 12 numbers) of
     /// each of the FamilyInstance elements <paramref name="hosts"/> (FamilyInstance.m_instOrigin, m_RefDir and m_zAxis); a host that is no
     /// FamilyInstance or whose values are not a frame has none.</summary>
-    private static Dictionary<uint, double[]> ReadHostFrames(WideBlockWalker walker, IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> hosts)
+    private static Dictionary<uint, double[]> ReadHostFrames(WideBlockWalker walker, IReadOnlyList<IReadOnlyList<byte[]>> streams,
+        IReadOnlyList<PartitionFraming.Framed?>? framed, FileSchema schema, IReadOnlySet<uint> hosts)
     {
         var frames = new Dictionary<uint, double[]>();
         if (hosts.Count == 0) return frames;
@@ -320,7 +322,7 @@ internal static partial class RebarReader
             if (Math.Abs(Dot(x, x) - 1) > 1e-9 || Math.Abs(Dot(z, z) - 1) > 1e-9 || Math.Abs(Dot(x, z)) > 1e-9) return;
             double[] y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
             frames.TryAdd(id, [x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2], origin[0], origin[1], origin[2]]);
-        });
+        }, framed);
         return frames;
     }
 

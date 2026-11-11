@@ -31,6 +31,15 @@ internal static class PartitionFraming
     /// that is the concatenation of every segment's output in file order; the item is <c>Item.Length</c> bytes there.</summary>
     internal readonly record struct Record(int Block, string Key, int Channel, ulong Owner, uint Extra, ReadOnlyMemory<byte> Body, ReadOnlyMemory<byte> Item, long Offset);
 
+    /// <summary>Where a record of the null-key map lies: its channel, owner, and the whole item (owner to closing size) at <see cref="Offset"/>
+    /// for <see cref="Length"/> bytes in the stream's inflated output.</summary>
+    internal readonly record struct ProjectItem(int Channel, ulong Owner, long Offset, int Length);
+
+    /// <summary>A partition stream read by its framing: the output of every segment in file order, and the records of the project's own block
+    /// (the null-key map) in file order, without the chain terminators. The records of the keyed blocks (loaded family documents) are not listed.
+    /// <see cref="IdWidth"/> is the byte width of the owner the walk read.</summary>
+    internal sealed record Framed(IReadOnlyList<byte[]> Segments, List<ProjectItem> Items, int IdWidth);
+
     internal static Tags? TagsOf(FormatsSchema schema)
     {
         ushort? Id(string name) => schema.IdOf(name) is int id and <= ushort.MaxValue ? (ushort)id : null;

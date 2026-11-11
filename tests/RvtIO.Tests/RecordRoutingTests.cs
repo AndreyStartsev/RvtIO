@@ -203,11 +203,23 @@ public class RecordRoutingTests
         // ranges: [1,3) inside a chunk, [4,7) across the first boundary, [9,13) across the second and to the end
         var pruned = RecordRouting.Prune(chunks, lengths, [(1, 2), (4, 3), (9, 4)])!;
         Assert.Equal([[0, 3], [7, 8], []], pruned.Select(c => c.ToArray()).ToArray());
-        // no ranges keep every byte
+        // no ranges keep every byte; a chunk no range reaches is the same array
         Assert.Equal(chunks.Select(c => c.ToArray()), RecordRouting.Prune(chunks, lengths, [])!.Select(c => c.ToArray()));
+        var first = RecordRouting.Prune(chunks, lengths, [(1, 2)])!;
+        Assert.Same(chunks[1], first[1]);
+        Assert.Same(chunks[2], first[2]);
+        Assert.Equal([0, 3, 4], first[0]);
         // chunks that are not the framed segments are not touched
         Assert.Null(RecordRouting.Prune(chunks, [5, 5, 4], [(1, 2)]));
         Assert.Null(RecordRouting.Prune(chunks, [5, 5], [(1, 2)]));
+    }
+
+    [Fact]
+    public void DropsTheFramedRecordsThatAreNotTheCurrentCopy()
+    {
+        var items = new List<PartitionFraming.ProjectItem> { new(101, 1, 0, 20), new(101, 2, 20, 20), new(102, 1, 40, 24), new(102, 2, 64, 24) };
+        RecordRouting.Drop(items, [(20, 20), (64, 24)]);
+        Assert.Equal([new(101, 1, 0, 20), new(102, 1, 40, 24)], items);
     }
 
     /// <summary>TESTFILE.rvt is a Revit 2022 project saved in five increments (partition streams 0, 1, 3, 4, 5). Measured

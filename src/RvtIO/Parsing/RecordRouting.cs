@@ -120,6 +120,14 @@ internal static class RecordRouting
         return ranges;
     }
 
+    /// <summary>The records of the framing of one partition stream without those the given ranges (<see cref="Stale"/>) mark as not
+    /// current: both walks of the stream place an item at the same offset.</summary>
+    internal static void Drop(List<PartitionFraming.ProjectItem> items, IReadOnlyList<(long Start, int Length)> stale)
+    {
+        var staleAt = stale.Select(s => s.Start).ToHashSet();
+        items.RemoveAll(i => staleAt.Contains(i.Offset));
+    }
+
     /// <summary>The chunks of one partition stream without the given byte ranges of its inflated stream. Null when the chunks are
     /// not the segments of the framing (same count, same lengths), so a range could not be placed exactly.</summary>
     internal static List<byte[]>? Prune(IReadOnlyList<byte[]> chunks, IReadOnlyList<int> segmentLengths, IReadOnlyList<(long Start, int Length)> ranges)
@@ -133,6 +141,13 @@ internal static class RecordRouting
         foreach (var chunk in chunks)
         {
             long chunkEnd = chunkStart + chunk.Length;
+            // a chunk no range reaches is kept as it is (the framing of the stream holds on to it as well)
+            if (next >= ranges.Count || ranges[next].Start >= chunkEnd)
+            {
+                result.Add(chunk);
+                chunkStart = chunkEnd;
+                continue;
+            }
             var kept = new MemoryStream(chunk.Length);
             long position = chunkStart;
             while (next < ranges.Count && ranges[next].Start < chunkEnd)
