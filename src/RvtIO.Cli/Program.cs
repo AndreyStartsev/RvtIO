@@ -70,6 +70,9 @@ internal static partial class Program
           coverage <file.rvt> [--report <report.json>] [--top <n>]
                                             (first argument) count the records of the partition streams that the class schema of the
                                             file walks to their last byte, per channel and class; writes nothing but the report
+          coverage <file.rvt> --trace <class|owner,...> [--trace-reason <text>] [--trace-max <n>] [--trace-channel <n>]
+                                            [--trace-bytes <n>] [--trace-family]
+                                            (developer aid) print the field walk of single records instead of counting them
           --schema-dump <file> <out.json>   (first argument) write the class schema embedded in a file
           --schema-check <file|json> [out.txt]   (first argument) validate a class schema
           --schema-diff <a> <b> [out.txt]   (first argument) compare two class schemas

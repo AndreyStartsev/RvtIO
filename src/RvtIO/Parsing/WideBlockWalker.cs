@@ -16,8 +16,10 @@ namespace RvtIO.Parsing;
 ///       0 with a class reference: the class's fields inline (an ElementId is Identifier.m_id64, 8 bytes); 0 without: u32 handle,
 ///       and when it is 0xFFFFFFFF a u16 class tag (queued)
 /// The block is consumed exactly when the position after the last queued object equals the end of the payload. The walk
-/// stops without a value at a class tag the schema does not declare and at data it cannot interpret (ES entity blobs, the
-/// layout of which depends on a schema stored elsewhere in the file); what was read until then is kept.
+/// stops without a value at a class tag the schema does not declare and at data it cannot interpret; what was read until then
+/// is kept. The values of an extensible storage entity are no class of the class schema: they are read by the entity schemas of
+/// the file when those are given (<see cref="UseEntitySchemas"/>); without them the entity is passed and the objects that lie
+/// behind its values are read out of place.
 /// </summary>
 internal sealed class WideBlockWalker
 {
@@ -85,6 +87,9 @@ internal sealed class WideBlockWalker
     private readonly ConcurrentDictionary<(int, string), string?> _keys = new();
     private readonly bool[] _isIdentifier;
     private readonly int _idWidth;
+    private readonly SchemaClass _entityBlob;
+    private Dictionary<Guid, int>? _entityLayoutOf;
+    private SchemaField[]?[] _entityLayouts = [];
 
     /// <summary>The most objects and scalars one walk reads (the error is "step budget" beyond it), so that a misaligned walk does not
     /// loop over millions of items without bytes.</summary>
@@ -104,9 +109,20 @@ internal sealed class WideBlockWalker
         // Identifier.m_id is 4 bytes up to Revit 2023 and Identifier.m_id64 8 bytes from Revit 2024
         _idWidth = _classes.Values.FirstOrDefault(c => c.Name == "Identifier") is { Fields: [{ Type: 4 or 11 } idField] }
             ? idField.Type == 4 ? 4 : 8 : 8;
+        _entityBlob = _classes.Values.FirstOrDefault(c => c.Name == "ESBlob") ?? new SchemaClass(-1, "ESBlob", 0, 0, [], []);
     }
 
-    internal SchemaClass? Class(int id) => _classes.GetValueOrDefault(id);
+    /// <summary>The fields an entity of each extensible storage schema of the file stores, by schema GUID (<see cref="EntitySchemaReader"/>;
+    /// null for a schema with a field type that is not read). With them, also with an empty set, an entity is read by its schema or
+    /// stops the walk; without this call the walk passes an entity as it did before.</summary>
+    internal void UseEntitySchemas(IReadOnlyDictionary<Guid, SchemaField[]?> schemas)
+    {
+        _entityLayouts = [.. schemas.Values];
+        _entityLayoutOf = schemas.Keys.Select((guid, index) => (guid, index)).ToDictionary(pair => pair.guid, pair => pair.index);
+    }
+
+    /// <summary>The class of a queue entry; the values of an extensible storage entity (a negative entry) are an ESBlob.</summary>
+    internal SchemaClass? Class(int id) => id < 0 ? _entityBlob : _classes.GetValueOrDefault(id);
 
     private (SchemaClass Declaring, SchemaField Field)[] Chain(int classId) => _chains.GetOrAdd(classId, id =>
     {
@@ -267,10 +283,31 @@ internal sealed class WideBlockWalker
     {
         if (depth > 40) throw new Fail("depth");
         if (++c.Steps > StepBudget) throw new Fail("step budget");
+        if (classId < 0) { ReadEntityPayload(c, classId, depth); return; }
         Dictionary<string, object?>? record = _recordClasses.Contains(classId) ? new() : null;
         if (record != null && c.AtRoot) record[RootFieldKey] = c.RootField;
         foreach (var (declaring, field) in Chain(classId)) ReadField(c, declaring, field, depth, record);
         if (record != null) c.Walk.Records.Add((classId, c.QueueIndex, record));
+    }
+
+    // The values of an extensible storage entity are the fields of its schema, which the class schema does not hold: each one stored
+    // like a class field of the same type, in the order of ESField.m_entryIndex.
+    private void ReadEntityPayload(Context c, int queued, int depth)
+    {
+        foreach (var field in _entityLayouts[-1 - queued]!) ReadField(c, _entityBlob, field, depth, null);
+    }
+
+    // ESEntity.m_blob is an owned pointer whose class tag is not written: a handle of 0 is no entity and nothing follows; behind
+    // 0xFFFFFFFF the 16-byte GUID of the entity's schema stands where the class tag would, and the values are queued like any owned object.
+    private void QueueEntityPayload(Context c, uint handle)
+    {
+        if (handle == 0) return;
+        if (handle != 0xFFFFFFFF) throw new Fail("entity handle");
+        var guid = new Guid(c.D.AsSpan(Take(c, 16), 16));
+        if (!_entityLayoutOf!.TryGetValue(guid, out int layout)) throw new Fail("entity schema not stored");
+        if (_entityLayouts[layout] == null) throw new Fail("entity field type");
+        if (c.Walk.Queue.Count >= 1_000_000) throw new Fail("queue");
+        c.Walk.Queue.Add(-1 - layout);
     }
 
     private void ReadField(Context c, SchemaClass declaring, SchemaField f, int depth, Dictionary<string, object?>? record)
@@ -437,8 +474,9 @@ internal sealed class WideBlockWalker
         {
             uint handle = U32(c);
             int tag = 0;
-            // An extensible storage entity without stored values is its schema GUID again after the handle, with no class tag
-            // (the pair key in front of it is the same GUID); nothing is queued.
+            if (_entityLayoutOf != null && declaring.Name == "ESEntity" && f.Name == "m_blob") { QueueEntityPayload(c, handle); return; }
+            // Without the entity schemas: an extensible storage entity whose schema GUID behind the handle repeats the pair key in
+            // front of it is passed, and nothing is queued for its values.
             if (handle == 0xFFFFFFFF && declaring.Name == "ESEntity" && f.Name == "m_blob" && c.Pos >= 20 && c.Pos + 16 <= c.End
                 && c.D.AsSpan(c.Pos - 20, 16).SequenceEqual(c.D.AsSpan(c.Pos, 16)))
             {
@@ -480,6 +518,8 @@ internal sealed class WideBlockWalker
             ReadObject(c, reference, depth + 1);
             c.Declaring = outerClass;
             c.Field = outerField;
+            // the GUID of an entity schema is kept as its value in the record of the schema
+            if (record != null && declaring.Name == "ESSchema" && f.Name == "m_guid" && c.Pos - structAt == 16) record[f.Name] = new Guid(c.D.AsSpan(structAt, 16));
             // a keyed XYZ field (SpatialElementCalculationPointRegenData.m_position) is captured as its three doubles
             if (key != null && _classes[reference].Name == "XYZ" && c.Pos - structAt == 24)
                 for (int i = 0; i < 3; i++)
