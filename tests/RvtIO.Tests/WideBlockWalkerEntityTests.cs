@@ -147,7 +147,8 @@ public class WideBlockWalkerEntityTests
         Assert.Equal(("FieldName", "Stored"), (captures["Data.m_name"].Single().Text, captures["Data.m_value"].Single().Text));
         Assert.Equal((1, 4), (captures["ESBlob.Flag"].Single().Integer, captures["ESBlob.Flag"].Single().QueueIndex));
         Assert.Equal(3.0, captures["ESBlob.Origin@2"].Single().Real);
-        Assert.Equal(-1, walk.EmptyEntityAt);
+        // the readers keep out of their output what lies behind an entity, so the first object that held one is marked as without the schemas
+        Assert.Equal(0, walk.EmptyEntityAt);
     }
 
     [Fact]
@@ -159,6 +160,7 @@ public class WideBlockWalkerEntityTests
         Assert.True(walk.Exact, walk.Error);
         Assert.Equal([CellId, ModelId, DataId], walk.Queue);
         Assert.Equal("FieldName", walk.Captures.Single(c => c.Key == "Data.m_name").Text);
+        Assert.Equal(-1, walk.EmptyEntityAt);
     }
 
     [Fact]
@@ -170,6 +172,28 @@ public class WideBlockWalkerEntityTests
         Assert.Equal(("entity schema not stored", "ESEntity.m_blob", "ESEntityCell"), (walk.Error, walk.StopField, walk.StopClass));
         // the same with no schema at all: the set that is given when the schemas of a file cannot be read
         Assert.Equal("entity schema not stored", Walker(Schema(), new Dictionary<Guid, SchemaField[]?>()).Run(block, 0, block.Length, HostId).Error);
+    }
+
+    [Fact]
+    public void Walk_PassesAnEntityItCannotRead_AsWithoutTheSchemas_WhenTheReadersAskForIt()
+    {
+        var block = HostBlock(TextAndInt);
+        var without = Walker(Schema(), null).Run(block, 0, block.Length, HostId);
+        foreach (var schemas in new[] { EntitySchemaReader.Read(Latest(false, (SchemaB, FieldsB)), Schema())!,
+                     EntitySchemaReader.Read(Latest(false, (SchemaA, [("Other", "mystery", 0, 0)])), Schema())!, new Dictionary<Guid, SchemaField[]?>() })
+        {
+            var walker = new WideBlockWalker(Schema(), (declaring, field) => declaring.Name + "." + field.Name, []);
+            walker.UseEntitySchemas(schemas, passUnknown: true);
+            var walk = walker.Run(block, 0, block.Length, HostId);
+
+            // the schema of the entity is not stored, or its field type is not read: the walk goes on as without the schemas
+            Assert.Equal((without.Exact, without.Error, without.Position, without.EmptyEntityAt), (walk.Exact, walk.Error, walk.Position, walk.EmptyEntityAt));
+            Assert.Equal(without.Queue, walk.Queue);
+        }
+        // an entity it can read is read by its schema also then
+        var reading = new WideBlockWalker(Schema(), (declaring, field) => declaring.Name + "." + field.Name, []);
+        reading.UseEntitySchemas(EntitySchemaReader.Read(Latest(false, (SchemaA, TextAndIntFields)), Schema())!, passUnknown: true);
+        Assert.True(reading.Run(block, 0, block.Length, HostId).Exact);
     }
 
     [Fact]
