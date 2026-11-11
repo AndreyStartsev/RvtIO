@@ -88,6 +88,16 @@ its result is used only when it ends without an error. When `Global/Latest` is m
 error, no entity schema is known, and every entity that has values stops the walk of its record with `entity schema not stored`. An
 entity is never passed by the look of the bytes around it.
 
+An entity in the block of a loaded family (a keyed block) can name a schema that only the family's own document holds. Up to release
+2024 that document stores its schemas itself: `Global/ContentDocuments` holds, per content document, a `ContentMarker` object (the
+handle `0xFFFFFFFF`, the `ContentKey` tag and its `m_guidKey`, 16 bytes, which is the key of the keyed block; then `m_nElementCount`,
+4 bytes), a 4-byte length, the document's own `ADocument` of that length, and the length again; a `ContentMarker` with the handle `0`,
+its count and a length of `0` closes the stream at its last byte. Each of those `ADocument`s is read like `Global/Latest`. From
+release 2025 the documents of `Global/ContentDocuments` store no schema: `m_schemaUsageMap` of `Global/Latest` holds them, and
+`SchemaUsageInfo.m_contentDocsKeys` lists the keys of the content documents that use each one. So a record of a keyed block is read by
+the schemas of its own document and those of `Global/Latest`; a GUID names one schema, so one held in both is the same. A stream that
+does not close as described gives no family document a schema.
+
 A stop inside the values of an entity ends with `, in ESBlob`. The field is `ESBlob.<field>` when the stop is in a value itself: a
 name from the entity schema stored in the file, which the add-in that wrote the entity defined, not from the class schema. When the
 stop is inside a value of a class type, the field is that of the inline class (for example `second` of a pair class).
@@ -106,7 +116,7 @@ being read, and with `, in <Class>` when that field belongs to a queued object a
 | `end of payload` | A field needs more bytes than the body has left. |
 | `class tag N` | A pointer names class N, which the schema does not declare. |
 | `entity handle` | The handle of an extensible storage entity (`ESEntity.m_blob`) is neither `0` nor `0xFFFFFFFF`. |
-| `entity schema not stored` | An extensible storage entity names a schema that `Global/Latest` of the file does not hold. An entity in the document of a loaded family can name a schema that only that document uses. Also every entity with values of a file whose entity schemas cannot be read. |
+| `entity schema not stored` | An extensible storage entity names a schema that `Global/Latest` of the file does not hold, nor, for a record of a keyed block, the family's own document in `Global/ContentDocuments`. Also every entity with values of a file whose entity schemas cannot be read. |
 | `entity field type` | The schema of an extensible storage entity has a field the walk does not read: its type name is neither `TCHAR` (a text), one of the scalars `bool`, `char`, `short`, `int`, `float`, `double` and `int64_t`, nor a class of the class schema, or it is an array of texts, or its container type is not 0, 1 or 2. The same reason stands for a schema whose fields are not numbered from 0 without a gap or a repeat. |
 | `count` | The count of an array is above 5,000,000. The count itself is left out, so that all such records share one reason. |
 | `type N` | The field has a type code the walk does not read. |
@@ -234,7 +244,8 @@ count uses, with the entity schemas of the file.
 ## What it does not measure
 
 - The content of the `Global`, `Formats` and plain streams. A paged stream is only inflated; what it holds (the element table, the
-  history, the class table itself) is not walked. `Global/Latest` is walked for the entity schemas only and has no row in the counts.
+  history, the class table itself) is not walked. `Global/Latest` and the documents of `Global/ContentDocuments` are walked for the
+  entity schemas only and have no row in the counts.
 - The meaning of fields. An exact record is fully assigned to the fields of its class; whether a reader then uses those fields is
   another question, as is whether an element is exported. The export report (`--report` of an export, see
   [the export report](export-report.md)) answers that one.

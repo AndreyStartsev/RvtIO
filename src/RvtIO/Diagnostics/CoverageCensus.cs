@@ -89,9 +89,10 @@ internal static class CoverageCensus
         var streams = new List<StreamRow>();
         var total = new Dictionary<(bool Family, int Channel, string Class), Tally>();
         var walker = failure == null ? new WideBlockWalker(document, (_, _) => null, []) : null;
-        // the values of an extensible storage entity are read by the entity schemas of the file; when those cannot be read the set
-        // is empty and an entity with values stops its record: the count never passes one by the bytes around it
-        walker?.UseEntitySchemas(EntitySchemaReader.Read(root, document));
+        // the values of an extensible storage entity are read by the entity schemas of the file, in a family block also by those of its own
+        // document; when those cannot be read the set is empty and an entity with values stops its record: the count never passes one
+        // by the bytes around it
+        var entitySchemas = walker == null ? null : new BlockEntitySchemas(root, document, walker);
         var adler = new Adler32();
         ulong terminator = width == 8 ? ulong.MaxValue : uint.MaxValue;
         int partitions = 0;
@@ -125,6 +126,7 @@ internal static class CoverageCensus
             long records = 0;
             bool framed = PartitionFraming.Walk(raw, tags!.Value, width!.Value, record =>
             {
+                entitySchemas!.Use(record.Key);
                 if (Count(record, walker!, terminator, adler, local)) records++;
             }, out string? reason, out int blocks, segments);
             if (!framed)
@@ -152,6 +154,31 @@ internal static class CoverageCensus
         var groups = total.GroupBy(pair => (pair.Key.Family, pair.Key.Channel)).OrderBy(g => g.Key.Family).ThenBy(g => g.Key.Channel)
             .Select(g => new GroupRow(g.Key.Family, g.Key.Channel, Sum(g.Select(pair => pair.Value)))).ToList();
         return new Result(savedRelease, schemaRelease, width, document.Classes.Count, streams, failure, Sum(groups.Select(g => g.Sums)), groups, classes);
+    }
+
+    /// <summary>Gives the walk the entity schemas of the block a record is in: those of Global/Latest in the project's block; in a keyed
+    /// block those of the family's own document in Global/ContentDocuments (<see cref="EntitySchemaReader.ReadContentDocuments"/>; it
+    /// holds them up to Revit 2024) and those of Global/Latest (from Revit 2025 its m_schemaUsageMap holds them and lists the keys of the
+    /// content documents that use each one). A GUID names one schema, so a schema held in both is the same.</summary>
+    internal sealed class BlockEntitySchemas(RootStorage root, SchemaDocument document, WideBlockWalker walker)
+    {
+        private readonly Dictionary<Guid, SchemaField[]?> _project = EntitySchemaReader.Read(root, document);
+        private readonly Dictionary<string, Dictionary<Guid, SchemaField[]?>> _families = EntitySchemaReader.ReadContentDocuments(root, document);
+        private string? _key;
+
+        internal void Use(string key)
+        {
+            if (key == _key) return;
+            _key = key;
+            if (key.Length == 0 || !_families.TryGetValue(key, out var own) || own.Count == 0)
+            {
+                walker.UseEntitySchemas(_project);
+                return;
+            }
+            var both = new Dictionary<Guid, SchemaField[]?>(own);
+            foreach (var (guid, fields) in _project) both.TryAdd(guid, fields);
+            walker.UseEntitySchemas(both);
+        }
     }
 
     private static Sums Sum(IEnumerable<Sums> parts)
