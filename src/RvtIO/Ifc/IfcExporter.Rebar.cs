@@ -42,12 +42,15 @@ public partial class IfcExporter
         string typeLabel = shapeInName && data.SystemId == 0 && data.ShapeName != null ? $"{barTypeName} : Shape {data.ShapeName}" : barTypeName;
         string elemName = $"{RebarFamilyLabel}:{typeLabel}:{elem.Id.ToString(CultureInfo.InvariantCulture)}";
         string objectType = data.SystemId > 0 ? barTypeName : $"{RebarFamilyLabel}:{barTypeName}";
-        // RebarInSystem: the sub-element index is the number of bars plus 3; a Rebar has none
-        int entityId = WriteRebarBar(w, elem, data, ownerHistId, axisId, parentPlacementId, bodySubCtxId, elemName, objectType, data.SystemId > 0 ? data.Bars.Count + 3 : 0);
+        // RebarInSystem: the sub-element index is the number of bars plus 3; a Rebar has none. The one RebarInSystem of a system has the
+        // GlobalId of the system.
+        Element? system = data.OnlyBarOfSystem ? elemById.GetValueOrDefault(data.SystemId) : null;
+        int entityId = WriteRebarBar(w, elem, data, ownerHistId, axisId, parentPlacementId, bodySubCtxId, elemName, objectType,
+            system != null ? 0 : data.SystemId > 0 ? data.Bars.Count + 3 : 0, globalIdOf: system);
         ExportQuantityTakeOffPropertySet(w, elem, entityId, ownerHistId, barTypeName, propertySingleValueIds);
         PlaceRebarInStorey(elem, data, elemById, entityId, storeyIds, defaultStoreyId, storeyContents);
-        // No group of their system is written for the bars of an assembly
-        if (data.SystemId > 0 && !data.InAssembly)
+        // No group of their system is written for the bars of an assembly, nor for the one bar of a system, which carries its GlobalId
+        if (data.SystemId > 0 && !data.InAssembly && system == null)
         {
             if (!_rebarSystemMembers.TryGetValue(data.SystemId, out var members)) _rebarSystemMembers[data.SystemId] = members = [];
             members.Add(entityId);
@@ -92,9 +95,10 @@ public partial class IfcExporter
     }
 
     /// <summary>One IfcReinforcingBar of <paramref name="data"/> (its swept disks, placement and quantities), without property set and storey.
-    /// <paramref name="fallbackGlobalId"/> is its GlobalId when the element has no usable export id (the items of a container share their element).</summary>
+    /// <paramref name="fallbackGlobalId"/> is its GlobalId when the element has no usable export id (the items of a container share their element);
+    /// <paramref name="globalIdOf"/> is the element whose GlobalId the bar takes instead of its own (the system of its one RebarInSystem).</summary>
     private int WriteRebarBar(StepWriter w, Element elem, RebarBars data, int ownerHistId, int axisId, int parentPlacementId, int bodySubCtxId,
-        string elemName, string objectType, int subElementIndex, string? fallbackGlobalId = null)
+        string elemName, string objectType, int subElementIndex, string? fallbackGlobalId = null, Element? globalIdOf = null)
     {
         var items = new List<string>();
         double firstBarLengthFt = 0;
@@ -117,7 +121,7 @@ public partial class IfcExporter
         double nominalMm = data.NominalDiameter * FeetToMillimetres;
         double area = Math.PI * Math.Pow(nominalMm / 2000, 2);
 
-        string globalId = ResolveExactElementGlobalId(elem, _usedExportIds, subElementIndex, CurrentProfile) ?? fallbackGlobalId ?? IfcGuid.FromElementId(elem.Id);
+        string globalId = ResolveExactElementGlobalId(globalIdOf ?? elem, _usedExportIds, subElementIndex, CurrentProfile) ?? fallbackGlobalId ?? IfcGuid.FromElementId(elem.Id);
         return w.Add("IFCREINFORCINGBAR",
             $"{S(globalId)},{R(ownerHistId)},{S(elemName)},{S("")},{S(objectType)},{R(placementId)},{R(shapeId)},{S(elem.Id.ToString(CultureInfo.InvariantCulture))},"
             + $"{S("")},{D(nominalMm)},{D(area)},{D(barLengthMm)},.NOTDEFINED.,$");

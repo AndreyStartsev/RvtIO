@@ -45,10 +45,11 @@ internal sealed record RebarSegment(bool IsArc, double[] Origin, double[] Axis, 
 /// <see cref="LengthRoundingMillimetres"/> is the total length rounding of the document (ReinforcementSettings, nearest), 0 for none;
 /// <see cref="InAssembly"/> is true for a bar that is a member of an assembly (AssemblyGroupMembership cell).
 /// A RebarContainer holds no bars of its own: <see cref="Items"/> are its items (one bar each, <see cref="ItemIndex"/> is the index of the item
-/// in the container) and <see cref="BarTypeName"/> is the name of the container type.</summary>
+/// in the container) and <see cref="BarTypeName"/> is the name of the container type.
+/// <see cref="OnlyBarOfSystem"/> is true for a RebarInSystem that is the one RebarInSystem of its system.</summary>
 internal sealed record RebarBars(int BarTypeId, int SystemId, double? BarLength, IReadOnlyList<IReadOnlyList<RebarSegment>> Bars,
     double NominalDiameter = 0, double ModelDiameter = 0, string? BarTypeName = null, double LengthRoundingMillimetres = 0, string? ShapeName = null,
-    bool InAssembly = false, IReadOnlyList<RebarBars>? Items = null, int ItemIndex = -1);
+    bool InAssembly = false, IReadOnlyList<RebarBars>? Items = null, int ItemIndex = -1, bool OnlyBarOfSystem = false);
 
 /// <summary>A beam system (JoistSystem): its type (JoistSystemAttr, <see cref="TypeName"/> from SymbolInfo.m_name) and the beams it holds
 /// (HeldBeam.m_existingBeamId, in stored order, deleted ones left out).</summary>
@@ -215,8 +216,7 @@ internal static partial class RebarReader
             else if (cls == system)
             {
                 if (ReadLayers(walker, walk, byQueue) is { } found) layers.TryAdd(id, found);
-                // a system behind an empty extensible storage entity stays unread, as in ReadLayers
-                if (heldLayout && walk.EmptyEntityAt < 0)
+                if (heldLayout)
                     foreach (var ((layer, index), bar) in ReadHeld(walk.Captures)) held.TryAdd((id, layer, index), bar);
             }
             else if (ReadMember(walker, walk, byQueue) is { } member) members.TryAdd(id, member);
@@ -244,11 +244,14 @@ internal static partial class RebarReader
             if (solvedItems.Count > 0 && containerNames.TryGetValue(typeId, out var typeName))
                 result.TryAdd(id, new RebarBars(-1, 0, null, [], BarTypeName: typeName, Items: solvedItems, InAssembly: inAssembly));
         }
+        var barsOfSystem = members.Values.GroupBy(member => member.System).ToDictionary(group => group.Key, group => group.Count());
         foreach (var (id, (systemId, layerIndex, index, inAssembly)) in members)
         {
+            bool only = barsOfSystem[systemId] == 1;
             if (held.TryGetValue(((uint)systemId, layerIndex, index), out var heldBar))
             {
-                if (Solve(heldBar) is { } solvedHeld) result.TryAdd(id, solvedHeld with { SystemId = systemId, ShapeName = null, InAssembly = inAssembly });
+                if (Solve(heldBar) is { } solvedHeld)
+                    result.TryAdd(id, solvedHeld with { SystemId = systemId, ShapeName = null, InAssembly = inAssembly, OnlyBarOfSystem = only });
                 continue;
             }
             if (!layers.TryGetValue((uint)systemId, out var found) || layerIndex < 0 || layerIndex >= found.Count) continue;
@@ -257,7 +260,7 @@ internal static partial class RebarReader
             var cut = layer.Cuts != null && index >= 0 && index < layer.Cuts.Count && diameters.TryGetValue(layer.BarTypeId, out var barDiameters)
                 ? CutBars(layer.Lines, layer.Cuts[index], barDiameters.Model / 2) : null;
             if (cut == null && (index < 0 || index >= layer.Instances.Count)) continue;
-            result.TryAdd(id, new RebarBars(layer.BarTypeId, systemId, null, cut ?? layer.Instances[index], InAssembly: inAssembly));
+            result.TryAdd(id, new RebarBars(layer.BarTypeId, systemId, null, cut ?? layer.Instances[index], InAssembly: inAssembly, OnlyBarOfSystem: only));
         }
         // the diameters of the bar types come with the pass, so they are attached once every element was read
         foreach (var (id, bars) in result.ToList())
@@ -433,9 +436,6 @@ internal static partial class RebarReader
 
     internal static List<Layer>? ReadLayers(WideBlockWalker walker, WideBlockWalker.Walk walk, Dictionary<int, List<WideBlockWalker.Capture>> byQueue)
     {
-        // The bars of a system behind an empty extensible storage entity are not written yet: their GlobalId and bar count are not
-        // understood (the walk used to stop at the entity, so these systems were never read).
-        if (walk.EmptyEntityAt >= 0) return null;
         if (!byQueue.TryGetValue(-1, out var root) || walk.QueueCountAtStart.Count == 0) return null;
         // the layers are consecutive fields of the root; per layer the capture groups open with m_barType
         var groups = new List<List<WideBlockWalker.Capture>>();
