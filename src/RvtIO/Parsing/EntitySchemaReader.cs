@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using OpenMcdf;
 
 namespace RvtIO.Parsing;
@@ -17,6 +18,34 @@ internal static class EntitySchemaReader
     /// error: no schema is known then, and a walk that is given the empty set stops at every entity that has values.</summary>
     internal static Dictionary<Guid, SchemaField[]?> Read(RootStorage root, SchemaDocument schema) =>
         PagedGzipStream.Read(root, "Global", "Latest") is { } latest && Read(latest, schema) is { } schemas ? schemas : [];
+
+    /// <summary>The entity schemas of each loaded family document, by the key of its content block (<see cref="PartitionFraming"/>, the
+    /// same text): an entity in a family block names a schema of its own document, which Global/Latest need not hold. Global/ContentDocuments
+    /// holds per content document a ContentMarker object laid out as a content block of a partition stream (handle 0xFFFFFFFF, the
+    /// ContentKey tag, a u32 count, which is 0xFFFFFFFF, then m_guidKey, 16 bytes), u32 length, that many bytes of the document's own
+    /// ADocument, and the length again; a ContentMarker with the handle 0, its count and a length of 0 ends it at its last byte. Each
+    /// ADocument is read like Global/Latest; a document whose ADocument is not walked without an error has no schemas. Empty when the
+    /// stream is missing, does not decode or does not end so.</summary>
+    internal static Dictionary<string, Dictionary<Guid, SchemaField[]?>> ReadContentDocuments(RootStorage root, SchemaDocument schema)
+    {
+        var documents = new Dictionary<string, Dictionary<Guid, SchemaField[]?>>(StringComparer.Ordinal);
+        if (PagedGzipStream.Read(root, "Global", "ContentDocuments") is not { } data
+            || schema.Classes.FirstOrDefault(c => c.Name == "ContentMarker") is not { } marker
+            || schema.Classes.FirstOrDefault(c => c.Name == "ContentKey") is not { } key) return documents;
+        var span = data.AsSpan();
+        for (int at = 0; ;)
+        {
+            if (at + 6 > span.Length || BinaryPrimitives.ReadUInt16LittleEndian(span[at..]) != marker.Id) return [];
+            uint handle = BinaryPrimitives.ReadUInt32LittleEndian(span[(at + 2)..]);
+            if (handle == 0) return at + 14 == span.Length && BinaryPrimitives.ReadUInt32LittleEndian(span[(at + 10)..]) == 0 ? documents : [];
+            if (handle != uint.MaxValue || at + 32 > span.Length || BinaryPrimitives.ReadUInt16LittleEndian(span[(at + 6)..]) != key.Id) return [];
+            string name = Convert.ToHexString(span.Slice(at + 12, 16));
+            int length = BinaryPrimitives.ReadInt32LittleEndian(span[(at + 28)..]);
+            if (length < 0 || length > span.Length - at - 36 || BinaryPrimitives.ReadInt32LittleEndian(span[(at + 32 + length)..]) != length) return [];
+            if (!documents.TryAdd(name, Read(span.Slice(at + 32, length).ToArray(), schema) ?? [])) return [];
+            at += 36 + length;
+        }
+    }
 
     /// <summary>The same of a decoded Global/Latest; null when it is not an ADocument or its walk does not end without an error.</summary>
     internal static Dictionary<Guid, SchemaField[]?>? Read(byte[] latest, SchemaDocument schema)
