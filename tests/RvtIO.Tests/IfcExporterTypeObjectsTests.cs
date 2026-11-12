@@ -523,8 +523,126 @@ public class IfcExporterTypeObjectsTests
             .Select(id => EntityArgs(ifc, id, "IFCRELASSOCIATESMATERIAL")).ToList();
         Assert.Equal(2, relations.Count);
         Assert.All(relations, args => Assert.Equal($"#{material}", args[5]));
-        Assert.Contains(relations, args => args[4] == $"(#{memberEntity})");
-        Assert.Contains(relations, args => args[4] == $"(#{typeEntity})");
+        var productRel = Assert.Single(relations, args => args[4] == $"(#{memberEntity})");
+        var typeRel = Assert.Single(relations, args => args[4] == $"(#{typeEntity})");
+        Assert.Equal($"'{IfcGuid.FromName("materials:0")}'", productRel[0]);
+        Assert.Equal($"'{IfcGuid.FromName("type-materials:0")}'", typeRel[0]);
+    }
+
+    [Fact]
+    public void LegacyTypeMaterialRelationGlobalIds_StayStableWhenEarlierStepEntitiesShift()
+    {
+        Element MaterialElement(int id, string name) => new()
+        {
+            Id = id,
+            TypeId = -1,
+            IsBlockOnly = true,
+            CategoryId = -2000700,
+            Category = "OST_Materials",
+            Name = name,
+            HasShadingAppearance = true,
+            Parameters =
+            [
+                new Parameter { Id = id + 1, Definition = new Definition { Name = "MATERIAL_PARAM_COLOR" }, Value = 0x112233, StorageType = StorageType.Integer },
+                new Parameter { Id = id + 2, Definition = new Definition { Name = "MATERIAL_PARAM_SHININESS" }, Value = 25, StorageType = StorageType.Integer },
+            ],
+        };
+
+        Element[] BuildBaseElements()
+        {
+            var steel = MaterialElement(700, "Steel");
+            var glass = MaterialElement(710, "Glass");
+            var wood = MaterialElement(720, "Wood");
+
+            var singleType = TypeElement(500, "SingleType", "MullionFamily");
+            singleType.CategoryId = -2000171;
+            singleType.Parameters.Add(new Parameter { Id = -1002107, StorageType = StorageType.ElementId, Value = 700 });
+            var singleMullion = Product(100, -2000171, "Mullion", 500, 500, centreX: 0);
+            singleMullion.TypeId = 500;
+            foreach (var face in singleMullion.Geometry!.Faces)
+                face.RenderStyleId = 700;
+
+            var multiType = TypeElement(510, "MultiType", "DoorFamily");
+            multiType.CategoryId = DoorCategoryId;
+            var door = Product(110, DoorCategoryId, "Doors", 510, 510, centreX: 10);
+            door.TypeId = 510;
+            door.Geometry!.Faces[0].RenderStyleId = 710;
+            door.Geometry.Faces[1].RenderStyleId = 720;
+            for (int i = 2; i < door.Geometry.Faces.Count; i++)
+                door.Geometry.Faces[i].RenderStyleId = 710;
+
+            var hostWall = Product(999, WallCategoryId, "Walls", elemTypeParamId: null, nativeMasterSymbolId: null, centreX: 20);
+            return [steel, glass, wood, hostWall, singleType, singleMullion, multiType, door];
+        }
+
+        string baselineIfc = ExportToText(IfcProfile.Legacy, BuildBaseElements());
+
+        // Prepend extra elements and custom properties so STEP entity numbers of materials,
+        // material lists, products and types all shift significantly.
+        var extraColumnType = TypeElement(400, "ExtraColType", "ExtraFamily");
+        extraColumnType.CategoryId = -2001330;
+        var extraColumn = Product(50, -2001330, "Structural Columns", 400, 400, centreX: -20);
+        for (int p = 0; p < 12; p++)
+        {
+            extraColumn.Parameters.Add(new Parameter
+            {
+                Id = 800000 + p,
+                Definition = new Definition { Id = 800000 + p, Name = $"SpanExtra_{p}" },
+                StorageType = StorageType.Double,
+                Value = 10.0 + p,
+            });
+        }
+        string shiftedIfc = ExportToText(IfcProfile.Legacy, [extraColumnType, extraColumn, .. BuildBaseElements()]);
+
+        // Verify the relating IFCMATERIAL and IFCMATERIALLIST STEP numbers actually shifted.
+        int baseSteelEntity = EntityIds(baselineIfc, "IFCMATERIAL")
+            .Single(id => EntityArgs(baselineIfc, id, "IFCMATERIAL")[0] == "'Steel'");
+        int shiftedSteelEntity = EntityIds(shiftedIfc, "IFCMATERIAL")
+            .Single(id => EntityArgs(shiftedIfc, id, "IFCMATERIAL")[0] == "'Steel'");
+        Assert.NotEqual(baseSteelEntity, shiftedSteelEntity);
+
+        int baseMatList = SoleEntityId(baselineIfc, "IFCMATERIALLIST");
+        int shiftedMatList = SoleEntityId(shiftedIfc, "IFCMATERIALLIST");
+        Assert.NotEqual(baseMatList, shiftedMatList);
+
+        string expectedSingleProductGuid = $"'{IfcGuid.FromName("materials:700")}'";
+        string expectedSingleTypeGuid = $"'{IfcGuid.FromName("type-materials:700")}'";
+        string expectedMultiProductGuid = $"'{IfcGuid.FromName("materials:710,720")}'";
+        string expectedMultiTypeGuid = $"'{IfcGuid.FromName("type-materials:710,720")}'";
+
+        foreach ((string ifc, int steelEntity, int matListEntity) in new[]
+        {
+            (baselineIfc, baseSteelEntity, baseMatList),
+            (shiftedIfc, shiftedSteelEntity, shiftedMatList),
+        })
+        {
+            var rels = EntityIds(ifc, "IFCRELASSOCIATESMATERIAL")
+                .Select(id => EntityArgs(ifc, id, "IFCRELASSOCIATESMATERIAL")).ToList();
+            int memberTypeEntity = SoleEntityId(ifc, "IFCMEMBERTYPE");
+            int doorStyleEntity = SoleEntityId(ifc, "IFCDOORSTYLE");
+
+            var singleTypeRel = Assert.Single(rels, a => a[4] == $"(#{memberTypeEntity})" && a[5] == $"#{steelEntity}");
+            Assert.Equal(expectedSingleTypeGuid, singleTypeRel[0]);
+
+            var multiTypeRel = Assert.Single(rels, a => a[4] == $"(#{doorStyleEntity})" && a[5] == $"#{matListEntity}");
+            Assert.Equal(expectedMultiTypeGuid, multiTypeRel[0]);
+
+            Assert.Contains(rels, a => a[0] == expectedSingleProductGuid && a[5] == $"#{steelEntity}");
+            Assert.Contains(rels, a => a[0] == expectedMultiProductGuid && a[5] == $"#{matListEntity}");
+        }
+
+        // Current profile keeps its existing MD5("{project GlobalId}IfcRelAssociatesMaterial:{first related GlobalId}") seed.
+        string currentIfc = ExportToText(IfcProfile.Current, BuildBaseElements());
+        int projectEntity = SoleEntityId(currentIfc, "IFCPROJECT");
+        string projectGuid = EntityArgs(currentIfc, projectEntity, "IFCPROJECT")[0].Trim('\'');
+        int currentMemberType = SoleEntityId(currentIfc, "IFCMEMBERTYPE");
+        string currentMemberTypeGuid = EntityArgs(currentIfc, currentMemberType, "IFCMEMBERTYPE")[0].Trim('\'');
+        var currentRels = EntityIds(currentIfc, "IFCRELASSOCIATESMATERIAL")
+            .Select(id => EntityArgs(currentIfc, id, "IFCRELASSOCIATESMATERIAL")).ToList();
+        var mergedSteelRel = Assert.Single(currentRels, a => a[4].Contains($"#{currentMemberType}"));
+        Assert.Equal(
+            $"'{IfcGuid.FromMd5($"{projectGuid}IfcRelAssociatesMaterial:{currentMemberTypeGuid}")}'",
+            mergedSteelRel[0]);
     }
 
     [Theory]

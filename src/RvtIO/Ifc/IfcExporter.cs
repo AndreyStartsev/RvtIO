@@ -5834,7 +5834,7 @@ public partial class IfcExporter
         }
 
         var layerSetByKey = new Dictionary<string, (int LayerSetId, double TotalThicknessMm)>();
-        var layerSetByProductEntity = new Dictionary<int, int>();
+        var layerSetByProductEntity = new Dictionary<int, (int EntityId, string Seed)>();
         var layerUsageProductEntities = new HashSet<int>();
         var layeredProducts = exportedIfcElements
             .Select(pair => (ElementId: pair.Key, Product: pair.Value,
@@ -5913,7 +5913,9 @@ public partial class IfcExporter
                 layerSetByKey[layerSetKey] = layerSet;
             }
 
-            foreach (var item in group) layerSetByProductEntity[item.Product.entityId] = layerSet.LayerSetId;
+            string layerSetSeed = first.Native is { } nativeSeed
+                ? nativeSeed.TypeId.ToString(CultureInfo.InvariantCulture) : group.Key;
+            foreach (var item in group) layerSetByProductEntity[item.Product.entityId] = (layerSet.LayerSetId, layerSetSeed);
             var associated = CurrentProfile ? group.Where(item => item.Product.ifcType != "IFCWALL").ToList() : group.ToList();
             if (associated.Count == 0) continue;
 
@@ -6152,7 +6154,7 @@ public partial class IfcExporter
             for (int part = 0; part < (partMaterials?.Count ?? 1); part++)
             {
                 var partIds = partMaterials == null ? materialElementIds : [partMaterials[part]];
-                string materialKey = string.Join(',', partIds);
+                string materialKey = string.Join(',', partIds.Select(id => id.ToString(CultureInfo.InvariantCulture)));
                 if (!directMaterialProducts.TryGetValue(materialKey, out var association))
                     association = (partIds, new List<int>());
                 if (pieceBased && product.ifcType == "IFCSLAB" && element.CategoryId == -2001300)
@@ -6166,7 +6168,7 @@ public partial class IfcExporter
             }
         }
 
-        var relatingMaterialByProductEntity = new Dictionary<int, int>();
+        var relatingMaterialByProductEntity = new Dictionary<int, (int EntityId, string Seed)>();
         var directRelationByRelating = new Dictionary<int, (int Index, string GuidArg, List<int> Products)>();
         foreach (var (materialKey, association) in directMaterialProducts)
         {
@@ -6177,9 +6179,9 @@ public partial class IfcExporter
                 ? materialIds[0]
                 : w.Add("IFCMATERIALLIST", StepWriter.List(materialIds.Select(R)));
             foreach (int productEntityId in association.ProductIds)
-                relatingMaterialByProductEntity[productEntityId] = relatingMaterialId;
+                relatingMaterialByProductEntity[productEntityId] = (relatingMaterialId, materialKey);
             foreach (int productEntityId in typeOnlyMaterialProducts.GetValueOrDefault(materialKey) ?? [])
-                relatingMaterialByProductEntity[productEntityId] = relatingMaterialId;
+                relatingMaterialByProductEntity[productEntityId] = (relatingMaterialId, materialKey);
             if (association.ProductIds.Count > 0)
             {
                 string guidArg = S(IfcGuid.FromName($"materials:{materialKey}"));
@@ -67077,7 +67079,7 @@ public partial class IfcExporter
     /// </summary>
     private static void AssociateTypeObjectMaterials(
         StepWriter w, int ownerHistId, int startIndex,
-        IReadOnlyDictionary<int, int> relatingMaterialByProductEntity, HostLayerSets? layerSets = null,
+        IReadOnlyDictionary<int, (int EntityId, string Seed)> relatingMaterialByProductEntity, HostLayerSets? layerSets = null,
         IReadOnlyDictionary<int, (int Index, string GuidArg, List<int> Products)>? directRelations = null)
     {
         var typeClassByEntity = new Dictionary<int, string>();
@@ -67096,8 +67098,8 @@ public partial class IfcExporter
             firstMemberByType.Add((typeEntityId, firstMember));
         }
 
-        var typesByRelatingMaterial = new SortedDictionary<int, List<int>>();
-        var typesByLayerSet = new SortedDictionary<int, List<int>>();
+        var typesByRelatingMaterial = new SortedDictionary<int, (string Seed, List<int> Types)>();
+        var typesByLayerSet = new SortedDictionary<int, (string Seed, List<int> Types)>();
         foreach (var (typeEntityId, firstMember) in firstMemberByType)
         {
             if (layerSets != null && typeClassByEntity.GetValueOrDefault(typeEntityId) == "IFCSTAIRFLIGHTTYPE") continue;
@@ -67106,10 +67108,11 @@ public partial class IfcExporter
             // usage (the host-object export with the type handle); ceilings and roofs do not.
             if (layerSets != null && typeClassByEntity.GetValueOrDefault(typeEntityId) is { } hostTypeClass
                 && (hostTypeClass == "IFCWALLTYPE" || hostTypeClass == "IFCSLABTYPE" && layerSets.UsageProducts.Contains(firstMember))
-                && layerSets.ByProduct.TryGetValue(firstMember, out int typeLayerSet))
+                && layerSets.ByProduct.TryGetValue(firstMember, out var typeLayerSet))
             {
-                if (!typesByLayerSet.TryGetValue(typeLayerSet, out var typed)) typesByLayerSet[typeLayerSet] = typed = new List<int>();
-                typed.Add(typeEntityId);
+                if (!typesByLayerSet.TryGetValue(typeLayerSet.EntityId, out var typed))
+                    typesByLayerSet[typeLayerSet.EntityId] = typed = (typeLayerSet.Seed, new List<int>());
+                typed.Types.Add(typeEntityId);
                 continue;
             }
             // Host objects (walls, floors, ceilings, roofs) give their type the layer set instead.
@@ -67119,13 +67122,13 @@ public partial class IfcExporter
             bool hostType = hostOrFamilyTypeClass is null or "IFCCURTAINWALLTYPE" or "IFCWALLTYPE"
                 or "IFCSLABTYPE" or "IFCCOVERINGTYPE" or "IFCROOFTYPE";
             if (hostType && !slabFamilyType
-                || !relatingMaterialByProductEntity.TryGetValue(firstMember, out int relatingMaterial))
+                || !relatingMaterialByProductEntity.TryGetValue(firstMember, out var relatingMaterial))
                 continue;
-            if (!typesByRelatingMaterial.TryGetValue(relatingMaterial, out var types))
-                typesByRelatingMaterial[relatingMaterial] = types = new List<int>();
-            types.Add(typeEntityId);
+            if (!typesByRelatingMaterial.TryGetValue(relatingMaterial.EntityId, out var types))
+                typesByRelatingMaterial[relatingMaterial.EntityId] = types = (relatingMaterial.Seed, new List<int>());
+            types.Types.Add(typeEntityId);
         }
-        foreach (var (relatingMaterial, typeEntityIds) in typesByRelatingMaterial)
+        foreach (var (relatingMaterial, (materialSeed, typeEntityIds)) in typesByRelatingMaterial)
         {
             if (directRelations != null && directRelations.TryGetValue(relatingMaterial, out var direct))
             {
@@ -67134,12 +67137,12 @@ public partial class IfcExporter
                 continue;
             }
             w.Add("IFCRELASSOCIATESMATERIAL",
-                $"{S(IfcGuid.FromName($"type-materials:{relatingMaterial}"))},{R(ownerHistId)},$,$,"
+                $"{S(IfcGuid.FromName($"type-materials:{materialSeed}"))},{R(ownerHistId)},$,$,"
                 + $"{StepWriter.List(typeEntityIds.Select(R))},{R(relatingMaterial)}");
         }
-        foreach (var (layerSet, typeEntityIds) in typesByLayerSet)
+        foreach (var (layerSet, (layerSetSeed, typeEntityIds)) in typesByLayerSet)
             w.Add("IFCRELASSOCIATESMATERIAL",
-                $"{S(IfcGuid.FromName($"type-layer-set:{layerSet}"))},{R(ownerHistId)},$,$,"
+                $"{S(IfcGuid.FromName($"type-layer-set:{layerSetSeed}"))},{R(ownerHistId)},$,$,"
                 + $"{StepWriter.List(typeEntityIds.Select(R))},{R(layerSet)}");
     }
 
@@ -67186,8 +67189,8 @@ public partial class IfcExporter
     /// The layer sets of the host objects of one export: by product entity, and which products got
     /// a usage.
     /// </summary>
-    private sealed record HostLayerSets(IReadOnlyDictionary<int, int> ByProduct, IReadOnlySet<int> UsageProducts,
-        IReadOnlySet<int> TypeOnlyProducts);
+    private sealed record HostLayerSets(IReadOnlyDictionary<int, (int EntityId, string Seed)> ByProduct,
+        IReadOnlySet<int> UsageProducts, IReadOnlySet<int> TypeOnlyProducts);
 
     /// <summary>
     /// The connector export creates a distribution port for every unconnected connector of an MEP

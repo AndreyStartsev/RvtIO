@@ -6,6 +6,10 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Legacy IFC profile: the `GlobalId` of a type-level `IfcRelAssociatesMaterial` relation is now seeded from the material element id list (`type-materials:{materialIds}`, as `materials:{materialIds}` already is for product-level relations, and `type-layer-set:{seed}` from the host type id or layer-set group key) instead of the STEP entity number of the relating material, material list or layer set. Type-level material relation `GlobalId`s in the legacy profile change once and no longer shift when entities are added or removed earlier in the file; product-level material relations and the current IFC profile are unchanged. (Closes #88)
+
 ### Added
 
 - Default output, current IFC profile: every beam with a straight drive curve gets `Pset_BeamCommon.Slope`, the angle in degrees of its drive curve to the horizontal (0 for a horizontal beam, never negative), whether or not BaseQuantities are exported and whatever its body; its quantities are unchanged. A beam without a straight drive curve gets no Slope.
