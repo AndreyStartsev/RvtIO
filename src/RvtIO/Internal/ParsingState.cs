@@ -117,6 +117,13 @@ internal class ParsingState
     /// its segments and the records of the project's own block, without the copies record routing marks as not current.</summary>
     public IReadOnlyList<Parsing.PartitionFraming.Framed?>? FramedPartitions { get; set; }
 
+    /// <summary>How many of the first <see cref="Chunks"/> are the chunks of the partition streams (the chunks of Formats and Global follow).</summary>
+    public int PartitionChunkCount { get; set; }
+
+    /// <summary>True for a file without its own class schema whose every partition stream is read by its framing: the readers take the
+    /// records of the project's own block (<see cref="FramedPartitions"/>) instead of scanning the partition chunks.</summary>
+    internal bool ReadsFramedRecords => WideSchema == null && FramedPartitions is { Count: > 0 } framed && framed.All(f => f is { IdWidth: 4 });
+
     /// <summary>The own name of an element of a <see cref="WideSchema"/> file, read from its root block by the schema-driven walk.</summary>
     public Dictionary<uint, string> WideNames { get; } = new();
 

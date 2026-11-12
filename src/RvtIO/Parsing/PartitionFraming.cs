@@ -38,7 +38,35 @@ internal static class PartitionFraming
     /// <summary>A partition stream read by its framing: the output of every segment in file order, and the records of the project's own block
     /// (the null-key map) in file order, without the chain terminators. The records of the keyed blocks (loaded family documents) are not listed.
     /// <see cref="IdWidth"/> is the byte width of the owner the walk read.</summary>
-    internal sealed record Framed(IReadOnlyList<byte[]> Segments, List<ProjectItem> Items, int IdWidth);
+    internal sealed record Framed(IReadOnlyList<byte[]> Segments, List<ProjectItem> Items, int IdWidth)
+    {
+        private long[]? starts;
+
+        /// <summary>Where the bytes of the item are: in its segment when it lies in one, else in a copy (an item can run into the next segment
+        /// of its chain); Copied tells which.</summary>
+        internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item)
+        {
+            if (starts == null)
+            {
+                var at = new long[Segments.Count];
+                for (int i = 1; i < at.Length; i++) at[i] = at[i - 1] + Segments[i - 1].Length;
+                starts = at;
+            }
+            int s = Array.BinarySearch(starts, item.Offset);
+            if (s < 0) s = ~s - 1;
+            while (s < starts.Length - 1 && starts[s + 1] <= item.Offset && Segments[s].Length == 0) s++;
+            int from = (int)(item.Offset - starts[s]);
+            if (from + (long)item.Length <= Segments[s].Length) return (Segments[s], from, false);
+            var copy = new byte[item.Length];
+            for (int done = 0; done < item.Length; s++, from = 0)
+            {
+                int n = Math.Min(item.Length - done, Segments[s].Length - from);
+                Buffer.BlockCopy(Segments[s], from, copy, done, n);
+                done += n;
+            }
+            return (copy, 0, true);
+        }
+    }
 
     internal static Tags? TagsOf(FormatsSchema schema)
     {
