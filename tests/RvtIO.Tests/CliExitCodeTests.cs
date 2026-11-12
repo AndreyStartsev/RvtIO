@@ -9,9 +9,15 @@ namespace RvtIO.Tests;
 /// The tool is started as a process of its own, from the copy the test project builds next to the tests.</summary>
 public class CliExitCodeTests
 {
+    internal static string DotnetExecutable =>
+        Environment.ProcessPath is { } processPath
+        && string.Equals(Path.GetFileNameWithoutExtension(processPath), "dotnet", StringComparison.OrdinalIgnoreCase)
+            ? processPath
+            : "dotnet";
+
     private static int Run(params string[] arguments)
     {
-        var start = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        var start = new ProcessStartInfo(DotnetExecutable) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "RvtIO.Cli.dll"));
         foreach (string argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
