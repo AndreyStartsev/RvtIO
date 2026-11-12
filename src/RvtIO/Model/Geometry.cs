@@ -99,7 +99,9 @@ namespace RvtIO.Model
     {
         /// <summary>The id of the symbol that is placed.</summary>
         public int SymbolId { get; set; }
-        /// <summary>The 12 values of the placement transform.</summary>
+        /// <summary>The 12 values of the placement transform: the 3x3 matrix row by row, then the translation, so a point p of the
+        /// symbol maps to (t[9] + p.X t[0] + p.Y t[1] + p.Z t[2], t[10] + p.X t[3] + ..., t[11] + p.X t[6] + ...) and the basis vectors are the
+        /// columns (see <see cref="RvtIO.Meshes.MeshTransform.FromRowMajor"/>).</summary>
         public double[] Transform { get; set; } = new double[12];
 
         /// <summary>Where the GInstance stands among the nodes of its GRep in the depth-first walk (internal order key).</summary>
