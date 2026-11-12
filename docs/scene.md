@@ -5,7 +5,8 @@ model, the drawable elements, their triangle meshes in metres, their names and t
 consumer of the scene reads it without knowing Revit. The scene itself is specified in the contract of the `IOScene`
 repository (`docs/contract.md`), and the property keys it writes are registered there in `docs/keys.md`.
 
-The adapter is a preview and is not published as a package yet: reference the project `src/RvtIO.Scene`.
+The adapter is a preview. It is published as the package `RvtIO.Scene` on each RvtIO release tag, depends on exactly
+the same RvtIO version and needs IOScene 0.1.0 or a later 0.1 release.
 
 ## Usage
 
