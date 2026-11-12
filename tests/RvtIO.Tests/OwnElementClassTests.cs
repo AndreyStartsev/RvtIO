@@ -1,3 +1,4 @@
+using RvtIO.Internal;
 using RvtIO.Parsing;
 using Xunit;
 
@@ -92,6 +93,46 @@ public class OwnElementClassTests
         byte[] outer = [11, 12, 13, .. bytes, 99];
         Assert.True(TfBlockDeserializer.TryExtractOwnElementClass(outer, 3, Size(bytes), 3708, out int owner));
         Assert.Equal(123, owner);
+    }
+
+    [Fact]
+    public void TheRootOfAnElement_IsItsRecordInTheProjectBlock_NotACopyOfItsIdInAFamilyDocument()
+    {
+        // the stream holds the element's root and, behind it, a block of the same id in the document of a loaded family, which the
+        // framing does not list as a record of the project
+        byte[] root = Frame(3708), copy = Frame(157);
+        byte[] stream = [.. root, .. copy];
+        var state = new ParsingState
+        {
+            ElemRecOwningElementIds = new() { [123] = -1 },
+            FramedPartitions = [new PartitionFraming.Framed([stream[..10], stream[10..]], [new(102, 123, 0, root.Length)], 4)],
+        };
+
+        RvtFileReader.RecordFramedRoots(state);
+
+        Assert.Equal(new StairComponentSource.ElementClassRoot(1, 3708), state.OwnedElementClassRoots[123]);
+        Assert.Equal(new StairComponentSource.ElementClassRoot(1, 3708), state.WalkedElementClassRoots[123]);
+        // counted per block met, as the stream walk does, the copy makes the root a duplicate and its class unknown
+        var walked = new ParsingState { ElemRecOwningElementIds = new() { [123] = -1 } };
+        StairComponentSource.Record(walked, stream, 0, Size(root), 3708, 123);
+        StairComponentSource.Record(walked, stream, root.Length, Size(copy), 157, 123);
+        Assert.Equal(new StairComponentSource.ElementClassRoot(2, null), walked.OwnedElementClassRoots[123]);
+    }
+
+    // TESTFILE.rvt is saved in five increments; reading it with and without the removal of the superseded copies changes the records around
+    // the elements that one partition holds, but not their roots.
+    [SkippableFact]
+    public void TheClassOfAnElementHeldOnce_DoesNotDependOnTheRemovalOfOtherCopies()
+    {
+        string path = TestFiles.Find("TESTFILE.rvt");
+        var (_, resolved) = new RvtFileReader(new RvtReaderOptions { ResolveCurrentCopies = true }).ReadWithState(path);
+        var (_, everyCopy) = new RvtFileReader(new RvtReaderOptions { ResolveCurrentCopies = false }).ReadWithState(path);
+        Assert.True(resolved.StaleCopiesRemoved);
+        var heldOnce = everyCopy.WalkedElementClassRoots.Where(r => r.Value.BlockCount == 1).ToList();
+        Assert.True(heldOnce.Count > 8000);
+        Assert.All(heldOnce, r => Assert.Equal(r.Value, resolved.WalkedElementClassRoots[r.Key]));
+        // the root of this arc wall is a record of the project's block that the stream walk does not reach
+        Assert.Equal(new StairComponentSource.ElementClassRoot(1, 361), resolved.WalkedElementClassRoots[290112]);
     }
 
     private static uint Size(byte[] bytes) => BitConverter.ToUInt32(bytes, 8);

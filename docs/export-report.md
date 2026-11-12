@@ -8,19 +8,21 @@ Without the new options the output (IFC, JSON, standard error text) and the exit
 | Option | Effect |
 | --- | --- |
 | `--report <report.json>` | Write the JSON report of the run to this path. Written on success and on failure. |
-| `--allow-partial` | Export what was read when a reader limit cut a stream. The exit code is then 0 and the report says `"status": "partial"`. |
+| `--allow-partial` | Export what was read when a reader limit cut a stream. The exit code is then 0 and the report says `"status": "partial"`. Cannot be combined with `--strict`. |
+| `--strict` | Fail with exit code 6 instead of 0 when the read is partial even without hitting a limit (a member failed to decode, was rebuilt by structural recovery, or decoded without a matching checksum, or the element table decoded no row). Nothing is exported; the report lists the streams and the reason. Cannot be combined with `--allow-partial`. |
 | `--raise-limits` | Raise the limits listed below for a very large model. |
 
 ## Exit codes
 
 | Code | Name | Meaning |
 | --- | --- | --- |
-| 0 | success | The export was written. With `--allow-partial` or after members of a stream failed to decode, the report can still say `"status": "partial"`: read it when you need to know. |
+| 0 | success | The export was written. With `--allow-partial` or, without `--strict`, after members of a stream failed to decode or were recovered, the report can still say `"status": "partial"`: read it when you need to know, or pass `--strict` to make partial reads fail. |
 | 1 | usage | The command line is wrong (unchanged from earlier versions). |
 | 2 | input error | The input cannot be read: the file does not exist or cannot be opened, is empty, is not a compound file, or is cut or damaged so that a stream ends before its declared length. One line on standard error, no stack trace, nothing exported. |
 | 3 | limit exceeded | A stream exceeded a limit of the reader and the read was cut. Nothing is exported unless `--allow-partial` is given. A stream longer than the platform allows in one array cannot be read at all: that case exits with 3 even with `--allow-partial`. |
 | 4 | decode error | The compound file is readable but a decoder failed on its content (damaged or unsupported data). One line on standard error; the report holds the exception with its stack trace. |
 | 5 | refused | `downgrade --check` refused the request (for example a source newer than release 2026, a profile not older than the source, a saving release that does not match the class table, or an ambiguous class name). One line on standard error. |
+| 6 | partial read | `--strict` was given and the read finished partial without exceeding a limit (members of a stream failed to decode, were rebuilt by structural recovery, or decoded without a matching checksum, or the element table decoded no row). One line on standard error naming the streams and the reason, nothing exported; the report holds the stream counts and `issues[]`. |
 
 A crash that is none of these (a defect in the exporter after the read) still ends the process with the runtime's unhandled exception code.
 
@@ -44,7 +46,7 @@ The report is one JSON object, UTF-8, property names in camelCase. `schema` name
   "status": "complete",
   "exitCode": 0,
   "input": { "file": "project.rvt", "bytes": 9293824 },
-  "limits": { "raised": false, "partialAllowed": false, "hit": [] },
+  "limits": { "raised": false, "partialAllowed": false, "strict": false, "hit": [] },
   "streams": [
     { "name": "Partitions/0", "rawBytes": 8187086, "members": 695, "decoded": 695,
       "failed": 0, "recovered": 0, "unverified": 0, "decodedFraction": 1 }
@@ -62,15 +64,15 @@ The report is one JSON object, UTF-8, property names in camelCase. `schema` name
 
 | Property | Meaning |
 | --- | --- |
-| `status` | `complete`: no limit cut a stream and every member of every stream decoded and verified. `partial`: a limit cut a stream, a member did not decode, a member decoded without its checksum matching, a member was rebuilt by structural recovery, or the element table decoded no row. `failed`: the file could not be read at all (exit codes 2 and 4, and 3 for a stream over the platform array length). A read cut by a limit that is not accepted (exit code 3) is `partial` and has no `export` property, because nothing was exported. |
+| `status` | `complete`: no limit cut a stream and every member of every stream decoded and verified. `partial`: a limit cut a stream, a member did not decode, a member decoded without its checksum matching, a member was rebuilt by structural recovery, or the element table decoded no row. `failed`: the file could not be read at all (exit codes 2 and 4, and 3 for a stream over the platform array length). A read cut by a limit that is not accepted (exit code 3) or a partial read refused by `--strict` (exit code 6) is `partial` and has no `export` property, because nothing was exported. |
 | `exitCode` | The exit code of the process. |
 | `input.file`, `input.bytes` | File name (no directory) and size of the input. |
 | `error` | Only when `status` is `failed`: `kind` (`cannot-open`, `empty-file`, `not-a-compound-file`, `truncated-or-damaged`, `limit-exceeded`, `decode-failure`), `message`, and for `decode-failure` the `detail` with the stack trace. |
-| `limits.raised`, `limits.partialAllowed` | Whether `--raise-limits` and `--allow-partial` were given. |
+| `limits.raised`, `limits.partialAllowed`, `limits.strict` | Whether `--raise-limits`, `--allow-partial` and `--strict` were given. |
 | `limits.hit[]` | Every stream cut by a limit: `stream`, `limit` (code from the table above), `value` (the limit in force), `raisable`, `detail`. |
 | `streams[]` | The partition, Global, Formats and element table streams. `members` are the gzip members the stream is cut into; `decoded` produced output; `failed` produced none and their data is missing (a stream that holds bytes but not one gzip member is one failed member); `recovered` were rescued by a structural relock; `unverified` were kept although their checksum did not match or was never checked, which includes every rescued member. `decodedFraction` is `decoded / members`. |
 | `elements.inTable`, `elements.decoded` | Rows of the element table, and those with a parsed record. `decodedFraction` is their quotient (1 for an empty table). |
-| `issues[]` | Other findings that make a read `partial`, as `stream`, `code`, `detail`. The one code is `no-rows`: the element table decoded no row (a project always has elements, so the table did not decode). |
+| `issues[]` | Findings that make a read `partial`, as `stream`, `code`, `detail`: `failed-members` (one or more gzip members of the stream produced no output), `recovered-members` (one or more members were rebuilt by structural recovery), `unverified-members` (one or more members decoded without a matching checksum), and `no-rows` (`Global/ElemTable` decoded no row; a project always has elements, so the table did not decode). |
 | `elements.undecoded[]` | Rows of the element table without a parsed record, as `class`, `reason`, `count`, `examples`. The class of an element that never decoded is `unknown`. |
 | `export.format` | `ifc`, `json` (the compact export) or `json-full`. |
 | `export.considered`, `exported`, `skipped` | Parsed elements the export looked at, wrote, and left out, counted as the exporter counts them (`exported` counts elements, not product entities: for example, a roof element that writes two product entities, an `IfcRoof` and an `IfcSlab` with the same tag, counts once in `exported`, so the exported total can be below the number of product entities). `exportedFraction` is `exported / considered`. |
@@ -91,11 +93,12 @@ The compact export writes the rows of the element table: `block-only-record` and
 ## Scripting
 
 ```
-rvtio project.rvt project.ifc --report project.report.json
+rvtio project.rvt project.ifc --strict --report project.report.json
 case $? in
-  0) ;;                                   # done; check "status" in the report if a partial read matters
+  0) ;;                                   # complete read and export written
   2) echo "the file is cut or damaged" ;;
   3) echo "limit exceeded: retry with --raise-limits" ;;
   4) echo "the content could not be decoded" ;;
+  6) echo "the read was partial: see streams and issues in project.report.json" ;;
 esac
 ```

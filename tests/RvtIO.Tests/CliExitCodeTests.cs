@@ -60,6 +60,122 @@ public class CliExitCodeTests
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 
+    private static (int ExitCode, string StdErr) RunWithOutput(params string[] arguments)
+    {
+        var start = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "RvtIO.Cli.dll"));
+        foreach (string argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        Assert.True(process.WaitForExit(120_000), "The tool did not end within two minutes.");
+        Task.WaitAll(output, error);
+        return (process.ExitCode, error.Result);
+    }
+
+    private static void WriteSyntheticRvt(string path, byte[]? extraPartition = null)
+    {
+        using var elemTable = new MemoryStream();
+        using (var writer = new BinaryWriter(elemTable))
+        {
+            writer.Write((ushort)1312);
+            writer.Write(1);
+            writer.Write(12345); writer.Write(100); writer.Write(64);
+            writer.Write(523); writer.Write(999); writer.Write(7); writer.Write(42);
+        }
+        byte[] intactPartition = CoverageCensusTests.Partition(
+            CoverageCensusTests.Block(false, CoverageCensusTests.R(12345, CoverageCensusTests.Body("Plain", 5, 0, 0, 0))));
+        var streams = new List<(string Path, byte[] Bytes)>
+        {
+            ("Global/ElemTable", RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(elemTable.ToArray()))),
+            ("Global/History", RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(new byte[64]))),
+            ("Formats/Latest", RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(CoverageCensusTests.TableBytes))),
+            ("Partitions/1", intactPartition),
+        };
+        if (extraPartition != null)
+            streams.Add(("Partitions/2", extraPartition));
+        CoverageCensusTests.WriteFile(path, streams.ToArray());
+    }
+
+    [Fact]
+    public void AnIntactFileWithStrictOption_ExitsZeroAndWritesOutputAndCompleteReport()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-cli-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "intact.rvt");
+            string outJson = Path.Combine(directory, "output.json");
+            string report = Path.Combine(directory, "report.json");
+            WriteSyntheticRvt(rvt);
+
+            var (exit, _) = RunWithOutput(rvt, outJson, "--strict", "--report", report);
+            Assert.Equal(RvtExitCodes.Success, exit);
+            Assert.True(File.Exists(outJson));
+            using var json = JsonDocument.Parse(File.ReadAllText(report));
+            Assert.Equal("complete", json.RootElement.GetProperty("status").GetString());
+            Assert.Equal(RvtExitCodes.Success, json.RootElement.GetProperty("exitCode").GetInt32());
+            Assert.True(json.RootElement.GetProperty("limits").GetProperty("strict").GetBoolean());
+            Assert.Equal(0, json.RootElement.GetProperty("issues").GetArrayLength());
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void AFileWithADamagedMember_ExitsZeroWithoutStrictAndPartialReadCodeWithStrict()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-cli-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "damaged.rvt");
+            byte[] badMember = new byte[512];
+            new Random(11).NextBytes(badMember);
+            badMember[0] = 0; badMember[1] = 1;
+            WriteSyntheticRvt(rvt, extraPartition: badMember);
+
+            string lenientOut = Path.Combine(directory, "lenient.json");
+            string lenientReport = Path.Combine(directory, "lenient-report.json");
+            Assert.Equal(RvtExitCodes.Success, Run(rvt, lenientOut, "--report", lenientReport));
+            Assert.True(File.Exists(lenientOut));
+            using (var json = JsonDocument.Parse(File.ReadAllText(lenientReport)))
+            {
+                var root = json.RootElement;
+                Assert.Equal("partial", root.GetProperty("status").GetString());
+                Assert.Equal(RvtExitCodes.Success, root.GetProperty("exitCode").GetInt32());
+                Assert.False(root.GetProperty("limits").GetProperty("strict").GetBoolean());
+                var p2 = root.GetProperty("streams").EnumerateArray().Single(s => s.GetProperty("name").GetString() == "Partitions/2");
+                Assert.True(p2.GetProperty("failed").GetInt32() > 0);
+                var issue = Assert.Single(root.GetProperty("issues").EnumerateArray());
+                Assert.Equal("Partitions/2", issue.GetProperty("stream").GetString());
+                Assert.Equal("failed-members", issue.GetProperty("code").GetString());
+            }
+
+            string strictOut = Path.Combine(directory, "strict.json");
+            string strictReport = Path.Combine(directory, "strict-report.json");
+            var (strictExit, stderr) = RunWithOutput(rvt, strictOut, "--strict", "--report", strictReport);
+            Assert.Equal(RvtExitCodes.PartialRead, strictExit);
+            Assert.False(File.Exists(strictOut));
+            Assert.Contains("Partitions/2", stderr);
+            Assert.Contains("exit code 6", stderr);
+            using (var json = JsonDocument.Parse(File.ReadAllText(strictReport)))
+            {
+                var root = json.RootElement;
+                Assert.Equal("partial", root.GetProperty("status").GetString());
+                Assert.Equal(RvtExitCodes.PartialRead, root.GetProperty("exitCode").GetInt32());
+                Assert.True(root.GetProperty("limits").GetProperty("strict").GetBoolean());
+                Assert.False(root.TryGetProperty("export", out _));
+                var issue = Assert.Single(root.GetProperty("issues").EnumerateArray());
+                Assert.Equal("Partitions/2", issue.GetProperty("stream").GetString());
+                Assert.Equal("failed-members", issue.GetProperty("code").GetString());
+            }
+
+            // --allow-partial and --strict exclude each other
+            Assert.Equal(RvtExitCodes.Usage, Run(rvt, strictOut, "--allow-partial", "--strict"));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
     [Fact]
     public void AnInputThatIsNoCompoundFile_EndsWithTheInputErrorCodeAndAFailedReport() =>
         RunOn("this is not a Revit file"u8.ToArray(), "not-a-compound-file");

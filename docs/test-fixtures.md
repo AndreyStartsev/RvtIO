@@ -45,8 +45,8 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 
 ## What runs without the private files
 
-With no private file at all, 10406 of the 10848 test cases run and pass on net8.0 and 442 are skipped (net10.0: 10410 of
-10852, 442 skipped): 436 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
+With no private file at all, 10415 of the 10858 test cases run and pass on net8.0 and 443 are skipped (net10.0: 10419 of
+10862, 443 skipped): 437 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
 and 6 need other inputs (two need symbolic links, three
 need `RVTIO_FREEFORM_FULL`, `RVTIO_CYL_FULL` or `RVTIO_MESH_FULL`, one is a known gap). The tests that run use synthetic data built
 in the tests and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
@@ -56,7 +56,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 
 ## Tests that need the private files
 
-293 test methods (436 cases, theory rows counted) are skipped without the files:
+294 test methods (437 cases, theory rows counted) are skipped without the files:
 
 | Class | Methods | Cases | Files |
 |---|---|---|---|
@@ -99,6 +99,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `IfcExporterSkipReasonTests` | 1 | 1 | TESTFILE.rvt |
 | `IfcExporterSlabQuantitiesSampleTests` | 3 | 3 | rstbasicsampleproject.rvt, struct25.rvt |
 | `MultistoryStairCopyTests` | 1 | 1 | rac_advanced_sample_project.rvt |
+| `OwnElementClassTests` | 1 | 1 | TESTFILE.rvt |
 | `PageCodecSampleTests` | 2 | 2 | any `.rvt` project files |
 | `PartitionFramingFuzzTests` | 1 | 1 | TESTFILE.rvt |
 | `ProfileRoofAreaTests` | 3 | 11 | TestData blocks |
