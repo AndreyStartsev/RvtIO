@@ -82,6 +82,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `ElementExportIdTests` | 3 | 6 | TESTFILE.rvt |
 | `ElementHeaderCategoryTest2022Tests` | 2 | 2 | TESTFILE.rvt, Test_2022.rvt |
 | `ElementHeaderCategoryTestFileTests` | 1 | 1 | TESTFILE.rvt |
+| `ElementMeshesSampleTests` | 5 | 5 | Test_2022.rvt, Test_2025.rvt, test_door_in_wall.rvt |
 | `EpisodeGuidTests` | 2 | 2 | TESTFILE.rvt |
 | `ExportReportTests` | 8 | 13 | Test_2020.rvt, TESTFILE.rvt |
 | `FaceAreaTests` | 2 | 2 | TestData blocks |
