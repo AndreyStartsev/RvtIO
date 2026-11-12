@@ -64,13 +64,28 @@ public static class RvtSceneReader
     public static RvtSceneResult Read(RvtDocument document, RvtSceneOptions? options)
     {
         ArgumentNullException.ThrowIfNull(document);
-        if (options?.ModelKey is not { Length: > 0 } key)
-            throw new ArgumentException("A document has no file name: give the model key in RvtSceneOptions.ModelKey.", nameof(options));
-        return Map(document, ElementMeshes.Extract(document), key);
+        return Map(document, ElementMeshes.Extract(document), RequiredKey(options));
     }
 
+    /// <summary>Turns an opened document into a scene with meshes the caller extracted from it, for example with
+    /// <see cref="ElementMeshes.Extract(RvtDocument, ElementMeshOptions?)"/> and options of its own.</summary>
+    /// <param name="document">The document the meshes come from; the element facts are read from it.</param>
+    /// <param name="meshes">The meshes of the drawable elements of <paramref name="document"/>.</param>
+    /// <param name="options">The options; <see cref="RvtSceneOptions.ModelKey"/> is required, as a document has no file name.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="document"/> or <paramref name="meshes"/> is null.</exception>
+    /// <exception cref="ArgumentException"><see cref="RvtSceneOptions.ModelKey"/> is null or empty.</exception>
+    public static RvtSceneResult Read(RvtDocument document, MeshSet meshes, RvtSceneOptions? options)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(meshes);
+        return Map(document, meshes, RequiredKey(options));
+    }
+
+    private static string RequiredKey(RvtSceneOptions? options) => options?.ModelKey is { Length: > 0 } key ? key
+        : throw new ArgumentException("A document has no file name: give the model key in RvtSceneOptions.ModelKey.", nameof(options));
+
     /// <summary>The scene of the meshes of <paramref name="document"/>; the element facts come from the document.</summary>
-    internal static RvtSceneResult Map(RvtDocument document, MeshSet meshes, string modelKey, IEnumerable<SceneDiagnostic>? diagnostics = null)
+    private static RvtSceneResult Map(RvtDocument document, MeshSet meshes, string modelKey, IEnumerable<SceneDiagnostic>? diagnostics = null)
     {
         var scene = new SceneDocument { Title = modelKey };
         scene.Models.Add(new SceneModel
@@ -166,7 +181,7 @@ public static class RvtSceneReader
     }
 
     /// <summary>"RvtIO.Scene" and the version of this assembly without the source revision.</summary>
-    internal static string Producer { get; } = "RvtIO.Scene " + (typeof(RvtSceneReader).Assembly
+    private static string Producer { get; } = "RvtIO.Scene " + (typeof(RvtSceneReader).Assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0]
         ?? typeof(RvtSceneReader).Assembly.GetName().Version?.ToString(3));
 

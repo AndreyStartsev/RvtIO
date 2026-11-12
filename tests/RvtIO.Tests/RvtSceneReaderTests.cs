@@ -67,7 +67,7 @@ public class RvtSceneReaderTests
         ],
     };
 
-    private static RvtSceneResult Map() => RvtSceneReader.Map(Document(), Meshes(), "model.rvt");
+    private static RvtSceneResult Map() => RvtSceneReader.Read(Document(), Meshes(), new RvtSceneOptions { ModelKey = "model.rvt" });
 
     private static void AssertClose(Vector3d expected, Vector3d actual)
     {
@@ -195,7 +195,7 @@ public class RvtSceneReaderTests
             Elements = [new Element { Id = Wall, UniqueId = "w", Parameters = [Bip(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5), estimate] }],
         };
         var meshes = new MeshSet { Elements = [new ElementMesh { ElementId = Wall, Meshes = [Triangle(0, 0, 0)] }] };
-        var set = Assert.Single(RvtSceneReader.Map(RvtDocument.FromInfo(info), meshes, "m").Document.PropertySets);
+        var set = Assert.Single(RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" }).Document.PropertySets);
         Assert.Equal("WALL_USER_HEIGHT_PARAM", Assert.Single(set.Properties).Name);
     }
 
@@ -213,7 +213,7 @@ public class RvtSceneReaderTests
     {
         var info = new RevitFileInfo { Elements = [new Element { Id = Wall, UniqueId = "w" }, new Element { Id = Concrete, Name = "Plain" }] };
         var meshes = new MeshSet { Elements = [new ElementMesh { ElementId = Wall, Meshes = [Triangle(0, 0, 0, Concrete)] }] };
-        var material = Assert.Single(RvtSceneReader.Map(RvtDocument.FromInfo(info), meshes, "m").Document.Materials);
+        var material = Assert.Single(RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" }).Document.Materials);
         Assert.Equal(RgbaColor.Gray, material.Color);
         Assert.Equal("Plain", material.Name);
     }
@@ -242,7 +242,7 @@ public class RvtSceneReaderTests
             GeometryUndecoded = true,
             Elements = [new ElementMesh { ElementId = Wall, Coverage = MeshCoverage.Undecoded }, new ElementMesh { ElementId = Door, Coverage = MeshCoverage.Undecoded }],
         };
-        var result = RvtSceneReader.Map(Document(), meshes, "old.rvt");
+        var result = RvtSceneReader.Read(Document(), meshes, new RvtSceneOptions { ModelKey = "old.rvt" });
         var error = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Severity == SceneSeverity.Error);
         Assert.Equal("geometry-undecoded", error.Code);
         Assert.Contains("R22Layout", error.Message);
@@ -259,7 +259,7 @@ public class RvtSceneReaderTests
     {
         var info = new RevitFileInfo { Elements = [new Element { Id = 1 }, new Element { Id = 2 }] };
         var meshes = new MeshSet { Elements = [new ElementMesh { ElementId = 1, Meshes = [Triangle(0, 0, 0)] }, new ElementMesh { ElementId = 2, Meshes = [Triangle(0, 0, 0)] }] };
-        var result = RvtSceneReader.Map(RvtDocument.FromInfo(info), meshes, "m");
+        var result = RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" });
         Assert.All(result.Document.Elements, element => Assert.Null(element.SourceId));
         Assert.Contains("2 elements", Assert.Single(result.Diagnostics, diagnostic => diagnostic.Code == "no-source-id").Message);
     }
@@ -272,6 +272,9 @@ public class RvtSceneReaderTests
         Assert.Throws<ArgumentException>(() => RvtSceneReader.Read(document, new RvtSceneOptions { ModelKey = "" }));
         Assert.Throws<ArgumentNullException>(() => RvtSceneReader.Read((RvtDocument)null!, new RvtSceneOptions { ModelKey = "k" }));
         Assert.Throws<ArgumentException>(() => RvtSceneReader.Read("model.rvt", new RvtSceneOptions { ModelKey = "" }));
+        Assert.Throws<ArgumentException>(() => RvtSceneReader.Read(document, Meshes(), null));
+        Assert.Throws<ArgumentNullException>(() => RvtSceneReader.Read(document, null!, new RvtSceneOptions { ModelKey = "k" }));
+        Assert.Throws<ArgumentNullException>(() => RvtSceneReader.Read(null!, Meshes(), new RvtSceneOptions { ModelKey = "k" }));
     }
 
     [Fact]

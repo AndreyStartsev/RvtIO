@@ -21,7 +21,9 @@ SceneJson.Save(result.Document, "project.ioscene.json");
 
 `Read(path)` opens the file as the command line tool opens it for an IFC export (`R22Layout`, English system family
 names, faces with distinct openings kept apart). `Read(document, options)` takes a document you opened yourself; it
-needs `RvtSceneOptions.ModelKey`, because a document does not know its file name. Open a file of a release other than
+needs `RvtSceneOptions.ModelKey`, because a document does not know its file name. `Read(document, meshes, options)` also
+takes the meshes you extracted from that document yourself, for example with `ElementMeshes.Extract` and options of your
+own. Open a file of a release other than
 Revit 2022 with `R22Layout = true`, or its elements have no geometry and the result has the error `geometry-undecoded`.
 
 `RvtSceneResult` holds the `Document`, the `Diagnostics` and counts: elements, elements with geometry, elements by
