@@ -9,7 +9,7 @@ public partial class IfcExporter
     /// explicit <see cref="ExportPhaseId"/>) still needs only the set of phases: an element demolished in any phase of the project
     /// is demolished at or before the last one. That set is the ProjectPhase elements of the document; a document without any is
     /// not filtered.</summary>
-    private ExportPhaseFilter? BuildExportPhaseFilter(RevitFileInfo info)
+    internal ExportPhaseFilter? BuildExportPhaseFilter(RevitFileInfo info)
     {
         if (info.SerializedProjectPhaseIds is { } order)
             return ResolveActivePhase(info) is int phase ? ExportPhaseFilter.For(order, phase) : null;

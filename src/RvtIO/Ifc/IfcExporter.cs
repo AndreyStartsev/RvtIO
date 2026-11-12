@@ -722,22 +722,9 @@ public partial class IfcExporter
             object? value = e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
             return value is int n ? n : null;
         }
-        static bool HasProjectPhaseReference(Element e)
-        {
-            int? phase = IntParam(e, -1012100); // PHASE_CREATED
-            // Id 0 is a phase of Revit 2023 and later (the first project phase, a row of its
-            // element table); the earlier layouts number phases from 1.
-            return phase is > 0 && (e.References?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
-                || phase == 0 && e.SerializedCreatedPhaseId == 0;
-        }
-
         // Element types can carry preview/type geometry in the RVT stream, but they are definitions
         // rather than placed products.
-        var typeElementIds = new HashSet<int>();
-        foreach (var e in info.Elements)
-            foreach (var p in e.Parameters)
-                if (p.Id is -1002050 or -1002052 && p.Value is int typeId && typeId > 0)
-                    typeElementIds.Add(typeId);
+        var typeElementIds = TypeElementIds(info.Elements);
 
         // A placed curtain panel/mullion references its parent wall.
         var curtainWallIds = new HashSet<int>();
@@ -1649,8 +1636,7 @@ public partial class IfcExporter
                 continue;
             }
             if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
-            bool transformOnlyFamily = elem.Transform != null && elem.TypeId > 0
-                && elem.CategoryId is null or -2000080 or -2001000 or -2001100;
+            bool transformOnlyFamily = IsTransformOnlyFamily(elem);
             // Current profile: a wall record that is itself the type of another element (it names no project phase)
             // is a type definition; the type is written from the instances that use it. The legacy profile keeps
             // wall records, as wall type propagation is not reliable enough there.
@@ -65129,7 +65115,7 @@ public partial class IfcExporter
                 : null;
     }
 
-    private static bool IsWallRectangularOpening(Element element) =>
+    internal static bool IsWallRectangularOpening(Element element) =>
         element.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true;
 
     // The door sub-element rule (= WindowOpeningRelVoid).
@@ -69695,11 +69681,37 @@ public partial class IfcExporter
     }
 
 
+    /// <summary>Whether the element names its created phase (PHASE_CREATED) in its own record graph. Preview and type records
+    /// inherit the parameter during parameter propagation without referencing that phase.</summary>
+    internal static bool HasProjectPhaseReference(Element e)
+    {
+        int? phase = e.Parameters.FirstOrDefault(p => p.Id == -1012100)?.Value is int n ? n : null; // PHASE_CREATED
+        // Id 0 is a phase of Revit 2023 and later (the first project phase, a row of its
+        // element table); the earlier layouts number phases from 1.
+        return phase is > 0 && (e.References?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
+            || phase == 0 && e.SerializedCreatedPhaseId == 0;
+    }
+
+    /// <summary>The elements that other elements name as their type (ELEM_TYPE_PARAM, ELEM_FAMILY_AND_TYPE_PARAM).</summary>
+    internal static HashSet<int> TypeElementIds(IEnumerable<Element> elements)
+    {
+        var typeElementIds = new HashSet<int>();
+        foreach (var e in elements)
+            foreach (var p in e.Parameters)
+                if (p.Id is -1002050 or -1002052 && p.Value is int typeId && typeId > 0)
+                    typeElementIds.Add(typeId);
+        return typeElementIds;
+    }
+
+    /// <summary>A family instance placed by its FamilyInstance transform whose category is unknown or generic.</summary>
+    internal static bool IsTransformOnlyFamily(Element elem) =>
+        elem.Transform != null && elem.TypeId > 0 && elem.CategoryId is null or -2000080 or -2001000 or -2001100;
+
     /// <summary>
     /// Returns true if the Category string indicates a non-physical element (annotation, link,
     /// symbol, etc).
     /// </summary>
-    private static bool IsNonPhysicalCategory(string? category)
+    internal static bool IsNonPhysicalCategory(string? category)
     {
         if (string.IsNullOrEmpty(category)) return false; // null category handled by MapCategoryToIfcType
         // Annotations, symbols, links, views, grids, etc.
