@@ -1,3 +1,4 @@
+using System.Globalization;
 using IOScene;
 using RvtIO.BuiltIns;
 using RvtIO.Meshes;
@@ -8,33 +9,54 @@ using Xunit;
 namespace RvtIO.Tests;
 
 /// <summary>The scene of <see cref="RvtSceneReader"/> on synthetic meshes and elements: instancing, mirrored placements, local
-/// origins, feet to metres, element facts, property sets, materials and the diagnostics of incomplete geometry.</summary>
+/// origins, feet to metres, element facts, IFC GlobalIds, property sets and their display text, materials and the diagnostics of
+/// incomplete geometry.</summary>
 public class RvtSceneReaderTests
 {
     private const double Foot = 0.3048;
     private const int Wall = 100, Door = 101, Empty = 102, Broken = 103, Type = 200, Symbol = 300, Concrete = 500;
 
-    private static Parameter Bip(BuiltInParameter bip, object value) => new()
+    private static Parameter Bip(BuiltInParameter bip, object value, StorageType? storage = null) => new()
     {
-        Id = (int)bip, Value = value, Definition = new Definition { Id = (int)bip, BuiltInParameter = bip.ToString(), Name = bip.ToString() },
+        Id = (int)bip, Value = value, StorageType = storage ?? StorageOf(value),
+        Definition = new Definition { Id = (int)bip, BuiltInParameter = bip.ToString(), Name = bip.ToString() },
     };
+
+    private static Parameter User(int id, string name, object value, StorageType? storage = null) => new()
+    {
+        Id = id, Value = value, StorageType = storage ?? StorageOf(value), Definition = new Definition { Id = id, Name = name },
+    };
+
+    private static StorageType StorageOf(object value) => value switch
+    {
+        double => StorageType.Double, string => StorageType.String, _ => StorageType.Integer,
+    };
+
+    /// <summary>A length in feet, displayed in millimetres as the reader resolves a length parameter.</summary>
+    private static Parameter Length(BuiltInParameter bip, double feet)
+    {
+        var parameter = Bip(bip, feet);
+        parameter.UnitSymbol = "mm";
+        parameter.ConversionFactor = 304.8;
+        return parameter;
+    }
 
     private static Element Instance(int id, int categoryId, string category, params Parameter[] parameters) => new()
     {
         Id = id, UniqueId = $"doc-{id:x8}", CategoryId = categoryId, Category = category,
-        Parameters = [Bip(BuiltInParameter.ELEM_TYPE_PARAM, Type), .. parameters],
+        Parameters = [Bip(BuiltInParameter.ELEM_TYPE_PARAM, Type, StorageType.ElementId), .. parameters],
     };
 
     private static RvtDocument Document() => RvtDocument.FromInfo(new RevitFileInfo
     {
         Elements =
         [
-            Instance(Wall, (int)BuiltInCategory.OST_Walls, "OST_Walls", Bip(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5),
-                new Parameter { Id = 900, Value = "EI 60", Definition = new Definition { Id = 900, Name = "Fire rating" } }),
+            Instance(Wall, (int)BuiltInCategory.OST_Walls, "OST_Walls", Length(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5),
+                User(900, "Fire rating", "EI 60")),
             Instance(Door, (int)BuiltInCategory.OST_Doors, "OST_Doors"),
             Instance(Empty, (int)BuiltInCategory.OST_Walls, "OST_Walls"),
             Instance(Broken, (int)BuiltInCategory.OST_Walls, "OST_Walls"),
-            new Element { Id = Type, Name = "Generic 200", Parameters = [new Parameter { Id = 901, Value = 3, Definition = new Definition { Id = 901, Name = "Count" } }] },
+            new Element { Id = Type, Name = "Generic 200", Parameters = [User(901, "Count", 3)] },
             new Element
             {
                 Id = Concrete, Name = "Concrete", CategoryId = (int)BuiltInCategory.OST_Materials, Category = "OST_Materials",
@@ -68,6 +90,14 @@ public class RvtSceneReaderTests
     };
 
     private static RvtSceneResult Map() => RvtSceneReader.Read(Document(), Meshes(), new RvtSceneOptions { ModelKey = "model.rvt" });
+
+    /// <summary>The scene of one drawable element.</summary>
+    private static SceneDocument MapOne(Element element) => RvtSceneReader.Read(RvtDocument.FromInfo(new RevitFileInfo { Elements = [element] }),
+        new MeshSet { Elements = [new ElementMesh { ElementId = element.Id, Meshes = [Triangle(0, 0, 0)] }] }, new RvtSceneOptions { ModelKey = "m" }).Document;
+
+    /// <summary>The text of each property of the scene, by property name.</summary>
+    private static Dictionary<string, string> Texts(SceneDocument document) =>
+        document.PropertySets.SelectMany(set => set.Properties).ToDictionary(property => property.Name, property => property.Value.Text);
 
     private static void AssertClose(Vector3d expected, Vector3d actual)
     {
@@ -173,12 +203,12 @@ public class RvtSceneReaderTests
         Assert.Equal("revit:instance", instance.Key);
         var height = instance.Properties.Single(property => property.Name == "WALL_USER_HEIGHT_PARAM");
         Assert.Equal("revit:bip:-1001105", height.Key);
-        Assert.Equal(SceneValue.FromText("10.5"), height.Value);
+        Assert.Equal(SceneValue.FromText("3200.4 mm"), height.Value);
         var user = instance.Properties.Single(property => property.Name == "Fire rating");
         Assert.Null(user.Key);
         Assert.Equal("EI 60", user.Value.Text);
-        // one type set, shared by every instance of the type
-        Assert.Equal(wall.PropertySetIds[1], door.PropertySetIds[1]);
+        // one type set, shared by every instance of the type; the door's only instance parameter is its type, an element id
+        Assert.Equal(wall.PropertySetIds[1], Assert.Single(door.PropertySetIds));
         var type = document.PropertySets.Single(set => set.Id == wall.PropertySetIds[1]);
         Assert.Equal("revit:type", type.Key);
         Assert.Equal("3", type.Properties.Single(property => property.Name == "Count").Value.Text);
@@ -192,11 +222,108 @@ public class RvtSceneReaderTests
         estimate.IsApproximate = true;
         var info = new RevitFileInfo
         {
-            Elements = [new Element { Id = Wall, UniqueId = "w", Parameters = [Bip(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5), estimate] }],
+            Elements = [new Element { Id = Wall, UniqueId = "w", Parameters = [Length(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5), estimate] }],
         };
         var meshes = new MeshSet { Elements = [new ElementMesh { ElementId = Wall, Meshes = [Triangle(0, 0, 0)] }] };
-        var set = Assert.Single(RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" }).Document.PropertySets);
+        var document = RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" }).Document;
+        var set = Assert.Single(document.PropertySets);
         Assert.Equal("WALL_USER_HEIGHT_PARAM", Assert.Single(set.Properties).Name);
+        Assert.Empty(document.Validate());
+    }
+
+    [Fact]
+    public void LengthShowsTheDisplayStringOfThePublicApiWithItsUnit()
+    {
+        var height = Length(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5);
+        // Without a resolved unit the public API only guesses by the parameter name: the value is left out.
+        var guessed = Bip(BuiltInParameter.WALL_BASE_OFFSET, 1.25);
+        var plain = User(902, "Factor", 0.5);
+        var document = MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [height, guessed, plain] });
+
+        var texts = Texts(document);
+        Assert.Equal("3200.4 mm", Assert.Single(texts).Value);
+        var culture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            Assert.Equal(height.AsValueString(), texts["WALL_USER_HEIGHT_PARAM"]);
+            // The text does not follow the culture of the machine.
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ru-RU");
+            Assert.Equal("3200.4 mm", Texts(MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [height] }))["WALL_USER_HEIGHT_PARAM"]);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culture;
+        }
+        Assert.Empty(document.Validate());
+    }
+
+    [Fact]
+    public void UnitWhoseFactorIsNotRevitsConversionIsLeftOut()
+    {
+        var angle = User(907, "Slope angle", Math.PI / 4);
+        angle.UnitSymbol = "\u00B0";
+        angle.ConversionFactor = 180 / Math.PI;
+        // Revit stores power in kg ft^2/s^3, not in watts: a factor of 1 does not give the watts Revit shows.
+        var power = User(908, "Load", 120.0);
+        power.UnitSymbol = "W";
+        power.ConversionFactor = 1;
+        var perLength = User(909, "Surface per length", 2.0);
+        perLength.UnitSymbol = "m\u00B2";
+        perLength.ConversionFactor = 0.09290304;
+        perLength.SpecType = "autodesk.spec.aec:surfaceAreaPerUnitLength-1.0.0";
+        var document = MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [angle, power, perLength] });
+        Assert.Equal("45 \u00B0", Assert.Single(Texts(document)).Value);
+        Assert.Empty(document.Validate());
+    }
+
+    [Fact]
+    public void ElementIdValueIsLeftOut()
+    {
+        var level = Bip(BuiltInParameter.WALL_BASE_CONSTRAINT, 311, StorageType.ElementId);
+        var material = User(903, "Finish", Concrete, StorageType.ElementId);
+        var document = MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [level, material, User(900, "Fire rating", "EI 60")] });
+        Assert.Equal(["Fire rating"], Texts(document).Keys);
+        Assert.Empty(document.Validate());
+    }
+
+    [Fact]
+    public void YesNoOfAUserParameterIsTheNumberTheApiShows()
+    {
+        var external = User(904, "Is external", 1);
+        // A built-in integer may be an enumeration, which the public API cannot tell from a number or a Yes/No: left out.
+        var roomBounding = Bip(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING, 1);
+        var document = MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [external, roomBounding, User(905, "Count", -12)] });
+        var texts = Texts(document);
+        Assert.Equal(external.AsValueString(), texts["Is external"]);
+        Assert.Equal("1", texts["Is external"]);
+        Assert.Equal("-12", texts["Count"]);
+        Assert.DoesNotContain("WALL_ATTR_ROOM_BOUNDING", texts.Keys);
+        Assert.Empty(document.Validate());
+    }
+
+    [Fact]
+    public void IfcGuidIsTheExportIdOfTheUniqueId()
+    {
+        // The UniqueId and GlobalId of an element of a fixture file, as Revit 2022 exported it to IFC.
+        var element = MapOne(new Element { Id = 263584, UniqueId = "d45b1816-cbcc-4dc6-b0bb-007467f3c600-000405a0" }).Elements[0];
+        Assert.Equal("3KMnWMoynDnh2x07HdzyEW", element.IfcGuid);
+        Assert.Null(MapOne(new Element { Id = 1, UniqueId = "d45b1816-cbcc-4dc6-b0bb-007467f3c600-0405a0" }).Elements[0].IfcGuid);
+        Assert.Null(MapOne(new Element { Id = 1 }).Elements[0].IfcGuid);
+    }
+
+    [Fact]
+    public void ValidIfcGuidParameterOverridesTheExportId()
+    {
+        const string UniqueId = "d45b1816-cbcc-4dc6-b0bb-007467f3c600-000405a0";
+        var builtIn = Bip(BuiltInParameter.IFC_GUID, "2abcdefghijklmnopqrs$_");
+        var shared = User(906, "IfcGUID", "0123456789ABCDEFGHIJKL");
+        Assert.Equal("2abcdefghijklmnopqrs$_", MapOne(new Element { Id = 1, UniqueId = UniqueId, Parameters = [shared, builtIn] }).Elements[0].IfcGuid);
+        Assert.Equal("0123456789ABCDEFGHIJKL", MapOne(new Element { Id = 1, UniqueId = UniqueId, Parameters = [shared] }).Elements[0].IfcGuid);
+        // Not a GlobalId: empty, too short, a character outside the alphabet, a first character above 3.
+        foreach (string invalid in new[] { "", "2abcdefghijklmnopqrs$", "2abcdefghijklmnopqrs-_", "4abcdefghijklmnopqrs$_" })
+            Assert.Equal("3KMnWMoynDnh2x07HdzyEW",
+                MapOne(new Element { Id = 1, UniqueId = UniqueId, Parameters = [Bip(BuiltInParameter.IFC_GUID, invalid)] }).Elements[0].IfcGuid);
     }
 
     [Fact]
@@ -213,9 +340,11 @@ public class RvtSceneReaderTests
     {
         var info = new RevitFileInfo { Elements = [new Element { Id = Wall, UniqueId = "w" }, new Element { Id = Concrete, Name = "Plain" }] };
         var meshes = new MeshSet { Elements = [new ElementMesh { ElementId = Wall, Meshes = [Triangle(0, 0, 0, Concrete)] }] };
-        var material = Assert.Single(RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" }).Document.Materials);
+        var document = RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" }).Document;
+        var material = Assert.Single(document.Materials);
         Assert.Equal(RgbaColor.Gray, material.Color);
         Assert.Equal("Plain", material.Name);
+        Assert.Empty(document.Validate());
     }
 
     [Fact]
@@ -262,6 +391,7 @@ public class RvtSceneReaderTests
         var result = RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" });
         Assert.All(result.Document.Elements, element => Assert.Null(element.SourceId));
         Assert.Contains("2 elements", Assert.Single(result.Diagnostics, diagnostic => diagnostic.Code == "no-source-id").Message);
+        Assert.Empty(result.Document.Validate());
     }
 
     [Fact]

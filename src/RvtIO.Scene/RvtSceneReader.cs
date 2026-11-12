@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Reflection;
 using IOScene;
@@ -19,13 +20,18 @@ namespace RvtIO.Scene;
 /// lowest corner of the element's own meshes, which is the translation of its instances. Normals and indices are those of
 /// the meshes. A mesh with a material has the instance material of that material element: its name and, where the file
 /// gives it, its colour (else a neutral grey).</para>
-/// <para>An element's <c>SourceId</c> is its Revit UniqueId, <c>Category</c> the English name of its built-in category (else the
+/// <para>An element's <c>SourceId</c> is its Revit UniqueId, <c>IfcGuid</c> the GlobalId Revit's IFC export gives it (its valid
+/// IfcGUID parameter, else the export id of its UniqueId), <c>Category</c> the English name of its built-in category (else the
 /// category the reader gives), <c>TypeName</c> the name of its type element. Its parameters are the property set
 /// <c>revit:instance</c>; the parameters of its type are the property set <c>revit:type</c>, one set shared by every element of
-/// the type. A parameter whose value the reader only estimates (<see cref="Parameter.IsApproximate"/>) is left out.
-/// Values are text: the value the file stores, in Revit internal units, written with the invariant culture; the
-/// key of a built-in parameter is <c>revit:bip:&lt;id&gt;</c>, other parameters have no key. Levels, typed values and IFC
-/// GlobalIds are not written.</para>
+/// the type. A parameter whose value the reader only estimates (<see cref="Parameter.IsApproximate"/>) is left out. The key of
+/// a built-in parameter is <c>revit:bip:&lt;id&gt;</c>, other parameters have no key.</para>
+/// <para>Values are text: the display string of <see cref="Parameter.AsValueString"/>, with the invariant culture, and only
+/// where it is the text Revit shows. A string is the stored text; a double is its value in the display unit and the unit symbol
+/// (<c>3200.4 mm</c>) when that unit is mm, m², m³, ° or A, the units whose factor converts Revit's internal unit, and is left
+/// out otherwise (no unit resolved, or a unit the reader converts with a factor that is not Revit's); an integer of a shared, project or family
+/// parameter (a plain integer or a Yes/No, shown as 1 or 0) is the number in decimal; a built-in integer, which may be an
+/// enumeration, and an element id are left out. Levels and typed values are not written.</para>
 /// </remarks>
 public static class RvtSceneReader
 {
@@ -120,6 +126,7 @@ public static class RvtSceneReader
                 Id = mesh.ElementId,
                 ModelId = ModelId,
                 SourceId = element?.UniqueId,
+                IfcGuid = element != null ? IfcGuidOf(element) : null,
                 Kind = SceneNodeKind.Element,
                 Name = element?.Name ?? string.Empty,
                 Category = CategoryName(element),
@@ -210,14 +217,7 @@ public static class RvtSceneReader
         {
             // An approximate value is the reader's estimate, not a value of the file: the scene never carries a guess.
             if (parameter.IsApproximate) continue;
-            string? text = parameter.Value switch
-            {
-                null => null,
-                string value => value,
-                IFormattable value => value.ToString(null, CultureInfo.InvariantCulture),
-                var value => value.ToString(),
-            };
-            if (text == null) continue;
+            if (DisplayText(parameter) is not { } text) continue;
             properties.Add(new SceneProperty
             {
                 Name = parameter.Definition?.Name ?? parameter.Id.ToString(CultureInfo.InvariantCulture),
@@ -230,6 +230,57 @@ public static class RvtSceneReader
         scene.PropertySets.Add(new ScenePropertySet { Id = id, Name = name, Key = key, Properties = properties });
         return id;
     }
+
+    /// <summary>The display string of the value as <see cref="Parameter.AsValueString"/> gives it, with the invariant culture;
+    /// null when the public API gives no display string that is exactly the one Revit shows.</summary>
+    private static string? DisplayText(Parameter parameter) => parameter.StorageType switch
+    {
+        StorageType.String => parameter.Value as string,
+        // The unit form of AsValueString; its fallback by parameter name is a guess and is left out.
+        StorageType.Double when parameter.Value is double value && parameter.UnitSymbol is { } unit
+            && ExactUnits.TryGetValue(unit, out double exact) && parameter.ConversionFactor == exact
+            && parameter.SpecType?.Contains(":surfaceAreaPerUnitLength-", StringComparison.Ordinal) != true
+            => string.Create(CultureInfo.InvariantCulture, $"{value * exact:G6} {unit}"),
+        // A user parameter that stores an integer is an Integer or a Yes/No, both shown by AsValueString as the number. A
+        // built-in one may be an enumeration, which the public API cannot tell from a number, so it is left out.
+        StorageType.Integer when parameter.Id > 0 && parameter.Value is int value => value.ToString(CultureInfo.InvariantCulture),
+        // An ElementId: the public API does not give the name Revit shows for the referenced element.
+        _ => null,
+    };
+
+    /// <summary>The display units whose factor converts Revit's internal unit (foot, square foot, cubic foot, radian, ampere) to
+    /// them (the cubic one to ten digits, beyond the six the text shows). The reader gives other units (W, V, °C, Pa, ...) a
+    /// factor of 1, which is not Revit's conversion, and gives an area per unit length the unit m²: such values are left out.</summary>
+    private static readonly Dictionary<string, double> ExactUnits = new(StringComparer.Ordinal)
+    {
+        ["mm"] = 304.8, ["m²"] = 0.09290304, ["m³"] = 0.0283168466, ["°"] = 180.0 / Math.PI, ["A"] = 1.0,
+    };
+
+    private const string IfcGuidAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$";
+
+    /// <summary>The IFC GlobalId Revit's IFC export gives the element: the value of its IfcGUID parameter (the built-in one,
+    /// else a parameter named IfcGUID) when it is a valid GlobalId, else the export id of its UniqueId (the episode GUID with
+    /// its last 32 bits XORed with the element id the UniqueId ends with) in the IFC base-64 form; null without either.</summary>
+    private static string? IfcGuidOf(Element element)
+    {
+        var overrides = element.Parameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
+            .Concat(element.Parameters.Where(parameter => parameter.Id > 0 && parameter.Definition?.Name == "IfcGUID"));
+        if (overrides.Select(parameter => parameter.Value as string).FirstOrDefault(IsIfcGuid) is { } stored) return stored;
+
+        // A UniqueId is the episode GUID, '-' and the original element id as eight hex digits.
+        if (element.UniqueId is not { Length: 45 } uniqueId || uniqueId[36] != '-'
+            || !Guid.TryParseExact(uniqueId.AsSpan(0, 36), "D", out var episode)
+            || !uint.TryParse(uniqueId.AsSpan(37), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out uint originalId))
+            return null;
+        UInt128 bits = BinaryPrimitives.ReadUInt128BigEndian(episode.ToByteArray(bigEndian: true)) ^ originalId;
+        var text = new char[22];
+        for (int index = 21; index >= 0; index--, bits >>= 6) text[index] = IfcGuidAlphabet[(int)(bits & 63)];
+        return new string(text);
+    }
+
+    // 22 characters of the IFC base-64 alphabet; the first one carries two bits, so it is 0 to 3.
+    private static bool IsIfcGuid(string? value) =>
+        value is { Length: 22 } && value[0] is >= '0' and <= '3' && value.All(c => IfcGuidAlphabet.Contains(c));
 
     private static SceneMaterial Material(RvtDocument document, int id)
     {

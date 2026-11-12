@@ -37,11 +37,26 @@ coverage, geometries, instances and symbol placements.
 | `SceneModel` | `SourceFormat` `rvt`, `SourceLengthUnit` `ft`, `Producer` `RvtIO.Scene <version>`. |
 | `SceneElement` | One per drawable element of `ElementMeshes.Extract` (the elements the IFC export would consider products, see the remarks of `ElementMeshes`). `Id` is the element id. |
 | `SourceId` | The Revit `UniqueId`. This derivation does not change; a golden test pins it on a fixture file. |
+| `IfcGuid` | The GlobalId Revit's IFC export gives the element: the value of its IfcGUID parameter (the built-in `IFC_GUID`, else a parameter named `IfcGUID`) when it is a valid 22-character GlobalId; else the export id of the `UniqueId` (the episode GUID with its last 32 bits XORed with the element id the `UniqueId` ends with) in the IFC base-64 form. It depends on the element only, never on export order or options. This derivation does not change; the golden test pins it. |
 | `Name`, `Category`, `TypeName` | `Element.Name`; the English name of the built-in category (else `Element.Category`); the name of the type element. |
 | `SceneGeometry`, `SceneInstance` | A symbol placed whole is one geometry per mesh in the frame of its family, and each placement is one instance per mesh with the placement's transform. A mirrored placement keeps its transform as it is: the winding of the triangles is not changed. A mesh of an element's own is a geometry used once, with vertices relative to the lowest corner of the element's meshes, which is the translation of its instances. All lengths are feet x 0.3048, in the internal coordinates of the document, Z up. |
 | `SceneMaterial` | One per material element that a mesh uses: its name and its colour (`MATERIAL_PARAM_COLOR`, alpha from `MATERIAL_PARAM_TRANSPARENCY`), else a neutral grey. |
 | `ScenePropertySet` | `revit:instance`: the parameters of the element. `revit:type`: the parameters of its type, one set shared by every element of the type. A parameter without a value is left out, and so is one whose value the reader only estimates (`Parameter.IsApproximate`), such as the fixed thermal values of a wall. |
-| `SceneProperty` | Name: `Definition.Name` (for a built-in parameter its enum name, such as `WALL_USER_HEIGHT_PARAM`). Key: `revit:bip:<id>` for a built-in parameter, none for the others. Value: text. |
+| `SceneProperty` | Name: `Definition.Name` (for a built-in parameter its enum name, such as `WALL_USER_HEIGHT_PARAM`). Key: `revit:bip:<id>` for a built-in parameter, none for the others. Value: text, the display string of the public parameter API (see below). |
+
+### Property text
+
+A value is written as the text `Parameter.AsValueString` shows, with the invariant culture, and only when that text is
+the one Revit shows; any other value is left out. By storage type:
+
+| Storage | Text |
+|---|---|
+| String | The stored text. |
+| Double | The value converted to its display unit and the unit symbol, as `AsValueString` writes it from `UnitSymbol` and `ConversionFactor` (`3200.4 mm`), when the unit is mm, m², m³, ° or A: the units whose factor converts Revit's internal unit (foot, square foot, cubic foot, radian, ampere). Left out: a value without a resolved unit (`AsValueString` only guesses its unit from the parameter name), a unit the reader converts with a factor of 1 that is not Revit's conversion (W, V, °C, Pa, ...), and an area per unit length, which the reader shows in m². |
+| Integer | A shared, project or family parameter: the number in decimal; such an integer is a plain integer or a Yes/No, which `AsValueString` shows as `1` or `0`. A built-in integer is left out: it may be an enumeration or a Yes/No, and the public API cannot tell it from a number. |
+| ElementId | Left out: the public API does not give the name Revit shows for the referenced element. |
+
+The text a value is written with under a key is frozen with the key: changing it is a breaking release.
 
 ## Diagnostics
 
@@ -57,12 +72,10 @@ coverage, geometries, instances and symbol placements.
 
 ## Limits
 
-- Values are text only: the value the file stores, in Revit internal units (feet, radians, ...), written with the
-  invariant culture; an element id is its number. Typed values (numbers in SI units, booleans, element references)
-  wait for public RvtIO API.
+- Values are text only, and only those whose display string the public API gives (see Property text). Typed values
+  (numbers in SI units, booleans, element references) wait for public RvtIO API.
 - Shared, project and family parameters have no key yet; the format of their keys is registered with the first release.
 - No levels (`LevelId` and the `Levels` table stay empty): RvtIO has no public level of an element.
-- No `IfcGuid`: the GlobalId of the IFC export is not public API.
 - No tree: every element is a top-level element of the model. No links, grids or views.
 - Materials have a name and a colour; no roughness, metalness or textures.
 - Element names are those of `RvtDocument`; the validated names the IFC export applies to files read by their own class
