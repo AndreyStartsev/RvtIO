@@ -27,6 +27,17 @@ jobs:
           if ($env:GITHUB_REF_NAME -cne "v$($version.Trim())") {
             throw "The release tag must match the package version v$($version.Trim())."
           }
+      # Before anything is published: a tag whose commit has no changelog section for the version fails here.
+      - name: Extract release notes
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $changelog = Get-Content -LiteralPath CHANGELOG.md -Encoding utf8
+          $start = [array]::FindIndex($changelog, [Predicate[string]] { param($line) $line.StartsWith("## [$version]") })
+          if ($start -lt 0) { throw "CHANGELOG.md has no entry for $version" }
+          $notes = @()
+          for ($i = $start + 1; $i -lt $changelog.Count -and -not $changelog[$i].StartsWith('## ['); $i++) { $notes += $changelog[$i] }
+          $notes | Set-Content -LiteralPath release-notes.md -Encoding utf8
       - run: dotnet restore RvtIO.slnx
       - run: dotnet build RvtIO.slnx -c Release --no-restore
       - run: dotnet test RvtIO.slnx -c Release --no-build
@@ -37,21 +48,8 @@ jobs:
         with:
           name: packages
           path: artifacts/*
-      - name: Create release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $version = $env:GITHUB_REF_NAME.Substring(1)
-          $changelog = Get-Content -LiteralPath CHANGELOG.md -Encoding utf8
-          $start = [array]::FindIndex($changelog, [Predicate[string]] { param($line) $line.StartsWith("## [$version]") })
-          if ($start -lt 0) { throw "CHANGELOG.md has no entry for $version" }
-          $notes = @()
-          for ($i = $start + 1; $i -lt $changelog.Count -and -not $changelog[$i].StartsWith('## ['); $i++) { $notes += $changelog[$i] }
-          $notes | Set-Content -LiteralPath release-notes.md -Encoding utf8
-          $files = @(Get-ChildItem artifacts -File | ForEach-Object { $_.FullName })
-          gh release create $env:GITHUB_REF_NAME --title $env:GITHUB_REF_NAME --notes-file release-notes.md @files
-          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
+      # The push comes before the GitHub release: a refused first publication of a package id can be fixed and the
+      # job run again, because --skip-duplicate makes the push repeatable and no release exists yet.
       # Trusted publishing: the NuGet policy for this repository and workflow file exchanges the GitHub OIDC token for a short-lived key.
       - uses: NuGet/login@v1
         id: nuget-login
@@ -64,3 +62,15 @@ jobs:
             dotnet nuget push $package.FullName --api-key '${{ steps.nuget-login.outputs.NUGET_API_KEY }}' --source https://api.nuget.org/v3/index.json --skip-duplicate
             if ($LASTEXITCODE -ne 0) { throw "dotnet nuget push failed for $($package.Name) with exit code $LASTEXITCODE" }
           }
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $files = @(Get-ChildItem artifacts -File | ForEach-Object { $_.FullName })
+          # A version with a hyphen is a prerelease.
+          $flags = @()
+          if ($version.Contains('-')) { $flags += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME --title $env:GITHUB_REF_NAME --notes-file release-notes.md @flags @files
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
