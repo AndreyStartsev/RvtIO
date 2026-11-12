@@ -51,8 +51,8 @@ function Assert-SceneDependencies([xml]$Nuspec, [string]$Version) {
     foreach ($dependency in $scene) {
         $range = $dependency.GetAttribute('version')
         $lower = $range.TrimStart('[', '(').Split(',')[0].Trim()
-        if ($lower.Contains('-')) {
-            throw "RvtIO.Scene depends on IOScene $range, whose lower bound is a preview; release on a published IOScene 0.1.0 or later"
+        if ($lower -eq '' -or $lower.Contains('-')) {
+            throw "RvtIO.Scene depends on IOScene '$range', whose lower bound is missing or a preview; release on a published IOScene 0.1.0 or later"
         }
     }
 }
