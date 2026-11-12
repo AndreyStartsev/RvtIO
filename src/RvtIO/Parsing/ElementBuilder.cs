@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using RvtIO.Internal;
 using RvtIO.Lookup;
 using RvtIO.Model;
@@ -17,12 +18,22 @@ internal static partial class ElementBuilder
         elem.Geometry ??= new GeometryData();
         int ownFaceCount = elem.Geometry.Faces.Count;
         var expandedTopLevel = new List<GeoInstance>();
+        var placedBox = new StrongBox<bool>();
         foreach (var instance in grep.Instances)
         {
             var placed = BuildPlacedSymbolGeometry(
-                instance.SymbolElemId, instance.Transform, state, new HashSet<int>());
-            if (placed == null) { LogUnresolvedSymbol(elem, instance.SymbolElemId, "no-geometry", state); continue; }
-            if (!state.IncludeNonVisibleQuantities) placed = ClipGeometryToBounds(placed, grep.BoundingBox);
+                instance.SymbolElemId, instance.Transform, state, new HashSet<int>(), placedBox: placedBox);
+            if (placed == null)
+            {
+                elem.Geometry.UnresolvedSymbol = true;
+                LogUnresolvedSymbol(elem, instance.SymbolElemId, "no-geometry", state);
+                continue;
+            }
+            if (!state.IncludeNonVisibleQuantities)
+            {
+                placed = ClipGeometryToBounds(placed, grep.BoundingBox, out bool clipped);
+                if (clipped) elem.Geometry.PlacedSymbolClipped = true;
+            }
             if (placed == null) { LogUnresolvedSymbol(elem, instance.SymbolElemId, "clipped-away", state); continue; }
             AppendGeometry(elem.Geometry, placed, instance.NodeOrder);
             expandedTopLevel.Add(new GeoInstance
@@ -32,6 +43,7 @@ internal static partial class ElementBuilder
             });
         }
         DeduplicateExactFaces(elem.Geometry);
+        if (placedBox.Value) elem.Geometry.PlacedSymbolBox = true;
         if (ownFaceCount == 0 && expandedTopLevel.Count > 0)
             elem.Geometry.ExactMappedInstances = expandedTopLevel;
     }
@@ -46,11 +58,18 @@ internal static partial class ElementBuilder
         if ((elem.Geometry?.Faces?.Count ?? 0) >= 3) return;
         if (!state.FamilyInstanceTransforms.TryGetValue(elemId, out var fi)) return;
         if (fi.SymbolId <= 0 || fi.SymbolId == elem.Id) return;
-        var placed = BuildPlacedSymbolGeometry(fi.SymbolId, fi.Trf, state, new HashSet<int>());
-        if (placed == null) { LogUnresolvedSymbol(elem, fi.SymbolId, "transform-only", state); return; }
+        var placedBox = new StrongBox<bool>();
+        var placed = BuildPlacedSymbolGeometry(fi.SymbolId, fi.Trf, state, new HashSet<int>(), placedBox: placedBox);
+        if (placed == null)
+        {
+            if (elem.Geometry != null) elem.Geometry.UnresolvedSymbol = true;
+            LogUnresolvedSymbol(elem, fi.SymbolId, "transform-only", state);
+            return;
+        }
         elem.Geometry ??= new GeometryData();
         bool hadOwnFaces = elem.Geometry.Faces.Count > 0;
         AppendGeometry(elem.Geometry, placed);
+        if (placedBox.Value) elem.Geometry.PlacedSymbolBox = true;
         elem.Geometry.Instances ??= new List<GeoInstance>();
         elem.Geometry.Instances.Add(new GeoInstance
         {
@@ -194,9 +213,10 @@ internal static partial class ElementBuilder
         t[11] + point[0] * t[6] + point[1] * t[7] + point[2] * t[8],
     ];
 
+    /// <param name="placedBox">Set to true when this symbol or a nested one is replaced by its tight box.</param>
     internal static GeometryData? BuildPlacedSymbolGeometry(
         int symbolId, double[] transform, ParsingState state, HashSet<int> path,
-        int scaledComponentFaceBudget = ScaledComponentFaceBudget)
+        int scaledComponentFaceBudget = ScaledComponentFaceBudget, StrongBox<bool>? placedBox = null)
     {
         if (symbolId <= 0 || transform.Length < 12 || !path.Add(symbolId)) return null;
         try
@@ -214,6 +234,7 @@ internal static partial class ElementBuilder
                     .Select(group => group.Key).FirstOrDefault(-1);
                 int material = MostFrequent(symbol.Faces.Select(face => face.RenderStyleId ?? 0).Where(id => id > 0));
                 int style = MostFrequent(symbol.Faces.Select(face => face.GeometryStyle).Where(id => id > 0));
+                if (placedBox != null) placedBox.Value = true;
                 return BuildPlacedBox(symbol.BoundingBox, transform, material > 0 ? material : null, style);
             }
             var result = new GeometryData();
@@ -230,7 +251,7 @@ internal static partial class ElementBuilder
             {
                 var childTransform = ComposeTransforms(transform, child.Transform);
                 var placedChild = BuildPlacedSymbolGeometry(
-                    child.SymbolElemId, childTransform, state, path, scaledComponentFaceBudget);
+                    child.SymbolElemId, childTransform, state, path, scaledComponentFaceBudget, placedBox);
                 if (placedChild != null) AppendGeometry(result, placedChild, child.NodeOrder);
             }
 
@@ -353,7 +374,7 @@ internal static partial class ElementBuilder
     /// A placement that keeps lengths and angles: orthonormal rows (a rotation, or a mirror image
     /// when the determinant is negative).
     /// </summary>
-    private static bool IsRigidPlacement(double[] t)
+    internal static bool IsRigidPlacement(double[] t)
     {
         if (t.Length < 12 || t.Any(v => !double.IsFinite(v))) return false;
         for (int a = 0; a < 3; a++)
@@ -466,8 +487,14 @@ internal static partial class ElementBuilder
     /// symbol overrides can shorten the type geometry; using the declared box prevents the
     /// unmodified symbol from leaking past the occurrence.
     /// </summary>
-    internal static GeometryData? ClipGeometryToBounds(GeometryData source, double[]? bounds)
+    internal static GeometryData? ClipGeometryToBounds(GeometryData source, double[]? bounds) =>
+        ClipGeometryToBounds(source, bounds, out _);
+
+    /// <param name="changed">True when the result is not the faces of <paramref name="source"/> as they are: a face was cut
+    /// or left out, or nothing is left (null).</param>
+    internal static GeometryData? ClipGeometryToBounds(GeometryData source, double[]? bounds, out bool changed)
     {
+        changed = false;
         if (bounds is not { Length: 6 }
             || bounds.Any(value => !double.IsFinite(value))
             || bounds[0] > bounds[3] || bounds[1] > bounds[4] || bounds[2] > bounds[5])
@@ -545,15 +572,16 @@ internal static partial class ElementBuilder
         for (int oldIndex = 0; oldIndex < source.Faces.Count; oldIndex++)
         {
             var face = source.Faces[oldIndex];
-            if (face.OuterVertices is not { Count: >= 3 } outer) continue;
-            bool changed = false;
+            if (face.OuterVertices is not { Count: >= 3 } outer) { changed = true; continue; }
+            bool faceChanged = false;
             var polygon = outer.Select(point => (double[])point.Clone()).ToList();
-            polygon = ClipPlane(polygon, 0, bounds[0], keepGreater: true, ref changed);
-            polygon = ClipPlane(polygon, 0, bounds[3], keepGreater: false, ref changed);
-            polygon = ClipPlane(polygon, 1, bounds[1], keepGreater: true, ref changed);
-            polygon = ClipPlane(polygon, 1, bounds[4], keepGreater: false, ref changed);
-            polygon = ClipPlane(polygon, 2, bounds[2], keepGreater: true, ref changed);
-            polygon = ClipPlane(polygon, 2, bounds[5], keepGreater: false, ref changed);
+            polygon = ClipPlane(polygon, 0, bounds[0], keepGreater: true, ref faceChanged);
+            polygon = ClipPlane(polygon, 0, bounds[3], keepGreater: false, ref faceChanged);
+            polygon = ClipPlane(polygon, 1, bounds[1], keepGreater: true, ref faceChanged);
+            polygon = ClipPlane(polygon, 1, bounds[4], keepGreater: false, ref faceChanged);
+            polygon = ClipPlane(polygon, 2, bounds[2], keepGreater: true, ref faceChanged);
+            polygon = ClipPlane(polygon, 2, bounds[5], keepGreater: false, ref faceChanged);
+            if (faceChanged) changed = true;
             if (polygon.Count < 3) continue;
 
             int newIndex = result.Faces.Count;
@@ -575,9 +603,9 @@ internal static partial class ElementBuilder
                 MeshMarker = face.SourceFace != 0 ? face.SourceFace : face.MeshMarker,
             });
             oldToNew[oldIndex] = newIndex;
-            if (changed) clippedFaces.Add(oldIndex);
+            if (faceChanged) clippedFaces.Add(oldIndex);
         }
-        if (result.Faces.Count == 0) return null;
+        if (result.Faces.Count == 0) { changed = true; return null; }
         // the integrals of a node are those of the whole solid: a node with a clipped or dropped face has none
         if (source.NodeMeasures is { Count: > 0 } measures)
         {

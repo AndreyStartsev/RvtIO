@@ -33,6 +33,11 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal bool GeometryUndecoded { get; set; }
 
+        /// <summary>The file is of the 64-bit-id layout and was read without <see cref="RvtReaderOptions.R22Layout"/>, so no element
+        /// geometry was decoded. (<see cref="GeometryUndecoded"/> stays true for such a file read with the rewrite.)</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal bool WideLayoutNotRewritten { get; set; }
+
         /// <summary>GStyleElem id -> the ElementId of its GStyle material (-1 or 0 stand for no material) and the
         /// ElementId of its category, for the graphics styles whose block decoded exactly once. The material
         /// of a solid whose faces carry none comes from the style of the solid,

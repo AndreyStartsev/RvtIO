@@ -64,6 +64,16 @@ namespace RvtIO.Model
         /// representation-map structure instead of duplicating the expanded mesh.</summary>
         internal List<GeoInstance>? ExactMappedInstances { get; set; }
 
+        /// <summary>A symbol placed into this geometry was cut by the tight box of the owning GRep, or left out because it lay
+        /// outside it (ElementBuilder.ClipGeometryToBounds): the faces are not the placed symbols as they are.</summary>
+        internal bool PlacedSymbolClipped { get; set; }
+
+        /// <summary>A component placed at a rescaled placement was replaced by its tight box (ElementBuilder.ScaledComponentFaceBudget).</summary>
+        internal bool PlacedSymbolBox { get; set; }
+
+        /// <summary>A GInstance of this geometry placed nothing: its symbol has no geometry.</summary>
+        internal bool UnresolvedSymbol { get; set; }
+
         /// <summary>Number of stored GFace and Edge objects in the GRep block this geometry was
         /// built from (null when the block's object graph was not walked). Such node counts of a family instance's
         /// geometry are compared with its symbol's to decide whether the
