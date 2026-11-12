@@ -73,7 +73,7 @@ public class CliExitCodeTests
         return (process.ExitCode, error.Result);
     }
 
-    private static void WriteSyntheticRvt(string path, byte[]? extraPartition = null)
+    internal static void WriteSyntheticRvt(string path, byte[]? extraPartition = null)
     {
         using var elemTable = new MemoryStream();
         using (var writer = new BinaryWriter(elemTable))

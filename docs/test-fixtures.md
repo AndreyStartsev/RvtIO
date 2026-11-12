@@ -45,8 +45,8 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 
 ## What runs without the private files
 
-With no private file at all, 10424 of the 10867 test cases run and pass on net8.0 and 443 are skipped (net10.0: 10428 of
-10871, 443 skipped): 437 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
+With no private file at all, 10450 of the 10894 test cases run and pass on net8.0 and 444 are skipped (net10.0: 10454 of
+10898, 444 skipped): 438 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
 and 6 need other inputs (two need symbolic links, three
 need `RVTIO_FREEFORM_FULL`, `RVTIO_CYL_FULL` or `RVTIO_MESH_FULL`, one is a known gap). The tests that run use synthetic data built
 in the tests and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
@@ -56,7 +56,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 
 ## Tests that need the private files
 
-294 test methods (437 cases, theory rows counted) are skipped without the files:
+295 test methods (438 cases, theory rows counted) are skipped without the files:
 
 | Class | Methods | Cases | Files |
 |---|---|---|---|
@@ -108,6 +108,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `RailingQuantitySourceTests` | 4 | 18 | TestData blocks |
 | `RecordRoutingTests` | 1 | 1 | TESTFILE.rvt |
 | `ReferenceApiTests` | 18 | 18 | TESTFILE.rvt, bim_dump.txt |
+| `RvtSceneIdentitySampleTests` | 1 | 1 | TESTFILE.rvt |
 | `SchemaModelTests` | 1 | 1 | Test_2022.rvt |
 | `SchemaReleaseTests` | 2 | 7 | Test_2020.rvt, Test_2022.rvt, Test_2025.rvt, TESTFILE.rvt |
 | `SchemaStreamEditorSampleTests` | 2 | 2 | any `.rvt` project files |

@@ -8,6 +8,7 @@ on:
       - 'docfx.json'
       - '.config/dotnet-tools.json'
       - 'src/RvtIO/**'
+      - 'src/RvtIO.Scene/**'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - 'docfx.json'
       - '.config/dotnet-tools.json'
       - 'src/RvtIO/**'
+      - 'src/RvtIO.Scene/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 

@@ -5,6 +5,8 @@
   items:
     - name: Public API
       href: public-api.md
+    - name: Scene adapter
+      href: scene.md
     - name: Export report and exit codes
       href: export-report.md
     - name: Coverage report
