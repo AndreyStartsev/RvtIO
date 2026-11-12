@@ -11,8 +11,9 @@ public sealed class MeshSet
     /// in the frame of the family. Only placed symbols are listed.</summary>
     public IReadOnlyDictionary<int, IReadOnlyList<TriangleMesh>> Symbols { get; init; } = new Dictionary<int, IReadOnlyList<TriangleMesh>>();
 
-    /// <summary>The document was read without decoding its geometry (a file with 64-bit element ids read without
-    /// <see cref="RvtReaderOptions.R22Layout"/>); its elements are listed with <see cref="MeshCoverage.Undecoded"/>.</summary>
+    /// <summary>The document was read without decoding its geometry: a file read by its own class schema (a release other than Revit
+    /// 2022, such as the Revit 2020 and 2025 samples) opened without <see cref="RvtReaderOptions.R22Layout"/>. Its elements are listed
+    /// with <see cref="MeshCoverage.Undecoded"/>.</summary>
     public bool GeometryUndecoded { get; init; }
 }
 
