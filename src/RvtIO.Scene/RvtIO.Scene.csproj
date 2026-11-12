@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Turns a Revit project read by RvtIO into an IOScene scene document.</Description>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>RvtIO.Scene</RootNamespace>
+    <AssemblyName>RvtIO.Scene</AssemblyName>
+    <!-- Not published while the scene contract is a preview. -->
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The IOScene range ends at 0.2.0-0 so that previews of the next breaking line stay out; NU5104 flags that bound. -->
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RvtIO.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RvtIO\RvtIO.csproj" />
+    <PackageReference Include="IOScene" />
+  </ItemGroup>
+
+</Project>
