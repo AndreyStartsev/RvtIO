@@ -44,8 +44,9 @@ public enum MeshCoverage
     /// <summary>Every decoded face is triangulated.</summary>
     Complete,
 
-    /// <summary>Some faces could not be triangulated, a symbol the element places has no geometry, or a Geometry node that Revit
-    /// exports has no decoded polygon (display surfaces, or a duplicate of another node), so it may be missing.</summary>
+    /// <summary>Some faces could not be triangulated, a symbol the element places (or a symbol nested in one) has no geometry, or a
+    /// Geometry node that Revit exports has no decoded polygon (display surfaces, or a duplicate of another node), so it may be
+    /// missing.</summary>
     Partial,
 
     /// <summary>A symbol placed at a rescaled placement was replaced by its bounding box.</summary>

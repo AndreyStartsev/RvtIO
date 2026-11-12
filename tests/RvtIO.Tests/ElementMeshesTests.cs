@@ -72,17 +72,37 @@ public class ElementMeshesTests
         instance.BoundingBox = instanceBox;
         instance.Instances = [new GRepInstance { SymbolElemId = SymbolId, Transform = transform }];
         state.GrepBlocks[InstanceId] = instance;
+        return Built(state, SymbolId);
+    }
+
+    /// <summary>The symbols <paramref name="symbolIds"/> and then the instance, built from the blocks of <paramref name="state"/> by the
+    /// reader's own element builder; the instance is then made a drawable product.</summary>
+    private static RvtDocument Built(ParsingState state, params uint[] symbolIds)
+    {
         var info = new RevitFileInfo();
-        ElementBuilder.BuildBlockOnlyElement(SymbolId, state, info);
+        foreach (uint symbolId in symbolIds) ElementBuilder.BuildBlockOnlyElement(symbolId, state, info);
         ElementBuilder.BuildBlockOnlyElement(InstanceId, state, info);
-        var element = info.Elements.Single(candidate => candidate.Id == InstanceId);
+        MakeProduct(info.Elements.Single(candidate => candidate.Id == InstanceId));
+        return RvtDocument.FromInfo(info);
+    }
+
+    /// <summary>Makes a built element a drawable product: a generic model that names its project phase.</summary>
+    private static void MakeProduct(Element element)
+    {
         element.IsBlockOnly = false;
         element.CategoryId = -2000151;
         element.Category = "OST_GenericModel";
         element.Parameters.Add(new Parameter { Id = -1012100, Value = Phase });
         element.SerializedCreatedPhaseId = Phase;
-        return RvtDocument.FromInfo(info);
     }
+
+    /// <summary>A symbol block of one triangle at <paramref name="x"/> that places the symbols <paramref name="nested"/> where it
+    /// stands.</summary>
+    private static GRepData TriangleBlock(double x, params int[] nested) => new()
+    {
+        Faces = [new GRepFace { Vertices = [[x, 0, 0], [x + 1, 0, 0], [x, 1, 0]], Origin = [x, 0, 0], XVector = [0, 0, 1], GeometryNode = 1 }],
+        Instances = nested.Select(id => new GRepInstance { SymbolElemId = id, Transform = Identity }).ToList(),
+    };
 
     // ---- geometry checks ----
 
@@ -472,6 +492,78 @@ public class ElementMeshesTests
 
         Assert.Equal(MeshCoverage.Partial, element.Coverage);
         Assert.Equal(0, element.UntriangulatedFaces);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SymbolNestedInThePlacedSymbolWithoutGeometry_IsPartial(bool useSymbolPlacements)
+    {
+        // The placed symbol draws its triangle; the symbol it places in turn has no geometry block.
+        var state = new ParsingState();
+        state.GrepBlocks[InstanceId] = new GRepData { Instances = [new GRepInstance { SymbolElemId = SymbolId, Transform = Identity }] };
+        state.GrepBlocks[SymbolId] = TriangleBlock(0, 999);
+
+        var element = Assert.Single(ElementMeshes.Extract(Built(state, SymbolId),
+            new ElementMeshOptions { UseSymbolPlacements = useSymbolPlacements }).Elements);
+
+        Assert.Equal(MeshCoverage.Partial, element.Coverage);
+        Assert.Equal(useSymbolPlacements ? 1 : 0, element.Placements.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SymbolTwoLevelsDownWithoutGeometry_IsPartial(bool useSymbolPlacements)
+    {
+        var state = new ParsingState();
+        state.GrepBlocks[InstanceId] = new GRepData { Instances = [new GRepInstance { SymbolElemId = SymbolId, Transform = Identity }] };
+        state.GrepBlocks[SymbolId] = TriangleBlock(0, 3);
+        state.GrepBlocks[3] = TriangleBlock(2, 999);
+
+        var element = Assert.Single(ElementMeshes.Extract(Built(state, 3, SymbolId),
+            new ElementMeshOptions { UseSymbolPlacements = useSymbolPlacements }).Elements);
+
+        Assert.Equal(MeshCoverage.Partial, element.Coverage);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void NestedSymbolsThatAllHaveGeometry_AreComplete(bool useSymbolPlacements)
+    {
+        var state = new ParsingState();
+        state.GrepBlocks[InstanceId] = new GRepData { Instances = [new GRepInstance { SymbolElemId = SymbolId, Transform = Identity }] };
+        state.GrepBlocks[SymbolId] = TriangleBlock(0, 3);
+        state.GrepBlocks[3] = TriangleBlock(2);
+
+        var set = ElementMeshes.Extract(Built(state, 3, SymbolId), new ElementMeshOptions { UseSymbolPlacements = useSymbolPlacements });
+
+        var element = Assert.Single(set.Elements);
+        Assert.Equal(MeshCoverage.Complete, element.Coverage);
+        Assert.Equal(1, Area(useSymbolPlacements ? set.Symbols[SymbolId] : element.Meshes), 12);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TransformOnlyInstanceOfASymbolWithANestedSymbolWithoutGeometry_IsPartial(bool useSymbolPlacements)
+    {
+        // A family instance record with a placement and no geometry block of its own: its geometry is its symbol placed.
+        var state = new ParsingState();
+        state.GrepBlocks[SymbolId] = TriangleBlock(0, 999);
+        state.Records[InstanceId] = new ElementRecord { ElemId = InstanceId };
+        state.FamilyInstanceTransforms[InstanceId] = new FamilyInstanceData { SymbolId = SymbolId, Trf = Identity };
+        var info = new RevitFileInfo();
+        ElementBuilder.BuildBlockOnlyElement(SymbolId, state, info);
+        ElementBuilder.BuildDiscoveredElement(InstanceId, state, info);
+        MakeProduct(info.Elements.Single(candidate => candidate.Id == InstanceId));
+
+        var element = Assert.Single(ElementMeshes.Extract(RvtDocument.FromInfo(info),
+            new ElementMeshOptions { UseSymbolPlacements = useSymbolPlacements }).Elements);
+
+        Assert.Equal(MeshCoverage.Partial, element.Coverage);
+        Assert.Equal(useSymbolPlacements ? 1 : 0, element.Placements.Count);
     }
 
     [Fact]
