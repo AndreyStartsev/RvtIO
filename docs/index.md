@@ -10,6 +10,7 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 - Queries elements through `FilteredElementCollector`.
 - Exports IFC2X3 coordination view, with optional Revit parameters as property sets.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
+- Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
 
 The library targets .NET 8 and .NET 10, uses managed code only, and supports Windows, Linux and macOS.
 

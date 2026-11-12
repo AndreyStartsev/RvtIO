@@ -1,0 +1,9 @@
+namespace RvtIO.Meshes;
+
+/// <summary>Options of <see cref="ElementMeshes.Extract"/>.</summary>
+public sealed class ElementMeshOptions
+{
+    /// <summary>Returns an element that is exactly its symbols placed as <see cref="ElementMesh.Placements"/> of shared symbol meshes
+    /// (true, the default). False gives every element its own triangles and leaves <see cref="MeshSet.Symbols"/> empty.</summary>
+    public bool UseSymbolPlacements { get; set; } = true;
+}

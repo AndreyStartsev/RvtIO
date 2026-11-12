@@ -24,8 +24,11 @@ public class RvtReaderOptions
     /// are one rectangle with different holes. Off by default, which keeps the geometry the legacy profile export is built on.</summary>
     public bool SeparateFacesWithDistinctOpenings { get; set; }
 
-    /// <summary>Rewrite the partition streams of a file with a later release's class schema (Revit 2023 and later) into the Revit 2022
-    /// layout, so that the geometry and element readers written for 2022 see them (see <see cref="Parsing.R22Transcoder"/>). Off by default.</summary>
+    /// <summary>Rewrite the partition streams of a file that is read by its own class schema into the Revit 2022 layout, so that the
+    /// geometry and element readers written for 2022 see them (see <see cref="Parsing.R22Transcoder"/>). The reader keeps the layout it
+    /// ships only for a file of Revit 2022 (or of an unknown release); any other file whose own schema it can read is read by that
+    /// schema, and its element geometry is decoded only with this option (measured on samples of Revit 2020 and 2025; the Revit 2022
+    /// samples decode the same either way). Off by default; the command line tool turns it on for an IFC export.</summary>
     public bool R22Layout { get; set; }
 
     /// <summary>When several partition streams hold a copy of the same element, keep the current copy named by the file's document

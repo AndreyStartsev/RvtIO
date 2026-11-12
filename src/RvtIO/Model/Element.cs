@@ -983,7 +983,7 @@ namespace RvtIO.Model
         internal int? SerializedCurtainHostId { get; set; }
 
         /// <summary>The geometry of an instance whose own Faces are all unfilled (a void or cut helper, see
-        /// <c>IfcExporter.HasOnlyUnfilledFacesCurrent</c>) while its computed symbol has filled ones: the symbol's geometry placed by the
+        /// <see cref="ProductRules.HasOnlyUnfilledFaces"/>) while its computed symbol has filled ones: the symbol's geometry placed by the
         /// instance's own transform, with that symbol as its one mapped instance. The current profile exports such an instance with the body of the
         /// symbol (for example louvers whose own geometry is the box they fill). Null for any other element.</summary>
         [JsonIgnore]

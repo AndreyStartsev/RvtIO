@@ -722,22 +722,9 @@ public partial class IfcExporter
             object? value = e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
             return value is int n ? n : null;
         }
-        static bool HasProjectPhaseReference(Element e)
-        {
-            int? phase = IntParam(e, -1012100); // PHASE_CREATED
-            // Id 0 is a phase of Revit 2023 and later (the first project phase, a row of its
-            // element table); the earlier layouts number phases from 1.
-            return phase is > 0 && (e.References?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
-                || phase == 0 && e.SerializedCreatedPhaseId == 0;
-        }
-
         // Element types can carry preview/type geometry in the RVT stream, but they are definitions
         // rather than placed products.
-        var typeElementIds = new HashSet<int>();
-        foreach (var e in info.Elements)
-            foreach (var p in e.Parameters)
-                if (p.Id is -1002050 or -1002052 && p.Value is int typeId && typeId > 0)
-                    typeElementIds.Add(typeId);
+        var typeElementIds = ProductRules.TypeElementIds(info.Elements);
 
         // A placed curtain panel/mullion references its parent wall.
         var curtainWallIds = new HashSet<int>();
@@ -770,7 +757,7 @@ public partial class IfcExporter
             .Where(e =>
             {
                 int rich = e.Geometry?.Faces?.Count(f => f.OuterVertices is { Count: >= 3 }) ?? 0;
-                return e.Location != null || rich >= 3 || HasProjectPhaseReference(e);
+                return e.Location != null || rich >= 3 || ProductRules.HasProjectPhaseReference(e);
             })
             .Select(e => e.Id)
             .ToHashSet();
@@ -1043,7 +1030,7 @@ public partial class IfcExporter
                 }
                 if (!builtExactSourceWallProfilesMappedBreakpoint
                     && doorOrWindow
-                    && HostedFillingProductCanBeEmitted(cutter, elemById, storeyIds, HasProjectPhaseReference(cutter))
+                    && HostedFillingProductCanBeEmitted(cutter, elemById, storeyIds, ProductRules.HasProjectPhaseReference(cutter))
                     && TryBuildOwnPrimaryFamilyCutout(cutter, elemById[hostId], out var ownPrimaryOpening))
                     ownPrimaryFamilyWriterOperands[(hostId, cutter.Id)] = ownPrimaryOpening;
                 if (precomputeDiagnostics)
@@ -1216,7 +1203,7 @@ public partial class IfcExporter
                     || cutter.ExplicitHostIds?.Contains(hostId) == true;
                 bool visibleFillingProductIsValidated = doorOrWindow
                     && directHost
-                    && HostedFillingProductCanBeEmitted(cutter, elemById, storeyIds, HasProjectPhaseReference(cutter));
+                    && HostedFillingProductCanBeEmitted(cutter, elemById, storeyIds, ProductRules.HasProjectPhaseReference(cutter));
                 HostedOpeningGeometry writerOpening =
                     usesExactCompleteOpenTenFaceQuarteredReveal
                         ? targetedOpening
@@ -1396,7 +1383,7 @@ public partial class IfcExporter
             // future Boolean operand.
             bool transformOnlyFamily = opening.Transform != null && opening.TypeId > 0
                 && opening.CategoryId is null or -2000080 or -2001000 or -2001100;
-            bool hasProjectPhaseReference = HasProjectPhaseReference(opening);
+            bool hasProjectPhaseReference = ProductRules.HasProjectPhaseReference(opening);
             bool standaloneDiagnostics = Environment.GetEnvironmentVariable(
                 "RVTIO_RECT_BREP_GATE_DIAG") == "1";
             bool RejectStandaloneWriterPath(string stage)
@@ -1649,13 +1636,12 @@ public partial class IfcExporter
                 continue;
             }
             if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
-            bool transformOnlyFamily = elem.Transform != null && elem.TypeId > 0
-                && elem.CategoryId is null or -2000080 or -2001000 or -2001100;
+            bool transformOnlyFamily = ProductRules.IsTransformOnlyFamily(elem);
             // Current profile: a wall record that is itself the type of another element (it names no project phase)
             // is a type definition; the type is written from the instances that use it. The legacy profile keeps
             // wall records, as wall type propagation is not reliable enough there.
             if ((CurrentProfile || elem.CategoryId != -2000011) && typeElementIds.Contains(elem.Id)
-                && !HasProjectPhaseReference(elem) && !transformOnlyFamily)
+                && !ProductRules.HasProjectPhaseReference(elem) && !transformOnlyFamily)
             { Skip(elem, "type-element"); continue; }
 
             if (IsNonPhysicalCategory(elem.Category)) { Skip(elem, "non-physical-category"); continue; }
@@ -1663,7 +1649,7 @@ public partial class IfcExporter
             // Preview/type records inherit PHASE_CREATED during parameter propagation but do not
             // reference that phase in their own record graph.
             if (elem.CategoryId != -2000011
-                && !HasProjectPhaseReference(elem) && !transformOnlyFamily)
+                && !ProductRules.HasProjectPhaseReference(elem) && !transformOnlyFamily)
             { Skip(elem, "no-project-phase-reference"); continue; }
 
             // A placed family instance must reference a project level when its serialized level
@@ -63688,10 +63674,7 @@ public partial class IfcExporter
     /// <summary>The wall export skips a StackedWall parent, not its source record or children.</summary>
     internal static bool IsValidatedStackedWallContainer(
         Element element, IReadOnlyDictionary<int, Element> elementsById) =>
-        element.CategoryId == -2000011 && element.FamilyTypeId > 0
-        && elementsById.TryGetValue(element.FamilyTypeId, out var type)
-        && type.Id == element.FamilyTypeId && type.CategoryId == -2003500
-        && type.IsSerializedStackedWallType;
+        ProductRules.IsValidatedStackedWallContainer(element, elementsById);
 
     /// <summary>
     /// A positive Element.m_unplacedOwnerId is an authored ownership edge to another record, so the
@@ -65131,8 +65114,7 @@ public partial class IfcExporter
                 : null;
     }
 
-    private static bool IsWallRectangularOpening(Element element) =>
-        element.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true;
+    private static bool IsWallRectangularOpening(Element element) => ProductRules.IsWallRectangularOpening(element);
 
     // The door sub-element rule (= WindowOpeningRelVoid).
     internal const int DoorOpeningRelVoid = 20;
@@ -68751,7 +68733,6 @@ public partial class IfcExporter
     private static readonly (string Name, int ParamId)[] SpaceCoveringParams =
         [("FloorCovering", -1006903), ("WallCovering", -1006904), ("CeilingCovering", -1006905)];   // ROOM_FINISH_FLOOR, _WALL, _CEILING
     private const int AreaSchemeIdParam = -1012704;      // RoomElem.m_areaSchemeId
-    private const int PhaseCategoryId = -2000112;        // OST_Phases
 
     /// <summary>The phase whose rooms the current profile exports.</summary>
     private int? ResolveActiveRoomPhase(RevitFileInfo info)
@@ -68765,14 +68746,7 @@ public partial class IfcExporter
     private int? ResolveActivePhase(RevitFileInfo info)
     {
         if (ExportPhaseId != null) return ExportPhaseId;
-        if (!CurrentProfile || ExportAllPhases || info.SerializedProjectPhaseIds is not { Length: > 0 } order) return null;
-        // a 64-bit-id file can have a phase whose category is not resolved, so the class counts too
-        var phases = info.Elements.Where(element => (element.CategoryId == PhaseCategoryId || element.RootClassName == "ProjectPhase")
-                && !(info.ElemTableIsExact && element.IsDiscovered))
-            .Select(element => element.Id).ToHashSet();
-        for (int index = order.Length - 1; index >= 0; index--)
-            if (phases.Contains(order[index])) return order[index];
-        return null;
+        return CurrentProfile && !ExportAllPhases ? ProductRules.LastProjectPhase(info) : null;
     }
 
     private void WriteAreaSchemeGroups(
@@ -69702,30 +69676,7 @@ public partial class IfcExporter
     /// Returns true if the Category string indicates a non-physical element (annotation, link,
     /// symbol, etc).
     /// </summary>
-    private static bool IsNonPhysicalCategory(string? category)
-    {
-        if (string.IsNullOrEmpty(category)) return false; // null category handled by MapCategoryToIfcType
-        // Annotations, symbols, links, views, grids, etc.
-        return category.Contains("Annotation", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("RvtLink", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Symbol", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Tag", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Schedule", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Legend", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Titleblock", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Detail", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Camera", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("Analytical", StringComparison.OrdinalIgnoreCase)
-            // Spatial/compound sub-elements are represented by their parent IFC entity, not as
-            // independent building-element proxies.
-            || category.Contains("OST_Rooms", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("OST_MEPSpaces", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("OST_RailingTopRail", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("OST_RailingHandRail", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("OST_StairsTrisers", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("OST_StairsRailingBaluster", StringComparison.OrdinalIgnoreCase)
-            || category.Equals("OST_Parts", StringComparison.OrdinalIgnoreCase);
-    }
+    private static bool IsNonPhysicalCategory(string? category) => ProductRules.IsNonPhysicalCategory(category);
 
 
     /// <summary>
