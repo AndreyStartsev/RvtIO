@@ -513,6 +513,50 @@ public class ExportReportTests
         Assert.Equal("partial", report.Status);
     }
 
+    [Theory]
+    [InlineData(1, 0, 0, true, "Partitions/0", "failed-members")]
+    [InlineData(0, 1, 1, true, "Partitions/0", "recovered-members")]
+    [InlineData(0, 0, 1, true, "Partitions/0", "unverified-members")]
+    [InlineData(0, 0, 0, false, "Global/ElemTable", "no-rows")]
+    public void StrictModeExitsWithPartialReadCodeAndListsTheStreamAndReason(
+        int failed, int recovered, int unverified, bool hasRows, string expectedStream, string expectedCode)
+    {
+        var diagnostics = new RvtReadDiagnostics();
+        diagnostics.Streams.Add(new StreamRecord("Partitions/0", 1000, 4, 4 - failed, failed, recovered, unverified));
+        uint[] rows = hasRows ? [1u] : [];
+
+        var lenient = ExportReport.ForRead("test.rvt", 1000, diagnostics, false, false, rows, new RevitFileInfo(), strict: false);
+        Assert.Equal("partial", lenient.Status);
+        Assert.Equal(RvtExitCodes.Success, lenient.ExitCode);
+        Assert.False(lenient.Limits.Strict);
+        var lenientIssue = Assert.Single(lenient.Issues);
+        Assert.Equal((expectedStream, expectedCode), (lenientIssue.Stream, lenientIssue.Code));
+
+        var strictReport = ExportReport.ForRead("test.rvt", 1000, diagnostics, false, false, rows, new RevitFileInfo(), strict: true);
+        Assert.Equal("partial", strictReport.Status);
+        Assert.Equal(RvtExitCodes.PartialRead, strictReport.ExitCode);
+        Assert.True(strictReport.Limits.Strict);
+        var strictIssue = Assert.Single(strictReport.Issues);
+        Assert.Equal((expectedStream, expectedCode), (strictIssue.Stream, strictIssue.Code));
+    }
+
+    [Fact]
+    public void StrictModeKeepsExitCodeZeroOnCompleteReadAndLimitCodeOnUnacceptedLimitHit()
+    {
+        var complete = new RvtReadDiagnostics();
+        complete.Streams.Add(new StreamRecord("Partitions/0", 1000, 4, 4, 0, 0, 0));
+        var completeReport = ExportReport.ForRead("test.rvt", 1000, complete, false, false, [1u], new RevitFileInfo(), strict: true);
+        Assert.Equal("complete", completeReport.Status);
+        Assert.Equal(RvtExitCodes.Success, completeReport.ExitCode);
+        Assert.Empty(completeReport.Issues);
+
+        var limitCut = new RvtReadDiagnostics();
+        limitCut.LimitHits.Add(new ReaderLimitHit("Global/ElemTable", "elem-table-recovery-bytes", 1000, true, "cut"));
+        var limitReport = ExportReport.ForRead("test.rvt", 1000, limitCut, false, partialAllowed: false, [1u], new RevitFileInfo(), strict: true);
+        Assert.Equal("partial", limitReport.Status);
+        Assert.Equal(RvtExitCodes.LimitExceeded, limitReport.ExitCode);
+    }
+
     private sealed class TempFile : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "rr-report-" + Guid.NewGuid() + ".rvt");

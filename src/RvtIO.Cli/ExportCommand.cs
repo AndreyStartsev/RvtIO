@@ -31,9 +31,16 @@ internal static partial class Program
         };
 
         // --report <json>: the machine-readable report of the run; --allow-partial: export a read that a reader limit cut (exit 0 instead of 3);
+        // --strict: fail when a read is partial even without hitting a limit (exit 6 instead of 0);
         // --raise-limits: raise the limits that cut a damaged stream while it is recovered (very large models)
         bool allowPartial = args.Contains("--allow-partial");
+        bool strict = args.Contains("--strict");
         bool raiseLimits = args.Contains("--raise-limits");
+        if (allowPartial && strict)
+        {
+            Console.Error.WriteLine("--allow-partial and --strict exclude each other.");
+            return RvtExitCodes.Usage;
+        }
         string? reportPath = ValueOf(args, "--report");
         if (args.Contains("--report") && (reportPath is null or "" || reportPath.StartsWith("--", StringComparison.Ordinal)))
         {
@@ -57,32 +64,40 @@ internal static partial class Program
         try { rvtInfo = reader.Read(rvtPath); }
         catch (RvtInputException ex)
         {
-            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, ex.Kind, ex.Message, RvtExitCodes.InputError, readDiagnostics, raiseLimits, allowPartial),
+            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, ex.Kind, ex.Message, RvtExitCodes.InputError, readDiagnostics, raiseLimits, allowPartial, null, strict),
                 $"error: {ex.Message} Nothing was exported (exit code {RvtExitCodes.InputError}).");
         }
         catch (RvtLimitException ex)
         {
             readDiagnostics.LimitHits.Add(ex.Hit);
-            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, "limit-exceeded", ex.Message, RvtExitCodes.LimitExceeded, readDiagnostics, raiseLimits, allowPartial),
+            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, "limit-exceeded", ex.Message, RvtExitCodes.LimitExceeded, readDiagnostics, raiseLimits, allowPartial, null, strict),
                 $"error: {ex.Message}. The limit cannot be raised. Nothing was exported (exit code {RvtExitCodes.LimitExceeded}).");
         }
         // The container is readable, so this is a decoder failure on damaged or unsupported content: one line on the console, the stack trace in the report.
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             string message = $"The content of '{inputName}' could not be decoded: {ex.GetType().Name}: {ex.Message}";
-            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, "decode-failure", message, RvtExitCodes.DecodeError, readDiagnostics, raiseLimits, allowPartial, ex.ToString()),
+            return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, "decode-failure", message, RvtExitCodes.DecodeError, readDiagnostics, raiseLimits, allowPartial, ex.ToString(), strict),
                 $"error: {message}. Nothing was exported (exit code {RvtExitCodes.DecodeError}). The report (--report) holds the stack trace.");
         }
         Console.Error.WriteLine($"Timing: read {swRead.Elapsed.TotalSeconds:F1}s");
         var report = ExportReport.ForRead(inputName, inputBytes, readDiagnostics, raiseLimits, allowPartial,
-            reader.LastParsingState?.ElemTable.Keys.ToList() ?? [], rvtInfo);
+            reader.LastParsingState?.ElemTable.Keys.ToList() ?? [], rvtInfo, strict);
         foreach (var hit in readDiagnostics.LimitHits)
             Console.Error.WriteLine($"warning: stream {hit.Stream} was cut by the reader limit {hit.Limit} ({hit.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}): {hit.Detail}");
-        if (report.ExitCode != RvtExitCodes.Success)
+        if (report.ExitCode == RvtExitCodes.LimitExceeded)
             return EndRun(reportPath, report,
                 $"error: a stream exceeded a reader limit and the read was cut. Nothing was exported (exit code {report.ExitCode}). "
                 + (raiseLimits ? "The limits are already raised; use --allow-partial to export what was read."
                     : "Use --raise-limits to raise the limits, or --allow-partial to export what was read."));
+        if (report.ExitCode == RvtExitCodes.PartialRead)
+        {
+            string reasons = report.Issues.Count > 0
+                ? string.Join("; ", report.Issues.Select(issue => $"{issue.Stream}: {issue.Detail}"))
+                : "partial stream decode";
+            return EndRun(reportPath, report,
+                $"error: the read of '{inputName}' was partial ({reasons}). Nothing was exported (exit code {report.ExitCode}). Omit --strict to export what was read.");
+        }
 
         if (outputPath.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
         {

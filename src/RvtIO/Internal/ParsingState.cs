@@ -113,6 +113,10 @@ internal class ParsingState
     /// and the stop would hide it.</summary>
     public bool StaleCopiesRemoved { get; set; }
 
+    /// <summary>Each partition stream read by its framing, or null where the framing does not hold (<see cref="Parsing.PartitionFraming.Framed"/>):
+    /// its segments and the records of the project's own block, without the copies record routing marks as not current.</summary>
+    public IReadOnlyList<Parsing.PartitionFraming.Framed?>? FramedPartitions { get; set; }
+
     /// <summary>The own name of an element of a <see cref="WideSchema"/> file, read from its root block by the schema-driven walk.</summary>
     public Dictionary<uint, string> WideNames { get; } = new();
 
