@@ -26,6 +26,9 @@ needs `RvtSceneOptions.ModelKey`, because a document does not know its file name
 takes the meshes you extracted from that document yourself, for example with `ElementMeshes.Extract` and options of your
 own. Open a file of a release other than
 Revit 2022 with `R22Layout = true`, or its elements have no geometry and the result has the error `geometry-undecoded`.
+Only `Read(path)` reports the diagnostics of the read (`read-cut`, `failed-members`, `recovered-members`,
+`unverified-members`), as only it opens the file; if you open the document yourself, read them from the
+`RvtReaderOptions.Diagnostics` you opened it with.
 
 `RvtSceneResult` holds the `Document`, the `Diagnostics` and counts: elements, elements with geometry, elements by
 coverage, geometries, instances and symbol placements.
@@ -65,6 +68,9 @@ The text a value is written with under a key is frozen with the key: changing it
 |---|---|---|
 | `geometry-undecoded` | error | The geometry of the file was not decoded; open it with `R22Layout`. |
 | `read-cut` | error | A reader limit cut a stream while the file was read (`Read(path)` only); elements may be missing. |
+| `failed-members` | error | Gzip members of a stream failed to decode (`Read(path)` only); elements may be missing. One per stream. |
+| `recovered-members` | warning | Gzip members of a stream were rebuilt by structural recovery (`Read(path)` only); their elements may be incomplete or wrong. One per stream. |
+| `unverified-members` | warning | Gzip members of a stream decoded without a matching checksum, not counting the rebuilt ones (`Read(path)` only); their elements may be incomplete or wrong. One per stream. |
 | `undecoded` | warning | An element of such a file; it is in the scene without geometry. |
 | `no-geometry` | warning | An element whose geometry record has nothing that could be drawn; it is in the scene without geometry. |
 | `partial-geometry` | warning | Faces that could not be triangulated, or a placed symbol or Geometry node without a decoded polygon. |

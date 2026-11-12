@@ -9,8 +9,8 @@ using Xunit;
 namespace RvtIO.Tests;
 
 /// <summary>The scene of <see cref="RvtSceneReader"/> on synthetic meshes and elements: instancing, mirrored placements, local
-/// origins, feet to metres, element facts, IFC GlobalIds, property sets and their display text, materials and the diagnostics of
-/// incomplete geometry.</summary>
+/// origins, feet to metres, element facts, IFC GlobalIds, property sets and their display text, materials, the diagnostics of
+/// incomplete geometry and those of a damaged read.</summary>
 public class RvtSceneReaderTests
 {
     private const double Foot = 0.3048;
@@ -420,6 +420,62 @@ public class RvtSceneReaderTests
         Assert.All(result.Document.Elements, element => Assert.Null(element.SourceId));
         Assert.Contains("2 elements", Assert.Single(result.Diagnostics, diagnostic => diagnostic.Code == "no-source-id").Message);
         Assert.Empty(result.Document.Validate());
+    }
+
+    private static readonly string[] MemberCodes = ["failed-members", "recovered-members", "unverified-members"];
+
+    /// <summary>The scene of a synthetic project file read from disk; <paramref name="extraPartition"/> is a second partition stream.</summary>
+    private static RvtSceneResult ReadSyntheticFile(byte[]? extraPartition = null)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "rvtio-scene-" + Guid.NewGuid().ToString("N") + ".rvt");
+        try
+        {
+            CliExitCodeTests.WriteSyntheticRvt(path, extraPartition);
+            return RvtSceneReader.Read(path);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void MembersThatFailedToDecodeAreAnErrorOfTheirStream()
+    {
+        // A partition stream without a gzip header: one member, and it does not decode.
+        byte[] damaged = new byte[512];
+        new Random(11).NextBytes(damaged);
+        damaged[0] = 0; damaged[1] = 1;
+        var result = ReadSyntheticFile(damaged);
+        var error = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Severity == SceneSeverity.Error);
+        Assert.Equal("failed-members", error.Code);
+        Assert.Equal("The stream Partitions/2: 1 of 1 member(s) failed to decode. Elements may be missing.", error.Message);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code is "recovered-members" or "unverified-members");
+    }
+
+    [Fact]
+    public void IntactFileHasNoMemberDiagnostics() =>
+        Assert.DoesNotContain(ReadSyntheticFile().Diagnostics, diagnostic => MemberCodes.Contains(diagnostic.Code));
+
+    [Fact]
+    public void ReadDiagnosticsFollowTheIssuesOfTheExportReport()
+    {
+        var read = new RvtReadDiagnostics();
+        read.LimitHits.Add(new ReaderLimitHit("Partitions/7", "partition-bytes", 1000, true, "the stream is longer than the limit"));
+        read.Streams.Add(new StreamRecord("Global/ElemTable", 100, 1, 1, 0, 0, 0));
+        // A rebuilt member is also unverified: it is reported as rebuilt only.
+        read.Streams.Add(new StreamRecord("Partitions/0", 1000, 4, 3, 1, 1, 1));
+        read.Streams.Add(new StreamRecord("Partitions/1", 1000, 5, 5, 0, 1, 3));
+
+        var diagnostics = RvtSceneReader.ReadDiagnostics(read).ToList();
+
+        Assert.Equal(
+            [
+                (SceneSeverity.Error, "read-cut"), (SceneSeverity.Error, "failed-members"), (SceneSeverity.Warning, "recovered-members"),
+                (SceneSeverity.Warning, "recovered-members"), (SceneSeverity.Warning, "unverified-members"),
+            ],
+            diagnostics.Select(diagnostic => (diagnostic.Severity, diagnostic.Code)));
+        Assert.Equal("The stream Partitions/0: 1 of 4 member(s) failed to decode. Elements may be missing.", diagnostics[1].Message);
+        Assert.Equal("The stream Partitions/0: 1 of 4 member(s) were rebuilt by structural recovery. Elements may be incomplete or wrong.", diagnostics[2].Message);
+        Assert.Contains("Partitions/1: 1 of 5 member(s) were rebuilt", diagnostics[3].Message);
+        Assert.Equal("The stream Partitions/1: 2 of 5 member(s) decoded without a matching checksum. Elements may be incomplete or wrong.", diagnostics[4].Message);
     }
 
     [Fact]

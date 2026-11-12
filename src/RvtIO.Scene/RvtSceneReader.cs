@@ -41,7 +41,9 @@ public static class RvtSceneReader
 
     /// <summary>Reads the Revit file at <paramref name="path"/> with the options the RvtIO command line tool reads it with for an
     /// IFC export (the Revit 2022 layout, English system family names, faces with distinct openings kept apart) and turns it
-    /// into a scene.</summary>
+    /// into a scene. The diagnostics also report the read: a stream a reader limit cut (<c>read-cut</c>) and the members of a
+    /// stream that failed to decode, were rebuilt by structural recovery or decoded without a matching checksum
+    /// (<c>failed-members</c>, <c>recovered-members</c>, <c>unverified-members</c>).</summary>
     /// <exception cref="ArgumentException"><paramref name="path"/> is empty, or <see cref="RvtSceneOptions.ModelKey"/> is empty.</exception>
     public static RvtSceneResult Read(string path, RvtSceneOptions? options = null)
     {
@@ -56,13 +58,38 @@ public static class RvtSceneReader
             SeparateFacesWithDistinctOpenings = true,
             Diagnostics = readDiagnostics,
         });
+        return Map(document, ElementMeshes.Extract(document), key, ReadDiagnostics(readDiagnostics));
+    }
+
+    /// <summary>The scene diagnostics of a read: <c>read-cut</c> for each stream a reader limit cut, then for each stream read, in
+    /// the order read, the members that failed to decode, were rebuilt by structural recovery or decoded without a matching
+    /// checksum, by the rules of the issues of the export report.</summary>
+    internal static IEnumerable<SceneDiagnostic> ReadDiagnostics(RvtReadDiagnostics diagnostics)
+    {
         // A cut read is what the command line tool refuses to export; here the scene is made and the cut is an error.
-        var cut = readDiagnostics.LimitHits.Select(hit => new SceneDiagnostic(SceneSeverity.Error, "read-cut",
-            $"The stream {hit.Stream} was cut by the reader limit {hit.Limit}: {hit.Detail}. Elements may be missing."));
-        return Map(document, ElementMeshes.Extract(document), key, cut);
+        foreach (var hit in diagnostics.LimitHits)
+            yield return new(SceneSeverity.Error, "read-cut",
+                $"The stream {hit.Stream} was cut by the reader limit {hit.Limit}: {hit.Detail}. Elements may be missing.");
+        foreach (var stream in diagnostics.Streams)
+        {
+            // A member that failed to decode is lost, as a cut is: an error.
+            if (stream.Failed > 0)
+                yield return new(SceneSeverity.Error, "failed-members",
+                    $"The stream {stream.Name}: {stream.Failed} of {stream.Members} member(s) failed to decode. Elements may be missing.");
+            if (stream.Recovered > 0)
+                yield return new(SceneSeverity.Warning, "recovered-members",
+                    $"The stream {stream.Name}: {stream.Recovered} of {stream.Members} member(s) were rebuilt by structural recovery. Elements may be incomplete or wrong.");
+            // A rebuilt member is also counted unverified; it is reported once, as rebuilt.
+            int unverified = stream.Unverified - stream.Recovered;
+            if (unverified > 0)
+                yield return new(SceneSeverity.Warning, "unverified-members",
+                    $"The stream {stream.Name}: {unverified} of {stream.Members} member(s) decoded without a matching checksum. Elements may be incomplete or wrong.");
+        }
     }
 
     /// <summary>Turns an opened document into a scene.</summary>
+    /// <remarks>The diagnostics of the read are reported only by <see cref="Read(string, RvtSceneOptions?)"/>, which opens the
+    /// file; a caller who opens the document reads them from <see cref="RvtReaderOptions.Diagnostics"/>.</remarks>
     /// <param name="document">The document, opened by the caller; open a file of a release other than Revit 2022 with
     /// <see cref="RvtReaderOptions.R22Layout"/>, or its elements have no geometry.</param>
     /// <param name="options">The options; <see cref="RvtSceneOptions.ModelKey"/> is required, as a document has no file name.</param>
@@ -76,6 +103,8 @@ public static class RvtSceneReader
 
     /// <summary>Turns an opened document into a scene with meshes the caller extracted from it, for example with
     /// <see cref="ElementMeshes.Extract(RvtDocument, ElementMeshOptions?)"/> and options of its own.</summary>
+    /// <remarks>The diagnostics of the read are reported only by <see cref="Read(string, RvtSceneOptions?)"/>, which opens the
+    /// file; a caller who opens the document reads them from <see cref="RvtReaderOptions.Diagnostics"/>.</remarks>
     /// <param name="document">The document the meshes come from; the element facts are read from it.</param>
     /// <param name="meshes">The meshes of the drawable elements of <paramref name="document"/>.</param>
     /// <param name="options">The options; <see cref="RvtSceneOptions.ModelKey"/> is required, as a document has no file name.</param>
