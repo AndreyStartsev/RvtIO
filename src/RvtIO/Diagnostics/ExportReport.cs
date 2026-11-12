@@ -7,7 +7,8 @@ namespace RvtIO;
 /// <summary>Process exit codes of the command line exporter (documented in the README and in docs/export-report.md).</summary>
 public static class RvtExitCodes
 {
-    /// <summary>The export finished. With <c>--allow-partial</c> it may have read less than the whole file: the report says so.</summary>
+    /// <summary>The export finished. With <c>--allow-partial</c>, or without <c>--strict</c> when a stream lost or recovered a member,
+    /// it may have read less than the whole file: the report says so.</summary>
     public const int Success = 0;
     /// <summary>The command line is wrong. Unchanged from earlier versions.</summary>
     public const int Usage = 1;
@@ -18,11 +19,24 @@ public static class RvtExitCodes
     public const int LimitExceeded = 3;
     /// <summary>The container is readable but a decoder failed on its content (damaged or unsupported data). The report holds the exception.</summary>
     public const int DecodeError = 4;
+    /// <summary>With <c>--strict</c>, the read finished without exceeding a limit, or <c>--allow-partial</c> accepted a limit,
+    /// but the read is partial (a member failed to decode, was rebuilt by structural recovery, or decoded without a matching checksum,
+    /// or the element table decoded no row). Nothing is exported; the report lists the streams and the reason.</summary>
+    public const int PartialRead = 6;
 
     /// <summary>The exit code of a finished read: <see cref="LimitExceeded"/> when a limit cut a stream and partial output
     /// was not allowed, else <see cref="Success"/>.</summary>
     public static int ForRead(RvtReadDiagnostics diagnostics, bool allowPartial) =>
-        diagnostics.LimitHits.Count > 0 && !allowPartial ? LimitExceeded : Success;
+        ForRead(diagnostics, allowPartial, strict: false, partialRead: false);
+
+    /// <summary>The exit code of a finished read: <see cref="LimitExceeded"/> when a limit cut a stream and partial output
+    /// was not allowed, else <see cref="PartialRead"/> when <paramref name="strict"/> is true and the read is partial,
+    /// else <see cref="Success"/>.</summary>
+    public static int ForRead(RvtReadDiagnostics diagnostics, bool allowPartial, bool strict, bool partialRead = false) =>
+        diagnostics.LimitHits.Count > 0 && !allowPartial ? LimitExceeded
+        : strict && (partialRead || diagnostics.LimitHits.Count > 0
+            || diagnostics.Streams.Any(s => s.Failed > 0 || s.Recovered > 0 || s.Unverified > 0)) ? PartialRead
+        : Success;
 }
 
 /// <summary>The input cannot be read at all (missing, empty, not a compound file, or a stream ends before its declared length).</summary>
@@ -128,6 +142,8 @@ public sealed class ExportReport
         public bool Raised { get; set; }
         /// <summary>True when the run accepted a read cut by a limit (<c>--allow-partial</c>).</summary>
         public bool PartialAllowed { get; set; }
+        /// <summary>True when the run refused a partial read (<c>--strict</c>).</summary>
+        public bool Strict { get; set; }
         /// <summary>Every stream a limit cut.</summary>
         public List<ReaderLimitHit> Hit { get; set; } = new();
     }
@@ -165,7 +181,7 @@ public sealed class ExportReport
         /// <summary>Storage and name of the stream, for example <c>Global/ElemTable</c>.</summary>
         public string Stream { get; set; } = "";
 
-        /// <summary>Stable code: <c>no-rows</c> (the element table decoded no row).</summary>
+        /// <summary>Stable code: <c>no-rows</c>, <c>failed-members</c>, <c>recovered-members</c> or <c>unverified-members</c>.</summary>
         public string Code { get; set; } = "";
 
         /// <summary>One line for a person.</summary>
@@ -278,7 +294,12 @@ public sealed class ExportReport
 
     /// <summary>The report of a file that could not be read.</summary>
     public static ExportReport Failed(string file, long bytes, string kind, string message, int exitCode, RvtReadDiagnostics? diagnostics,
-        bool raised, bool partialAllowed, string? detail = null)
+        bool raised, bool partialAllowed, string? detail = null) =>
+        Failed(file, bytes, kind, message, exitCode, diagnostics, raised, partialAllowed, detail, strict: false);
+
+    /// <summary>The report of a file that could not be read.</summary>
+    public static ExportReport Failed(string file, long bytes, string kind, string message, int exitCode, RvtReadDiagnostics? diagnostics,
+        bool raised, bool partialAllowed, string? detail, bool strict)
     {
         var report = new ExportReport { Status = "failed", ExitCode = exitCode };
         report.Input.File = file;
@@ -286,19 +307,26 @@ public sealed class ExportReport
         report.Error = new ReportError { Kind = kind, Message = message, Detail = detail == null ? null : StripSourcePaths(detail) };
         report.Limits.Raised = raised;
         report.Limits.PartialAllowed = partialAllowed;
+        report.Limits.Strict = strict;
         if (diagnostics != null) report.Fill(diagnostics);
         return report;
     }
 
     /// <summary>The report of a finished read. <paramref name="elementIds"/> are the rows of the element table.</summary>
     public static ExportReport ForRead(string file, long bytes, RvtReadDiagnostics diagnostics, bool raised, bool partialAllowed,
-        IReadOnlyCollection<uint> elementIds, RevitFileInfo info)
+        IReadOnlyCollection<uint> elementIds, RevitFileInfo info) =>
+        ForRead(file, bytes, diagnostics, raised, partialAllowed, elementIds, info, strict: false);
+
+    /// <summary>The report of a finished read. <paramref name="elementIds"/> are the rows of the element table.</summary>
+    public static ExportReport ForRead(string file, long bytes, RvtReadDiagnostics diagnostics, bool raised, bool partialAllowed,
+        IReadOnlyCollection<uint> elementIds, RevitFileInfo info, bool strict)
     {
-        var report = new ExportReport { ExitCode = RvtExitCodes.ForRead(diagnostics, partialAllowed) };
+        var report = new ExportReport();
         report.Input.File = file;
         report.Input.Bytes = bytes;
         report.Limits.Raised = raised;
         report.Limits.PartialAllowed = partialAllowed;
+        report.Limits.Strict = strict;
         report.Fill(diagnostics);
         // A row counts as decoded when a parsed record has its id; the discovered and block-only records have none in the table.
         var parsed = new HashSet<long>(info.Elements.Where(element => !element.IsBlockOnly).Select(element => (long)(uint)element.Id));
@@ -313,11 +341,23 @@ public sealed class ExportReport
             DecodedFraction = Fraction(decoded, elementIds.Count),
             Undecoded = undecoded.Groups(),
         };
+        foreach (var stream in report.Streams)
+        {
+            if (stream.Failed > 0)
+                report.Issues.Add(new ReportIssue { Stream = stream.Name, Code = "failed-members", Detail = $"{stream.Failed} of {stream.Members} member(s) failed to decode" });
+            if (stream.Recovered > 0)
+                report.Issues.Add(new ReportIssue { Stream = stream.Name, Code = "recovered-members", Detail = $"{stream.Recovered} of {stream.Members} member(s) rebuilt by structural recovery" });
+            int unverifiedWithoutRecovery = stream.Unverified - stream.Recovered;
+            if (unverifiedWithoutRecovery > 0)
+                report.Issues.Add(new ReportIssue { Stream = stream.Name, Code = "unverified-members", Detail = $"{unverifiedWithoutRecovery} of {stream.Members} member(s) decoded without a matching checksum" });
+        }
         // A project always has elements: a table without a row did not decode, whatever the streams say.
         if (elementIds.Count == 0)
             report.Issues.Add(new ReportIssue { Stream = "Global/ElemTable", Code = "no-rows", Detail = "the element table decoded no row" });
         bool lostMembers = report.Streams.Any(stream => stream.Failed > 0 || stream.Unverified > 0 || stream.Recovered > 0);
-        report.Status = diagnostics.LimitHits.Count > 0 || lostMembers || report.Issues.Count > 0 ? "partial" : "complete";
+        bool isPartial = diagnostics.LimitHits.Count > 0 || lostMembers || report.Issues.Count > 0;
+        report.Status = isPartial ? "partial" : "complete";
+        report.ExitCode = RvtExitCodes.ForRead(diagnostics, partialAllowed, strict, isPartial);
         return report;
     }
 

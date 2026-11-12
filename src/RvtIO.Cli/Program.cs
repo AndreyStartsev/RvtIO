@@ -37,10 +37,12 @@ internal static partial class Program
           --resolve-current-copies          the earlier opt-in for the default, accepted without effect
           --report <report.json>            write the JSON report of the run (read streams, limits, skipped elements, exported fraction)
           --allow-partial                   export what was read when a reader limit cut a stream (exit code 0 instead of 3)
+          --strict                          fail when a read is partial even without hitting a limit (exit code 6 instead of 0; nothing is exported)
           --raise-limits                    raise the limits that cut a damaged stream while it is recovered (very large models)
 
         Exit codes: 0 done; 1 usage error; 2 the input cannot be read (missing, not a Revit file, cut or damaged);
-        3 a stream exceeded a reader limit and the read was cut; 4 a decoder failed on the content of a readable file.
+        3 a stream exceeded a reader limit and the read was cut; 4 a decoder failed on the content of a readable file;
+        6 the read was partial and --strict was given.
         The report format is described in docs/export-report.md.
 
         Report options (read the file and print or write a report instead of exporting):
@@ -101,7 +103,7 @@ internal static partial class Program
     private static readonly HashSet<string> SwitchOptions =
     [
         "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities", ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
-        "--no-r22-layout", ..RvtIO.Cli.CurrentCopiesOption.Names, "--allow-partial", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
+        "--no-r22-layout", ..RvtIO.Cli.CurrentCopiesOption.Names, "--allow-partial", "--strict", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
         "--decode-blocks", "--decode-catc", "--wide", "--blocks", "--no-recover", "--no-d64", "--trim", "--dump-partial",
     ];
 
