@@ -95,14 +95,14 @@ internal static partial class ElementBuilder
     internal static void AttachComputedSymbolGeometry(Element elem, uint elemId, ParsingState state)
     {
         elem.SerializedComputedSymbolGeometry = null;
-        if (!Ifc.IfcExporter.HasOnlyUnfilledFacesCurrent(elem)
+        if (!ProductRules.HasOnlyUnfilledFaces(elem)
             || !state.ComputedFamilySymbols.TryGetValue(elemId, out var own)
             || own.BlockCount != 1 || own.Symbol is not { SymbolId: > 0, Transform: { Length: 12 } transform } symbol
             || symbol.SymbolId == elem.Id
             || !state.ComputedSymbolTargetClasses.TryGetValue((uint)symbol.SymbolId, out var target)
             || target is not { BlockCount: 1, ClassId: 1829 }
             || !state.GrepBlocks.TryGetValue((uint)symbol.SymbolId, out var symbolGrep)
-            || !symbolGrep.Faces.Any(face => face.GeometryNode > 0 && face.GInfoFlags is uint flags && (flags & Ifc.IfcExporter.FaceFillFlag) != 0))
+            || !symbolGrep.Faces.Any(face => face.GeometryNode > 0 && face.GInfoFlags is uint flags && (flags & ProductRules.FaceFillFlag) != 0))
             return;
         var placed = BuildPlacedSymbolGeometry(symbol.SymbolId, transform, state, new HashSet<int>());
         if (placed?.Faces is not { Count: > 0 }) return;

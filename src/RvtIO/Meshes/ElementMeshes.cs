@@ -1,5 +1,4 @@
 using RvtIO.Geometry.Meshing;
-using RvtIO.Ifc;
 using RvtIO.Model;
 using RvtIO.Parsing;
 
@@ -143,8 +142,8 @@ public static class ElementMeshes
     internal static List<(Element Element, GeometryData? Body)> DrawableElements(RevitFileInfo info)
     {
         var designOptions = DesignOptions.Of(info.Elements);
-        var phaseFilter = new IfcExporter().BuildExportPhaseFilter(info);
-        var typeElementIds = IfcExporter.TypeElementIds(info.Elements);
+        var phaseFilter = ProductRules.BuildExportPhaseFilter(info, exportPhaseId: null, lastPhaseByDefault: true);
+        var typeElementIds = ProductRules.TypeElementIds(info.Elements);
         var elementsById = new Dictionary<int, Element>();
         foreach (var element in info.Elements) elementsById.TryAdd(element.Id, element);
         var drawable = new List<(Element, GeometryData?)>();
@@ -152,17 +151,17 @@ public static class ElementMeshes
         {
             if (element.IsBlockOnly || element.IsGroupTemplate
                 || designOptions.InNonPrimaryOption(element) == true || phaseFilter?.Excludes(element) == true
-                || element.CategoryId == RevealsCategoryId || IfcExporter.IsWallRectangularOpening(element)
-                || IfcExporter.IsValidatedStackedWallContainer(element, elementsById)
+                || element.CategoryId == RevealsCategoryId || ProductRules.IsWallRectangularOpening(element)
+                || ProductRules.IsValidatedStackedWallContainer(element, elementsById)
                 || info.ElemTableIsExact && element.IsDiscovered
                 || element.SerializedFamilyId is > 0
-                || IfcExporter.IsNonPhysicalCategory(element.Category))
+                || ProductRules.IsNonPhysicalCategory(element.Category))
                 continue;
-            bool namesPhase = IfcExporter.HasProjectPhaseReference(element) || IfcExporter.IsTransformOnlyFamily(element);
+            bool namesPhase = ProductRules.HasProjectPhaseReference(element) || ProductRules.IsTransformOnlyFamily(element);
             if (!namesPhase && (typeElementIds.Contains(element.Id) || element.CategoryId != WallsCategoryId)) continue;
             GeometryData? body = element.Geometry;
             if (element.SerializedComputedSymbolGeometry is { } computed) body = computed;
-            else if (IfcExporter.HasOnlyUnfilledFacesCurrent(element)) continue;
+            else if (ProductRules.HasOnlyUnfilledFaces(element)) continue;
             if (body != null || info.WideLayoutNotRewritten && element.BoundingBox != null) drawable.Add((element, body));
         }
         // A stair places its runs and landings, a model group its members: those are drawn as elements of their own.

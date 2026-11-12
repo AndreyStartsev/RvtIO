@@ -200,7 +200,7 @@ namespace RvtIO.Model
         internal int GeometryStyle { get; set; } = -1;
 
         /// <summary>GInfo flags of the serialized Face this polygon came from; null for a face placed from a nested symbol
-        /// or not read (see <c>IfcExporter.HasOnlyUnfilledFacesCurrent</c>).</summary>
+        /// or not read (see <see cref="ProductRules.HasOnlyUnfilledFaces"/>).</summary>
         internal uint? GInfoFlags { get; set; }
 
         /// <summary>The material of a face that was placed here from a nested symbol (GInstance); RenderStyleId is
