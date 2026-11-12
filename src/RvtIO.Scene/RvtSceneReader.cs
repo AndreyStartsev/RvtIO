@@ -21,15 +21,16 @@ namespace RvtIO.Scene;
 /// the meshes. A mesh with a material has the instance material of that material element: its name and, where the file
 /// gives it, its colour (else a neutral grey).</para>
 /// <para>An element's <c>SourceId</c> is its Revit UniqueId, <c>IfcGuid</c> the GlobalId Revit's IFC export gives it (its valid
-/// IfcGUID parameter, else the export id of its UniqueId), <c>Category</c> the English name of its built-in category (else the
+/// built-in IfcGUID parameter, else the export id of its UniqueId), <c>Category</c> the English name of its built-in category (else the
 /// category the reader gives), <c>TypeName</c> the name of its type element. Its parameters are the property set
 /// <c>revit:instance</c>; the parameters of its type are the property set <c>revit:type</c>, one set shared by every element of
 /// the type. A parameter whose value the reader only estimates (<see cref="Parameter.IsApproximate"/>) is left out. The key of
 /// a built-in parameter is <c>revit:bip:&lt;id&gt;</c>, other parameters have no key.</para>
 /// <para>Values are text: the display string of <see cref="Parameter.AsValueString"/>, with the invariant culture, and only
 /// where it is the text Revit shows. A string is the stored text; a double is its value in the display unit and the unit symbol
-/// (<c>3200.4 mm</c>) when that unit is mm, m², m³, ° or A, the units whose factor converts Revit's internal unit, and is left
-/// out otherwise (no unit resolved, or a unit the reader converts with a factor that is not Revit's); an integer of a shared, project or family
+/// (<c>3200.4 mm</c>) when the unit comes from the parameter's measurement spec and is mm, m², m³, ° or A, the units whose
+/// factor converts Revit's internal unit, and is left out otherwise (no spec, as for every built-in double, whose unit the
+/// reader only guesses from the parameter name, or a unit the reader converts with a factor that is not Revit's); an integer of a shared, project or family
 /// parameter (a plain integer or a Yes/No, shown as 1 or 0) is the number in decimal; a built-in integer, which may be an
 /// enumeration, and an element id are left out. Levels and typed values are not written.</para>
 /// </remarks>
@@ -236,10 +237,11 @@ public static class RvtSceneReader
     private static string? DisplayText(Parameter parameter) => parameter.StorageType switch
     {
         StorageType.String => parameter.Value as string,
-        // The unit form of AsValueString; its fallback by parameter name is a guess and is left out.
-        StorageType.Double when parameter.Value is double value && parameter.UnitSymbol is { } unit
+        // The unit form of AsValueString, with a unit resolved from the parameter's measurement spec. Without a spec (every
+        // built-in double) the reader guesses the unit from the parameter name, as for the factor TEXT_WIDTH_SCALE: left out.
+        StorageType.Double when parameter.Value is double value && parameter.SpecType is { } spec && parameter.UnitSymbol is { } unit
             && ExactUnits.TryGetValue(unit, out double exact) && parameter.ConversionFactor == exact
-            && parameter.SpecType?.Contains(":surfaceAreaPerUnitLength-", StringComparison.Ordinal) != true
+            && !spec.Contains(":surfaceAreaPerUnitLength-", StringComparison.Ordinal)
             => string.Create(CultureInfo.InvariantCulture, $"{value * exact:G6} {unit}"),
         // A user parameter that stores an integer is an Integer or a Yes/No, both shown by AsValueString as the number. A
         // built-in one may be an enumeration, which the public API cannot tell from a number, so it is left out.
@@ -258,14 +260,13 @@ public static class RvtSceneReader
 
     private const string IfcGuidAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$";
 
-    /// <summary>The IFC GlobalId Revit's IFC export gives the element: the value of its IfcGUID parameter (the built-in one,
-    /// else a parameter named IfcGUID) when it is a valid GlobalId, else the export id of its UniqueId (the episode GUID with
-    /// its last 32 bits XORed with the element id the UniqueId ends with) in the IFC base-64 form; null without either.</summary>
+    /// <summary>The IFC GlobalId Revit's IFC export gives the element: the value of its built-in IfcGUID parameter (IFC_GUID)
+    /// when it is a valid GlobalId, else the export id of its UniqueId (the episode GUID with its last 32 bits XORed with the
+    /// element id the UniqueId ends with) in the IFC base-64 form; null without either.</summary>
     private static string? IfcGuidOf(Element element)
     {
-        var overrides = element.Parameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
-            .Concat(element.Parameters.Where(parameter => parameter.Id > 0 && parameter.Definition?.Name == "IfcGUID"));
-        if (overrides.Select(parameter => parameter.Value as string).FirstOrDefault(IsIfcGuid) is { } stored) return stored;
+        if (element.Parameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
+            .Select(parameter => parameter.Value as string).FirstOrDefault(IsIfcGuid) is { } stored) return stored;
 
         // A UniqueId is the episode GUID, '-' and the original element id as eight hex digits.
         if (element.UniqueId is not { Length: 45 } uniqueId || uniqueId[36] != '-'

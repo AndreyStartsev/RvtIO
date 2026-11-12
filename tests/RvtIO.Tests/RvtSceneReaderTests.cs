@@ -32,10 +32,21 @@ public class RvtSceneReaderTests
         double => StorageType.Double, string => StorageType.String, _ => StorageType.Integer,
     };
 
-    /// <summary>A length in feet, displayed in millimetres as the reader resolves a length parameter.</summary>
-    private static Parameter Length(BuiltInParameter bip, double feet)
+    /// <summary>A user length in feet, displayed in millimetres as the reader resolves a parameter with a length spec.</summary>
+    private static Parameter Length(int id, string name, double feet)
     {
-        var parameter = Bip(bip, feet);
+        var parameter = User(id, name, feet);
+        parameter.SpecType = "autodesk.spec.aec:length-2.0.0";
+        parameter.UnitSymbol = "mm";
+        parameter.ConversionFactor = 304.8;
+        return parameter;
+    }
+
+    /// <summary>A built-in double as the reader resolves it: no spec, the unit guessed from the name (mm for a name with WIDTH,
+    /// HEIGHT, OFFSET, ...).</summary>
+    private static Parameter GuessedLength(BuiltInParameter bip, double value)
+    {
+        var parameter = Bip(bip, value);
         parameter.UnitSymbol = "mm";
         parameter.ConversionFactor = 304.8;
         return parameter;
@@ -51,8 +62,8 @@ public class RvtSceneReaderTests
     {
         Elements =
         [
-            Instance(Wall, (int)BuiltInCategory.OST_Walls, "OST_Walls", Length(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5),
-                User(900, "Fire rating", "EI 60")),
+            Instance(Wall, (int)BuiltInCategory.OST_Walls, "OST_Walls", Length(910, "Clear height", 10.5),
+                User(900, "Fire rating", "EI 60"), Bip(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, "Outer leaf")),
             Instance(Door, (int)BuiltInCategory.OST_Doors, "OST_Doors"),
             Instance(Empty, (int)BuiltInCategory.OST_Walls, "OST_Walls"),
             Instance(Broken, (int)BuiltInCategory.OST_Walls, "OST_Walls"),
@@ -201,12 +212,13 @@ public class RvtSceneReaderTests
         Assert.Equal(2, wall.PropertySetIds.Count);
         var instance = document.PropertySets.Single(set => set.Id == wall.PropertySetIds[0]);
         Assert.Equal("revit:instance", instance.Key);
-        var height = instance.Properties.Single(property => property.Name == "WALL_USER_HEIGHT_PARAM");
-        Assert.Equal("revit:bip:-1001105", height.Key);
+        var comments = instance.Properties.Single(property => property.Name == "ALL_MODEL_INSTANCE_COMMENTS");
+        Assert.Equal("revit:bip:-1010106", comments.Key);
+        Assert.Equal(SceneValue.FromText("Outer leaf"), comments.Value);
+        var height = instance.Properties.Single(property => property.Name == "Clear height");
+        Assert.Null(height.Key);
         Assert.Equal(SceneValue.FromText("3200.4 mm"), height.Value);
-        var user = instance.Properties.Single(property => property.Name == "Fire rating");
-        Assert.Null(user.Key);
-        Assert.Equal("EI 60", user.Value.Text);
+        Assert.Equal("EI 60", instance.Properties.Single(property => property.Name == "Fire rating").Value.Text);
         // one type set, shared by every instance of the type; the door's only instance parameter is its type, an element id
         Assert.Equal(wall.PropertySetIds[1], Assert.Single(door.PropertySetIds));
         var type = document.PropertySets.Single(set => set.Id == wall.PropertySetIds[1]);
@@ -222,23 +234,22 @@ public class RvtSceneReaderTests
         estimate.IsApproximate = true;
         var info = new RevitFileInfo
         {
-            Elements = [new Element { Id = Wall, UniqueId = "w", Parameters = [Length(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5), estimate] }],
+            Elements = [new Element { Id = Wall, UniqueId = "w", Parameters = [Length(910, "Clear height", 10.5), estimate] }],
         };
         var meshes = new MeshSet { Elements = [new ElementMesh { ElementId = Wall, Meshes = [Triangle(0, 0, 0)] }] };
         var document = RvtSceneReader.Read(RvtDocument.FromInfo(info), meshes, new RvtSceneOptions { ModelKey = "m" }).Document;
         var set = Assert.Single(document.PropertySets);
-        Assert.Equal("WALL_USER_HEIGHT_PARAM", Assert.Single(set.Properties).Name);
+        Assert.Equal("Clear height", Assert.Single(set.Properties).Name);
         Assert.Empty(document.Validate());
     }
 
     [Fact]
     public void LengthShowsTheDisplayStringOfThePublicApiWithItsUnit()
     {
-        var height = Length(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5);
-        // Without a resolved unit the public API only guesses by the parameter name: the value is left out.
-        var guessed = Bip(BuiltInParameter.WALL_BASE_OFFSET, 1.25);
+        var height = Length(910, "Clear height", 10.5);
+        // A double without a resolved unit is left out.
         var plain = User(902, "Factor", 0.5);
-        var document = MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [height, guessed, plain] });
+        var document = MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [height, plain] });
 
         var texts = Texts(document);
         Assert.Equal("3200.4 mm", Assert.Single(texts).Value);
@@ -246,10 +257,10 @@ public class RvtSceneReaderTests
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
-            Assert.Equal(height.AsValueString(), texts["WALL_USER_HEIGHT_PARAM"]);
+            Assert.Equal(height.AsValueString(), texts["Clear height"]);
             // The text does not follow the culture of the machine.
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ru-RU");
-            Assert.Equal("3200.4 mm", Texts(MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [height] }))["WALL_USER_HEIGHT_PARAM"]);
+            Assert.Equal("3200.4 mm", Texts(MapOne(new Element { Id = Wall, UniqueId = "w", Parameters = [height] }))["Clear height"]);
         }
         finally
         {
@@ -259,13 +270,29 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void BuiltInDoubleWhoseUnitIsGuessedFromItsNameIsLeftOut()
+    {
+        // The reader gives every built-in double a unit by its name; for the text width factor 1.0 that is "304.8 mm".
+        var widthFactor = GuessedLength(BuiltInParameter.TEXT_WIDTH_SCALE, 1.0);
+        var baseOffset = GuessedLength(BuiltInParameter.WALL_BASE_OFFSET, 1.25);
+        var document = MapOne(new Element
+        {
+            Id = Wall, UniqueId = "w", Parameters = [widthFactor, baseOffset, User(900, "Fire rating", "EI 60")],
+        });
+        Assert.Equal(["Fire rating"], Texts(document).Keys);
+        Assert.Empty(document.Validate());
+    }
+
+    [Fact]
     public void UnitWhoseFactorIsNotRevitsConversionIsLeftOut()
     {
         var angle = User(907, "Slope angle", Math.PI / 4);
+        angle.SpecType = "autodesk.spec.aec:angle-2.0.0";
         angle.UnitSymbol = "\u00B0";
         angle.ConversionFactor = 180 / Math.PI;
         // Revit stores power in kg ft^2/s^3, not in watts: a factor of 1 does not give the watts Revit shows.
         var power = User(908, "Load", 120.0);
+        power.SpecType = "autodesk.spec.aec.electrical:power-1.0.0";
         power.UnitSymbol = "W";
         power.ConversionFactor = 1;
         var perLength = User(909, "Surface per length", 2.0);
@@ -317,9 +344,10 @@ public class RvtSceneReaderTests
     {
         const string UniqueId = "d45b1816-cbcc-4dc6-b0bb-007467f3c600-000405a0";
         var builtIn = Bip(BuiltInParameter.IFC_GUID, "2abcdefghijklmnopqrs$_");
+        // Only the built-in parameter overrides, as in RvtIO's IFC export; a user parameter of the same name does not.
         var shared = User(906, "IfcGUID", "0123456789ABCDEFGHIJKL");
         Assert.Equal("2abcdefghijklmnopqrs$_", MapOne(new Element { Id = 1, UniqueId = UniqueId, Parameters = [shared, builtIn] }).Elements[0].IfcGuid);
-        Assert.Equal("0123456789ABCDEFGHIJKL", MapOne(new Element { Id = 1, UniqueId = UniqueId, Parameters = [shared] }).Elements[0].IfcGuid);
+        Assert.Equal("3KMnWMoynDnh2x07HdzyEW", MapOne(new Element { Id = 1, UniqueId = UniqueId, Parameters = [shared] }).Elements[0].IfcGuid);
         // Not a GlobalId: empty, too short, a character outside the alphabet, a first character above 3.
         foreach (string invalid in new[] { "", "2abcdefghijklmnopqrs$", "2abcdefghijklmnopqrs-_", "4abcdefghijklmnopqrs$_" })
             Assert.Equal("3KMnWMoynDnh2x07HdzyEW",
