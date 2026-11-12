@@ -71,7 +71,8 @@ namespace RvtIO.Model
         /// <summary>A component placed at a rescaled placement was replaced by its tight box (ElementBuilder.ScaledComponentFaceBudget).</summary>
         internal bool PlacedSymbolBox { get; set; }
 
-        /// <summary>A GInstance of this geometry placed nothing: its symbol has no geometry.</summary>
+        /// <summary>A GInstance of this geometry, or of a symbol it places at any depth, placed nothing: its symbol has no
+        /// geometry.</summary>
         internal bool UnresolvedSymbol { get; set; }
 
         /// <summary>Number of stored GFace and Edge objects in the GRep block this geometry was

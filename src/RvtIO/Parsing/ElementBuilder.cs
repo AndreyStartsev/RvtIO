@@ -19,10 +19,12 @@ internal static partial class ElementBuilder
         int ownFaceCount = elem.Geometry.Faces.Count;
         var expandedTopLevel = new List<GeoInstance>();
         var placedBox = new StrongBox<bool>();
+        var unresolvedNested = new StrongBox<bool>();
         foreach (var instance in grep.Instances)
         {
             var placed = BuildPlacedSymbolGeometry(
-                instance.SymbolElemId, instance.Transform, state, new HashSet<int>(), placedBox: placedBox);
+                instance.SymbolElemId, instance.Transform, state, new HashSet<int>(), placedBox: placedBox,
+                unresolvedNested: unresolvedNested);
             if (placed == null)
             {
                 elem.Geometry.UnresolvedSymbol = true;
@@ -44,6 +46,7 @@ internal static partial class ElementBuilder
         }
         DeduplicateExactFaces(elem.Geometry);
         if (placedBox.Value) elem.Geometry.PlacedSymbolBox = true;
+        if (unresolvedNested.Value) elem.Geometry.UnresolvedSymbol = true;
         if (ownFaceCount == 0 && expandedTopLevel.Count > 0)
             elem.Geometry.ExactMappedInstances = expandedTopLevel;
     }
@@ -59,7 +62,9 @@ internal static partial class ElementBuilder
         if (!state.FamilyInstanceTransforms.TryGetValue(elemId, out var fi)) return;
         if (fi.SymbolId <= 0 || fi.SymbolId == elem.Id) return;
         var placedBox = new StrongBox<bool>();
-        var placed = BuildPlacedSymbolGeometry(fi.SymbolId, fi.Trf, state, new HashSet<int>(), placedBox: placedBox);
+        var unresolvedNested = new StrongBox<bool>();
+        var placed = BuildPlacedSymbolGeometry(fi.SymbolId, fi.Trf, state, new HashSet<int>(), placedBox: placedBox,
+            unresolvedNested: unresolvedNested);
         if (placed == null)
         {
             if (elem.Geometry != null) elem.Geometry.UnresolvedSymbol = true;
@@ -70,6 +75,7 @@ internal static partial class ElementBuilder
         bool hadOwnFaces = elem.Geometry.Faces.Count > 0;
         AppendGeometry(elem.Geometry, placed);
         if (placedBox.Value) elem.Geometry.PlacedSymbolBox = true;
+        if (unresolvedNested.Value) elem.Geometry.UnresolvedSymbol = true;
         elem.Geometry.Instances ??= new List<GeoInstance>();
         elem.Geometry.Instances.Add(new GeoInstance
         {
@@ -104,8 +110,11 @@ internal static partial class ElementBuilder
             || !state.GrepBlocks.TryGetValue((uint)symbol.SymbolId, out var symbolGrep)
             || !symbolGrep.Faces.Any(face => face.GeometryNode > 0 && face.GInfoFlags is uint flags && (flags & ProductRules.FaceFillFlag) != 0))
             return;
-        var placed = BuildPlacedSymbolGeometry(symbol.SymbolId, transform, state, new HashSet<int>());
+        var unresolvedNested = new StrongBox<bool>();
+        var placed = BuildPlacedSymbolGeometry(symbol.SymbolId, transform, state, new HashSet<int>(),
+            unresolvedNested: unresolvedNested);
         if (placed?.Faces is not { Count: > 0 }) return;
+        placed.UnresolvedSymbol = unresolvedNested.Value;
         placed.ExactMappedInstances = [new GeoInstance { SymbolId = symbol.SymbolId, Transform = (double[])transform.Clone() }];
         // The placed symbol carries the tight box of the instance's decoded geometry; the header
         // outline on Element.BoundingBox is the API envelope.
@@ -214,9 +223,11 @@ internal static partial class ElementBuilder
     ];
 
     /// <param name="placedBox">Set to true when this symbol or a nested one is replaced by its tight box.</param>
+    /// <param name="unresolvedNested">Set to true when a symbol nested in this one, at any depth, placed nothing.</param>
     internal static GeometryData? BuildPlacedSymbolGeometry(
         int symbolId, double[] transform, ParsingState state, HashSet<int> path,
-        int scaledComponentFaceBudget = ScaledComponentFaceBudget, StrongBox<bool>? placedBox = null)
+        int scaledComponentFaceBudget = ScaledComponentFaceBudget, StrongBox<bool>? placedBox = null,
+        StrongBox<bool>? unresolvedNested = null)
     {
         if (symbolId <= 0 || transform.Length < 12 || !path.Add(symbolId)) return null;
         try
@@ -251,8 +262,9 @@ internal static partial class ElementBuilder
             {
                 var childTransform = ComposeTransforms(transform, child.Transform);
                 var placedChild = BuildPlacedSymbolGeometry(
-                    child.SymbolElemId, childTransform, state, path, scaledComponentFaceBudget, placedBox);
+                    child.SymbolElemId, childTransform, state, path, scaledComponentFaceBudget, placedBox, unresolvedNested);
                 if (placedChild != null) AppendGeometry(result, placedChild, child.NodeOrder);
+                else if (unresolvedNested != null) unresolvedNested.Value = true;
             }
 
             if (result.Faces.Count == 0) return null;
