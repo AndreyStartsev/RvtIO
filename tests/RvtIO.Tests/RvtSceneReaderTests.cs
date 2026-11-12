@@ -186,6 +186,20 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void ApproximateParametersAreLeftOut()
+    {
+        var estimate = Bip(BuiltInParameter.ANALYTICAL_THERMAL_MASS, 453330.0);
+        estimate.IsApproximate = true;
+        var info = new RevitFileInfo
+        {
+            Elements = [new Element { Id = Wall, UniqueId = "w", Parameters = [Bip(BuiltInParameter.WALL_USER_HEIGHT_PARAM, 10.5), estimate] }],
+        };
+        var meshes = new MeshSet { Elements = [new ElementMesh { ElementId = Wall, Meshes = [Triangle(0, 0, 0)] }] };
+        var set = Assert.Single(RvtSceneReader.Map(RvtDocument.FromInfo(info), meshes, "m").Document.PropertySets);
+        Assert.Equal("WALL_USER_HEIGHT_PARAM", Assert.Single(set.Properties).Name);
+    }
+
+    [Fact]
     public void MaterialHasItsNameAndColour()
     {
         var material = Assert.Single(Map().Document.Materials);

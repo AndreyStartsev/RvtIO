@@ -22,7 +22,8 @@ namespace RvtIO.Scene;
 /// <para>An element's <c>SourceId</c> is its Revit UniqueId, <c>Category</c> the English name of its built-in category (else the
 /// category the reader gives), <c>TypeName</c> the name of its type element. Its parameters are the property set
 /// <c>revit:instance</c>; the parameters of its type are the property set <c>revit:type</c>, one set shared by every element of
-/// the type. Values are text: the value the file stores, in Revit internal units, written with the invariant culture; the
+/// the type. A parameter whose value the reader only estimates (<see cref="Parameter.IsApproximate"/>) is left out.
+/// Values are text: the value the file stores, in Revit internal units, written with the invariant culture; the
 /// key of a built-in parameter is <c>revit:bip:&lt;id&gt;</c>, other parameters have no key. Levels, typed values and IFC
 /// GlobalIds are not written.</para>
 /// </remarks>
@@ -186,12 +187,14 @@ public static class RvtSceneReader
     private static string CategoryName(Element? element) =>
         element?.CategoryId is int id && ((BuiltInCategory)id).TryGetCategoryName(out string? name) ? name : element?.Category ?? string.Empty;
 
-    /// <summary>Adds the set of the parameters that have a value; null when none has.</summary>
+    /// <summary>Adds the set of the parameters that have a value the file stores; null when none has.</summary>
     private static int? AddPropertySet(SceneDocument scene, string name, string key, IReadOnlyList<Parameter> parameters)
     {
         var properties = new List<SceneProperty>();
         foreach (var parameter in parameters)
         {
+            // An approximate value is the reader's estimate, not a value of the file: the scene never carries a guess.
+            if (parameter.IsApproximate) continue;
             string? text = parameter.Value switch
             {
                 null => null,
