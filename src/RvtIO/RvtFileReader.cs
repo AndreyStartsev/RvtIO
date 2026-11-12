@@ -103,6 +103,7 @@ public partial class RvtFileReader
             ElemRecOwningElementIds = elemRecOwners,
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
+            FramedPartitions = framedStreams,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
@@ -870,6 +871,7 @@ public partial class RvtFileReader
             ElemRecOwningElementIds = elemRecOwners,
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
+            FramedPartitions = framedStreams,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
@@ -2129,6 +2131,45 @@ public partial class RvtFileReader
             if (key.StartsWith("87:m_pCrv.", StringComparison.Ordinal)) target.DoubleFields.TryAdd(key, value);
     }
 
+    /// <summary>Hands <see cref="StairComponentSource.Record"/> the channel-102 records of the project's own block, one root object per
+    /// element in its current copy, instead of every block the stream walk meets: the walk also meets the copies of an id in the documents
+    /// of loaded families and byte runs inside other items, and each one counted as a second root of the element. The location line of a
+    /// wall (<see cref="RecordWallLocationLine"/>) is read from its root record once every root is counted.</summary>
+    internal static void RecordFramedRoots(ParsingState state)
+    {
+        var walls = new List<(byte[] Item, ushort Class, uint Owner)>();
+        foreach (var frame in state.FramedPartitions!)
+        {
+            var starts = new long[frame!.Segments.Count];
+            for (int i = 1; i < starts.Length; i++) starts[i] = starts[i - 1] + frame.Segments[i - 1].Length;
+            foreach (var record in frame.Items)
+            {
+                if (record.Channel != 102 || record.Length < 18 || record.Owner > uint.MaxValue) continue;
+                // the item [owner:4][checksum:4][size:4][class:2 ...][size:4] is the block layout the walk hands over
+                var item = ItemBytes(frame.Segments, starts, record.Offset, record.Length);
+                ushort classId = BitConverter.ToUInt16(item, 12);
+                StairComponentSource.Record(state, item, 0, (uint)(item.Length - 16), classId, (uint)record.Owner);
+                if (classId is 3524 or 361) walls.Add((item, classId, (uint)record.Owner));
+            }
+        }
+        foreach (var (item, classId, owner) in walls) RecordWallLocationLine(state, item, 0, (uint)(item.Length - 16), classId, owner);
+    }
+
+    /// <summary>The <paramref name="length"/> bytes at <paramref name="offset"/> of the concatenated segments (an item can run into the next segment of its chain).</summary>
+    private static byte[] ItemBytes(IReadOnlyList<byte[]> segments, long[] starts, long offset, int length)
+    {
+        var item = new byte[length];
+        int s = Array.BinarySearch(starts, offset);
+        if (s < 0) s = ~s - 1;
+        for (int done = 0; done < length; s++)
+        {
+            int from = (int)(offset + done - starts[s]), n = Math.Min(length - done, segments[s].Length - from);
+            Buffer.BlockCopy(segments[s], from, item, done, n);
+            done += n;
+        }
+        return item;
+    }
+
     /// <summary>Continuous-stream anchored block walk (see TfStreamWalker): native param
     /// stores + full-coverage re-run of block-driven signals (curve owners, node owners,
     /// registry categories, sketch/detail curves).</summary>
@@ -2143,6 +2184,9 @@ public partial class RvtFileReader
             foreach (var part in dumpGrepEnv.Split(','))
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
         var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
+        // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
+        bool framedRoots = state.WideSchema == null && state.FramedPartitions is { Count: > 0 } framed && framed.All(f => f is { IdWidth: 4 });
+        if (framedRoots) RecordFramedRoots(state);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
         {
             uint fullClassIdx = BitConverter.ToUInt32(seg, bs + 12);
@@ -2170,14 +2214,14 @@ public partial class RvtFileReader
                 }
             }
             if (!state.ElemClassIdx.ContainsKey(eid)) state.ElemClassIdx[eid] = cls;
-            StairComponentSource.Record(state, seg, bs, (uint)ds, cls, eid);
+            if (!framedRoots) StairComponentSource.Record(state, seg, bs, (uint)ds, cls, eid);
             if (cls is 485 or 492)
             {
                 var prior = state.RailingQuantityInputs.GetValueOrDefault(eid);
                 state.RailingQuantityInputs[eid] = (prior.BlockCount + 1,
                     TfBlockDeserializer.ExtractOwnRailingQuantityInput(seg, bs, (uint)ds, cls));
             }
-            RecordWallLocationLine(state, seg, bs, (uint)ds, cls, eid);
+            if (!framedRoots) RecordWallLocationLine(state, seg, bs, (uint)ds, cls, eid);
             RecordCurtainPanelOrder(state, seg, bs, (uint)ds, cls, eid);
             if (TfBlockDeserializer.IsSubclassOf(cls, 1794))
                 RecordCurtainFamilyHost(state, seg, bs, ds, cls, eid);
