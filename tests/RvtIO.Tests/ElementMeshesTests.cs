@@ -192,6 +192,43 @@ public class ElementMeshesTests
         Assert.Equal(0.5 + 4.5, Area(ElementMeshes.Triangulate([taken, untaken, unnumbered], _ => 0).Meshes), 12);
         // Without a taken node the untaken one is all the element has.
         Assert.Equal(2, Area(ElementMeshes.Triangulate([untaken], _ => 0).Meshes), 12);
+        // Beside a ghost node (exported, with no polygon here) the IFC export keeps the untaken nodes too.
+        Assert.Equal(0.5 + 2 + 4.5, Area(ElementMeshes.Triangulate([taken, untaken, unnumbered], _ => 0, hasGhostNodes: true).Meshes), 12);
+    }
+
+    [Fact]
+    public void ElementWithGhostNodes_KeepsItsUntakenNodesAndIsPartial()
+    {
+        var geometry = new GeometryData
+        {
+            Faces = [Face([[0, 0, 0], [1, 0, 0], [1, 1, 0]], [0, 0, 1], node: 1), Face([[0, 0, 5], [2, 0, 5], [2, 2, 5]], [0, 0, 1], node: -2)],
+            GhostNodes = [(3, 0, 0)],
+        };
+
+        var element = Assert.Single(ElementMeshes.Extract(Document(Product(1, geometry))).Elements);
+
+        Assert.Equal(0.5 + 2, Area(element.Meshes), 12);
+        Assert.Equal(MeshCoverage.Partial, element.Coverage);
+    }
+
+    [Fact]
+    public void SymbolPlacedInAnElementWithGhostNodes_IsNotShared()
+    {
+        // The symbol alone drops its untaken node; the element, which has a ghost node, keeps it.
+        List<GeoFace> faces = [Face([[0, 0, 0], [1, 0, 0], [1, 1, 0]], [0, 0, 1], node: 1), Face([[0, 0, 5], [2, 0, 5], [2, 2, 5]], [0, 0, 1], node: -2)];
+        var geometry = new GeometryData
+        {
+            Faces = faces,
+            ExactMappedInstances = [new GeoInstance { SymbolId = 5, Transform = Identity }],
+            GhostNodes = [(3, 0, 0)],
+        };
+        var symbol = new Element { Id = 5, Geometry = new GeometryData { Faces = faces } };
+
+        var element = Assert.Single(ElementMeshes.Extract(Document(Product(1, geometry), symbol)).Elements);
+
+        Assert.Empty(element.Placements);
+        Assert.Equal(0.5 + 2, Area(element.Meshes), 12);
+        Assert.Equal(MeshCoverage.Partial, element.Coverage);
     }
 
     // ---- materials ----

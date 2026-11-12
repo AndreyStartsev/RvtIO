@@ -18,9 +18,13 @@ namespace RvtIO.Meshes;
 /// of a generic category excepted), and not a void helper whose faces are all unfilled. An element whose geometry is exactly
 /// other drawable elements placed (a stair of its runs and landings, a model group of its members) is left out, as those
 /// elements are listed themselves; a placement of a drawable element is likewise left out of an element's placements. A
-/// drawable element is listed when it has a geometry record, or, in a document whose geometry was not decoded, a bounding box.</para>
+/// drawable element is listed when it has a geometry record, or, in a document whose geometry was not decoded, a bounding box.
+/// Other product rules of the IFC export are not applied, so the meshes can include elements that the IFC leaves out: the
+/// "export to IFC" flag, topography, walls that are not visible, curtain panels that are walls, family instances whose level is
+/// not a project level, curtain children without bounds, openings of hidden walls, and the rebar rules.</para>
 /// <para>Faces of Geometry nodes that Revit does not take (another detail level) are left out when the element has faces of
-/// nodes it takes. Planar faces with holes are triangulated in their plane; curved surfaces are the dense polygons the reader
+/// nodes it takes and no ghost node (a node Revit exports that has no decoded polygon, which also makes the element
+/// <see cref="MeshCoverage.Partial"/>). Planar faces with holes are triangulated in their plane; curved surfaces are the dense polygons the reader
 /// decoded for them. Every triangle is counter-clockwise around the normal of its face.</para>
 /// <para>The material of a face is its own material, else the material of the symbol face it was placed from, else the material
 /// of the graphics style of its Geometry node, else none (0). Only elements of the Materials category count as materials.</para>
@@ -63,23 +67,25 @@ public static class ElementMeshes
             // symbols were placed whole.
             if (document.GetElement(symbolId)?.Geometry is { PlacedSymbolClipped: false, PlacedSymbolBox: false } geometry)
             {
-                var (meshes, failed) = Triangulate(geometry.Faces, MaterialOf);
+                bool ghosts = geometry.GhostNodes is { Count: > 0 };
+                var (meshes, failed) = Triangulate(geometry.Faces, MaterialOf, ghosts);
                 if (meshes.Count > 0)
-                    symbol = new SymbolMeshes(meshes, failed, geometry.Faces.Any(face => face.GeometryNode > 0),
-                        geometry.Faces.Any(face => face.GeometryNode < 0));
+                    symbol = new SymbolMeshes(meshes, failed, DropsUntakenNodes(geometry.Faces, ghosts),
+                        geometry.Faces.Any(face => face.GeometryNode < 0), ghosts);
             }
             symbolCache[symbolId] = symbol;
             return symbol;
         }
 
         // The placements of an element whose geometry is exactly its symbols placed, or null.
-        (List<SymbolPlacement> Placements, int Failed)? PlacementsOf(GeometryData geometry)
+        (List<SymbolPlacement> Placements, int Failed, bool Ghosts)? PlacementsOf(GeometryData geometry)
         {
             if (geometry.ExactMappedInstances is not { Count: > 0 } mapped || geometry.PlacedSymbolClipped || geometry.PlacedSymbolBox)
                 return null;
-            bool visibleNodes = geometry.Faces.Any(face => face.GeometryNode > 0);
+            bool dropsUntaken = DropsUntakenNodes(geometry.Faces, geometry.GhostNodes is { Count: > 0 });
             var placements = new List<SymbolPlacement>(mapped.Count);
             int failed = 0;
+            bool ghosts = false;
             foreach (var instance in mapped)
             {
                 if (drawableIds.Contains(instance.SymbolId)) continue;   // drawn as an element of its own
@@ -87,12 +93,13 @@ public static class ElementMeshes
                 var transform = MeshTransform.FromRowMajor(instance.Transform);
                 if (Math.Abs(Math.Abs(transform.Determinant) - 1) > RigidTolerance) return null;
                 if (SymbolOf(instance.SymbolId) is not { } symbol) return null;
-                // The hidden nodes of the symbol are dropped in the element but not in the symbol alone.
-                if (visibleNodes && !symbol.HasVisibleNode && symbol.HasHiddenNode) return null;
+                // The hidden nodes of the symbol must be dropped in the element exactly when they are in the symbol alone.
+                if (symbol.HasHiddenNode && symbol.DropsUntakenNodes != dropsUntaken) return null;
                 placements.Add(new SymbolPlacement(instance.SymbolId, transform));
                 failed += symbol.Failed;
+                ghosts |= symbol.HasGhostNodes;
             }
-            return placements.Count > 0 ? (placements, failed) : null;
+            return placements.Count > 0 ? (placements, failed, ghosts) : null;
         }
 
         var elements = new List<ElementMesh>();
@@ -103,7 +110,7 @@ public static class ElementMeshes
                 elements.Add(new ElementMesh { ElementId = element.Id, Coverage = MeshCoverage.Undecoded });
                 continue;
             }
-            if (options.UseSymbolPlacements && ReferenceEquals(body, element.Geometry) && PlacementsOf(body) is var (placements, failedInSymbols))
+            if (options.UseSymbolPlacements && ReferenceEquals(body, element.Geometry) && PlacementsOf(body) is var (placements, failedInSymbols, symbolGhosts))
             {
                 foreach (var placement in placements)
                     placedSymbols.TryAdd(placement.SymbolId, symbolCache[placement.SymbolId]!.Meshes);
@@ -111,30 +118,37 @@ public static class ElementMeshes
                 {
                     ElementId = element.Id,
                     Placements = placements,
-                    Coverage = CoverageOf(true, body, failedInSymbols),
+                    Coverage = CoverageOf(true, body, failedInSymbols, symbolGhosts),
                     UntriangulatedFaces = failedInSymbols,
                 });
                 continue;
             }
-            var (meshes, failed) = Triangulate(body.Faces, MaterialOf);
+            var (meshes, failed) = Triangulate(body.Faces, MaterialOf, body.GhostNodes is { Count: > 0 });
             elements.Add(new ElementMesh
             {
                 ElementId = element.Id,
                 Meshes = meshes,
-                Coverage = CoverageOf(meshes.Count > 0, body, failed),
+                Coverage = CoverageOf(meshes.Count > 0, body, failed, false),
                 UntriangulatedFaces = failed,
             });
         }
         return new MeshSet { Elements = elements, Symbols = placedSymbols, GeometryUndecoded = info.WideLayoutNotRewritten };
     }
 
-    private static MeshCoverage CoverageOf(bool drawn, GeometryData geometry, int failed) =>
+    // A ghost node is a Geometry node Revit exports that has no polygon here (display surfaces, or a duplicate of another node).
+    private static MeshCoverage CoverageOf(bool drawn, GeometryData geometry, int failed, bool symbolGhosts) =>
         !drawn ? MeshCoverage.NoGeometry
         : geometry.PlacedSymbolBox ? MeshCoverage.BoxSubstitute
-        : failed > 0 || geometry.UnresolvedSymbol ? MeshCoverage.Partial
+        : failed > 0 || geometry.UnresolvedSymbol || symbolGhosts || geometry.GhostNodes is { Count: > 0 } ? MeshCoverage.Partial
         : MeshCoverage.Complete;
 
-    private sealed record SymbolMeshes(IReadOnlyList<TriangleMesh> Meshes, int Failed, bool HasVisibleNode, bool HasHiddenNode);
+    private sealed record SymbolMeshes(IReadOnlyList<TriangleMesh> Meshes, int Failed, bool DropsUntakenNodes, bool HasHiddenNode,
+        bool HasGhostNodes);
+
+    /// <summary>Whether the faces of untaken Geometry nodes are left out: when a face of a taken node is there and the geometry has
+    /// no ghost node, the rule of the IFC export of the current profile.</summary>
+    private static bool DropsUntakenNodes(IReadOnlyList<GeoFace> faces, bool hasGhostNodes) =>
+        !hasGhostNodes && faces.Any(face => face.GeometryNode > 0);
 
     /// <summary>The drawable elements (see <see cref="ElementMeshes"/>) in document order, each with the geometry that is its body:
     /// the geometry of its computed symbol for a void helper that has one, its own geometry otherwise (null in a document whose
@@ -172,10 +186,11 @@ public static class ElementMeshes
 
     /// <summary>The triangles of <paramref name="faces"/>, one mesh per material in the order the materials first appear, and the
     /// number of faces that could not be triangulated. The faces of untaken Geometry nodes (a negative node id) are left out when
-    /// a face of a taken node is there.</summary>
-    internal static (List<TriangleMesh> Meshes, int Failed) Triangulate(IReadOnlyList<GeoFace> faces, Func<GeoFace, int> materialOf)
+    /// a face of a taken node is there, unless the geometry has ghost nodes (<paramref name="hasGhostNodes"/>).</summary>
+    internal static (List<TriangleMesh> Meshes, int Failed) Triangulate(IReadOnlyList<GeoFace> faces, Func<GeoFace, int> materialOf,
+        bool hasGhostNodes = false)
     {
-        bool dropUntakenNodes = faces.Any(face => face.GeometryNode > 0);
+        bool dropUntakenNodes = DropsUntakenNodes(faces, hasGhostNodes);
         var builders = new List<MeshBuilder>();
         var builderOfMaterial = new Dictionary<int, MeshBuilder>();
         int failed = 0;

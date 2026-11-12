@@ -43,7 +43,8 @@ public enum MeshCoverage
     /// <summary>Every decoded face is triangulated.</summary>
     Complete,
 
-    /// <summary>Some faces could not be triangulated, or a symbol the element places has no geometry.</summary>
+    /// <summary>Some faces could not be triangulated, a symbol the element places has no geometry, or a Geometry node that Revit
+    /// exports has no decoded polygon (display surfaces, or a duplicate of another node), so it may be missing.</summary>
     Partial,
 
     /// <summary>A symbol placed at a rescaled placement was replaced by its bounding box.</summary>
@@ -79,6 +80,9 @@ public sealed class TriangleMesh
 public readonly record struct SymbolPlacement(int SymbolId, MeshTransform Transform);
 
 /// <summary>A point or a direction in feet.</summary>
+/// <param name="X">The X coordinate, in feet.</param>
+/// <param name="Y">The Y coordinate, in feet.</param>
+/// <param name="Z">The Z coordinate (up), in feet.</param>
 public readonly record struct MeshVector(double X, double Y, double Z);
 
 /// <summary>
@@ -90,6 +94,10 @@ public readonly record struct MeshVector(double X, double Y, double Z);
 /// <remarks>A <see cref="Model.GeoInstance.Transform"/> <c>t</c> holds the 3x3 matrix row by row and then the translation, so the
 /// basis vectors are its columns: BasisX = (t[0], t[3], t[6]), BasisY = (t[1], t[4], t[7]), BasisZ = (t[2], t[5], t[8]) and
 /// Origin = (t[9], t[10], t[11]) (see <see cref="FromRowMajor"/>).</remarks>
+/// <param name="Origin">The image of the family origin, in feet: (t[9], t[10], t[11]).</param>
+/// <param name="BasisX">The image of the family X axis: the column (t[0], t[3], t[6]).</param>
+/// <param name="BasisY">The image of the family Y axis: the column (t[1], t[4], t[7]).</param>
+/// <param name="BasisZ">The image of the family Z axis: the column (t[2], t[5], t[8]).</param>
 public readonly record struct MeshTransform(MeshVector Origin, MeshVector BasisX, MeshVector BasisY, MeshVector BasisZ)
 {
     /// <summary>The transform of the 12 values of a <see cref="Model.GeoInstance.Transform"/>.</summary>
