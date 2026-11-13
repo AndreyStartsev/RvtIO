@@ -64544,14 +64544,26 @@ public partial class IfcExporter
             ResolveExactWallStructuralUsageParameter(elem);
         if (currentProfile)
         {
-            // Revit's exporter: load bearing when the Structural box is set and the usage is Bearing (1). Rule and its
-            // measurement on Revit 2024 files: rvt-rs RE-429 (Apache-2.0); held here against Revit 2022 IFC2X3 exports.
+            // Revit's exporter: a parameter named for the property wins (the set-qualified name first); otherwise load
+            // bearing when the Structural box is set and the usage is Bearing (1). Rule and its measurement on Revit
+            // 2024 files: rvt-rs RE-429 (Apache-2.0); held here against Revit 2022 IFC2X3 exports.
+            ExactIsExternalParameterResult named = ResolveExactNamedIntParameter(elem, "Pset_WallCommon.LoadBearing");
+            if (named.State == ExactIsExternalParameterState.Absent)
+                named = ResolveExactNamedIntParameter(elem, "LoadBearing");
             ExactIsExternalParameterResult structural =
                 ResolveExactWallStructuralUsageParameter(elem, WallStructuralSignificantParamId);
-            if (structural.State == ExactIsExternalParameterState.Value
-                && loadBearing.State == ExactIsExternalParameterState.Value)
+            bool? value = named.State switch
+            {
+                ExactIsExternalParameterState.Value => named.Value != 0,
+                ExactIsExternalParameterState.Blocked => null,
+                _ => structural.State == ExactIsExternalParameterState.Value
+                    && loadBearing.State == ExactIsExternalParameterState.Value
+                        ? structural.Value == 1 && loadBearing.Value == 1
+                        : null,
+            };
+            if (value is bool isLoadBearing)
                 valueIds.Add(GetOrAddPropertySingleValue(w, valuePool, "LoadBearing",
-                    structural.Value == 1 && loadBearing.Value == 1 ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
+                    isLoadBearing ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
         }
         else if (loadBearing.State == ExactIsExternalParameterState.Value)
         {

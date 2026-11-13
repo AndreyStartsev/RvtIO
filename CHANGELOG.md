@@ -16,7 +16,7 @@ API between minor releases.
 
 ### Fixed
 
-- IFC export, current profile: `Pset_WallCommon.LoadBearing` is true only when the wall's Structural box (`WALL_STRUCTURAL_SIGNIFICANT`) is set and its Structural Usage is Bearing, false otherwise, and left out when either value is not read exactly; it was true on every wall. It now equals Revit's value on all 146 walls of Autodesk's `rac_advanced_sample_project` (the Revit 2020 sample against Revit 2021's public IFC2X3 export of it; none before) and on 55 of 55 walls of two Revit 2022 models with Revit's IFC2X3 exports (18 before). The rule follows rvt-rs RE-429.
+- IFC export, current profile: `Pset_WallCommon.LoadBearing` takes the value of a wall parameter named `Pset_WallCommon.LoadBearing` or `LoadBearing` where there is one; otherwise it is true only when the wall's Structural box (`WALL_STRUCTURAL_SIGNIFICANT`) is set and its Structural Usage is Bearing, false otherwise, and left out when either value is not read exactly. It was true on every wall. It now equals Revit's value on all 146 walls of Autodesk's `rac_advanced_sample_project` (the Revit 2020 sample against Revit 2021's public IFC2X3 export of it; none before) and on 55 of 55 walls of two Revit 2022 models with Revit's IFC2X3 exports (18 before). The rule follows rvt-rs RE-429.
 - Geometry meshing: scales the pole Jacobian degeneracy threshold in `RevolvedMesher.NormalAt` by the profile tangent magnitude so 1-ULP trigonometric differences at sphere poles fall through to the pole limit normal on Linux and macOS as on Windows instead of leaving duplicate pole vertices unmerged. (Refs #39)
 
 ## [0.4.0] - 2026-11-13

@@ -184,6 +184,37 @@ public class IfcExporterCurrentInstancePropertySetTests
     }
 
     [Theory]
+    [InlineData("LoadBearing", 1, 0, 0, "IFCBOOLEAN(.T.)")]
+    [InlineData("LoadBearing", 1, 0, null, "IFCBOOLEAN(.T.)")]
+    [InlineData("LoadBearing", 0, 1, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData("Pset_WallCommon.LoadBearing", 1, 0, 0, "IFCBOOLEAN(.T.)")]
+    [InlineData("Pset_WallCommon.LoadBearing", 0, 1, 1, "IFCBOOLEAN(.F.)")]
+    public void WallLoadBearing_InCurrentANamedParameterWinsOverTheStructuralFlags(
+        string name, int named, int structuralUsage, int? structuralBox, string expected)
+    {
+        var wall = Wall(110, structuralUsage);
+        if (structuralBox is int box)
+            wall.Parameters.Add(new Parameter { Id = -1001596, Definition = new Definition { Id = -1001596, Name = "WALL_STRUCTURAL_SIGNIFICANT" },
+                StorageType = StorageType.Integer, Value = box });
+        wall.Parameters.Add(new Parameter { Id = 900001, Definition = new Definition { Id = 900001, Name = name },
+            StorageType = StorageType.Integer, Value = named });
+        var sets = SetsOf(Export(IfcProfile.Current, Level(), wall), "IFCWALLSTANDARDCASE");
+        Assert.Equal(expected, sets.Single(set => set.Name == "Pset_WallCommon").Properties["LoadBearing"]);
+    }
+
+    [Fact]
+    public void WallLoadBearing_InCurrentTheSetQualifiedNameWinsOverThePlainName()
+    {
+        var wall = Wall(110, 1);
+        wall.Parameters.Add(new Parameter { Id = 900001, Definition = new Definition { Id = 900001, Name = "LoadBearing" },
+            StorageType = StorageType.Integer, Value = 1 });
+        wall.Parameters.Add(new Parameter { Id = 900002, Definition = new Definition { Id = 900002, Name = "Pset_WallCommon.LoadBearing" },
+            StorageType = StorageType.Integer, Value = 0 });
+        var sets = SetsOf(Export(IfcProfile.Current, Level(), wall), "IFCWALLSTANDARDCASE");
+        Assert.Equal("IFCBOOLEAN(.F.)", sets.Single(set => set.Name == "Pset_WallCommon").Properties["LoadBearing"]);
+    }
+
+    [Theory]
     [InlineData(IfcProfile.Current, false)]
     [InlineData(IfcProfile.Legacy, true)]
     public void Column_ReceivesBarPitchOfColumnOnlyInLegacy(IfcProfile version, bool expected)
