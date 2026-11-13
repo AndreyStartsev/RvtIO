@@ -390,7 +390,62 @@ public class IfcExporterMemberPlateCommonPropertySetTests
     }
 
     [Fact]
-    public void CurrentMullion_GetsNeitherLoadBearingNorSpan()
+    public void CurrentMullion_GetsTheExactSpanAsInLegacy()
+    {
+        // Revit's IFC2X3 exports of rac_advanced (Revit 2021) and of a Revit 2022 model write Span on every mullion.
+        var mullion = LinearElement(
+            id: 300, typeId: 301, name: "Mullion_50x100", categoryId: MullionCategoryId,
+            category: "OST_CurtainWallMullions", centreX: 0, curveElemLengthFt: 10.0);
+        var info = new RevitFileInfo();
+        info.Elements.Add(mullion);
+        string path = TempIfcPath("member-current-span");
+        try
+        {
+            new IfcExporter { Profile = IfcProfile.Current }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            var (_, valueIds) = SolePsetOfName(ifc, "Pset_MemberCommon");
+            var props = ResolveProperties(ifc, valueIds);
+            var spanMatch = Regex.Match(props["Span"], @"^IFCPOSITIVELENGTHMEASURE\(([^)]+)\)$");
+            Assert.True(spanMatch.Success, $"unexpected Span literal: {props["Span"]}");
+            Assert.Equal(10.0 * 304.8, double.Parse(spanMatch.Groups[1].Value, CultureInfo.InvariantCulture), precision: 6);
+        }
+        finally { Cleanup(path); }
+    }
+
+    [Theory]
+    [InlineData(IfcProfile.Current, false)]
+    [InlineData(IfcProfile.Current, true)]
+    [InlineData(IfcProfile.Legacy, false)]
+    [InlineData(IfcProfile.Legacy, true)]
+    public void Mullion_SetQualifiedSpanWinsOverThePropertyNameAndTheLength(IfcProfile profile, bool withPlainSpan)
+    {
+        var mullion = LinearElement(
+            id: 300, typeId: 301, name: "Mullion_50x100", categoryId: MullionCategoryId,
+            category: "OST_CurtainWallMullions", centreX: 0, curveElemLengthFt: 10.0);
+        Parameter Named(int id, string name, double feet) => new()
+        {
+            Id = id, Definition = new Definition { Id = id, Name = name },
+            StorageType = StorageType.Double, Value = feet, SpecType = "autodesk.spec.aec:length-2.0.0",
+        };
+        mullion.Parameters.Add(Named(9002, "Pset_MemberCommon.Span", 4.0));
+        if (withPlainSpan) mullion.Parameters.Add(Named(9001, "Span", 6.0));
+        var info = new RevitFileInfo();
+        info.Elements.Add(mullion);
+        string path = TempIfcPath($"member-qualified-span-{profile}-{withPlainSpan}");
+        try
+        {
+            new IfcExporter { Profile = profile }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            var (_, valueIds) = SolePsetOfName(ifc, "Pset_MemberCommon");
+            var spanMatch = Regex.Match(ResolveProperties(ifc, valueIds)["Span"], @"^IFCPOSITIVELENGTHMEASURE\(([^)]+)\)$");
+            Assert.True(spanMatch.Success);
+            Assert.Equal(4.0 * 304.8, double.Parse(spanMatch.Groups[1].Value, CultureInfo.InvariantCulture), precision: 6);
+        }
+        finally { Cleanup(path); }
+    }
+
+    [Fact]
+    public void CurrentMullion_WithoutALengthSource_GetsNeitherLoadBearingNorSpan()
     {
         var props = BraceProperties(
             IfcProfile.Current, structuralType: 2, driveLengthFt: 10.0, out string ifc,

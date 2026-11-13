@@ -66128,7 +66128,7 @@ public partial class IfcExporter
             && ResolveBeamSpanMillimetresCurrent(elem, elementsById.GetValueOrDefault(elem.FamilyTypeId), driveCurveFirst: true) is double braceSpan)
             valueIds.Add(GetOrAddPropertySingleValue(
                 w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(braceSpan)})"));
-        if (elem.CategoryId == CurtainWallMullionCategoryId && !CurrentProfile)
+        if (elem.CategoryId == CurtainWallMullionCategoryId)
         {
             Element? elementType = elem.FamilyTypeId > 0
                 && elementsById.TryGetValue(
@@ -66168,8 +66168,12 @@ public partial class IfcExporter
         if (element.CategoryId != CurtainWallMullionCategoryId)
             return false;
 
+        // As in Revit's exporter, the set-qualified name wins over the property name.
         List<Parameter> instanceSpanCandidates = element.Parameters.Where(
-            parameter => ParameterNameEquals(parameter, "Span")).ToList();
+            parameter => ParameterNameEquals(parameter, "Pset_MemberCommon.Span")).ToList();
+        if (instanceSpanCandidates.Count == 0)
+            instanceSpanCandidates = element.Parameters.Where(
+                parameter => ParameterNameEquals(parameter, "Span")).ToList();
         ExactSpanParameterResult instanceSpan = ResolveExactSpanParameter(
             instanceSpanCandidates);
         if (instanceSpan.State == ExactSpanParameterState.Blocked)
