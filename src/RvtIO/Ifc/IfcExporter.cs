@@ -64492,12 +64492,13 @@ public partial class IfcExporter
 
 
     private const int WallStructuralUsageParamId = -1001119;
+    private const int WallStructuralSignificantParamId = -1001596;
 
     private static ExactIsExternalParameterResult ResolveExactWallStructuralUsageParameter(
-        Element element)
+        Element element, int parameterId = WallStructuralUsageParamId)
     {
         List<Parameter> matches = element.Parameters
-            .Where(parameter => parameter.Definition?.Id == WallStructuralUsageParamId)
+            .Where(parameter => parameter.Definition?.Id == parameterId)
             .ToList();
         if (matches.Count == 0)
             return new(ExactIsExternalParameterState.Absent);
@@ -64543,7 +64544,14 @@ public partial class IfcExporter
             ResolveExactWallStructuralUsageParameter(elem);
         if (currentProfile)
         {
-            valueIds.Add(GetOrAddPropertySingleValue(w, valuePool, "LoadBearing", "IFCBOOLEAN(.T.)"));
+            // Revit's exporter: load bearing when the Structural box is set and the usage is Bearing (1). Rule and its
+            // measurement on Revit 2024 files: rvt-rs RE-429 (Apache-2.0); held here against Revit 2022 IFC2X3 exports.
+            ExactIsExternalParameterResult structural =
+                ResolveExactWallStructuralUsageParameter(elem, WallStructuralSignificantParamId);
+            if (structural.State == ExactIsExternalParameterState.Value
+                && loadBearing.State == ExactIsExternalParameterState.Value)
+                valueIds.Add(GetOrAddPropertySingleValue(w, valuePool, "LoadBearing",
+                    structural.Value == 1 && loadBearing.Value == 1 ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
         }
         else if (loadBearing.State == ExactIsExternalParameterState.Value)
         {
