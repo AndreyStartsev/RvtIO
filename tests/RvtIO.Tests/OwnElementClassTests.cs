@@ -119,6 +119,80 @@ public class OwnElementClassTests
         Assert.Equal(new StairComponentSource.ElementClassRoot(2, null), walked.OwnedElementClassRoots[123]);
     }
 
+    [Fact]
+    public void TheBlockParser_ReadsTheRecordsOfTheProjectBlock_EvenAcrossSegments_AndNotTheBlocksOfAFamilyDocument()
+    {
+        // the project's record of element 123 runs into the next segment; behind it a block of element 456 in the document of a loaded
+        // family, which the framing does not list as a record of the project
+        byte[] record = Frame(3708), family = Frame(157);
+        BitConverter.GetBytes(456u).CopyTo(family, 0);
+        byte[] stream = [.. record, .. family];
+        var state = new ParsingState
+        {
+            FramedPartitions = [new PartitionFraming.Framed([stream[..10], stream[10..]], [new(102, 123, 0, record.Length)], 4)],
+        };
+
+        RvtFileReader.ParseFramedBlocks(state, collectBlockOnlyIds: true, []);
+
+        Assert.Equal(1, state.BlockClassInventory[3708].Count);
+        Assert.False(state.BlockClassInventory.ContainsKey(157));
+        Assert.Equal([123u], state.BlockOnlyIds);
+    }
+
+    [Fact]
+    public void ParseBlocks_OfAFileReadByItsFraming_TakesThePartitionRecords_AndScansOnlyTheOtherChunks()
+    {
+        // the partition chunk holds the project's record of element 123 and behind it a block of element 456 in the document of a loaded
+        // family; the chunk of Global, which has no framing, holds a block of element 789
+        byte[] record = Frame(3708), family = Frame(157), global = Frame(2000);
+        BitConverter.GetBytes(456u).CopyTo(family, 0);
+        BitConverter.GetBytes(789u).CopyTo(global, 0);
+        byte[] partition = [.. record, .. family];
+        var state = new ParsingState
+        {
+            AllKnownIds = [123, 789],
+            Chunks = [partition, global],
+            RecordChunks = [partition],
+            NonRecordChunks = [global],
+            PartitionChunkCount = 1,
+            FramedPartitions = [new PartitionFraming.Framed([partition], [new(102, 123, 0, record.Length)], 4)],
+        };
+
+        RvtFileReader.ParseBlocks(state, null);
+
+        Assert.Equal(1, state.BlockClassInventory[3708].Count);
+        Assert.False(state.BlockClassInventory.ContainsKey(157));
+        Assert.Equal(1, state.BlockClassInventory[2000].Count);
+    }
+
+    [Fact]
+    public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded()
+    {
+        byte[] crossing = Frame(0x07D7), whole = Frame(0x07D7);
+        BitConverter.GetBytes(456u).CopyTo(whole, 0);
+        // [owner][checksum][size][class][data][size] with data over the limit of the scan
+        uint size = BlockParser.MaxBlockSize + 4;
+        byte[] large = new byte[16 + size];
+        BitConverter.GetBytes(789u).CopyTo(large, 0);
+        BitConverter.GetBytes(size).CopyTo(large, 8);
+        BitConverter.GetBytes((ushort)0x07D7).CopyTo(large, 12);
+        BitConverter.GetBytes(size).CopyTo(large, 16 + (int)size - 4);
+        byte[] stream = [.. crossing, .. whole, .. large];
+        var state = new ParsingState
+        {
+            AllKnownIds = [123, 456, 789],
+            FramedPartitions = [new PartitionFraming.Framed([stream[..10], stream[10..]],
+                [new(103, 123, 0, crossing.Length), new(103, 456, crossing.Length, whole.Length),
+                 new(103, 789, crossing.Length + whole.Length, large.Length)], 4)],
+        };
+        var pending = new List<BlockParser.PendingGRep>();
+
+        RvtFileReader.ParseFramedBlocks(state, collectBlockOnlyIds: true, pending);
+
+        Assert.Equal(3, state.BlockClassInventory[0x07D7].Count);
+        Assert.Equal([456u], pending.Select(p => p.Eid));
+    }
+
     // TESTFILE.rvt is saved in five increments; reading it with and without the removal of the superseded copies changes the records around
     // the elements that one partition holds, but not their roots.
     [SkippableFact]

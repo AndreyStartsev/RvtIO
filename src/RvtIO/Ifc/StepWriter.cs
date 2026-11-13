@@ -94,9 +94,9 @@ internal class StepWriter
 
     /// <summary>Write complete IFC STEP file to stream.</summary>
     public void WriteTo(TextWriter w, string fileName, string schema, string description, string application,
-        string organization = "")
+        string organization = "", DateTimeOffset? timestamp = null)
     {
-        var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+        var now = (timestamp?.UtcDateTime ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
 
         w.WriteLine("ISO-10303-21;");
         w.WriteLine("HEADER;");

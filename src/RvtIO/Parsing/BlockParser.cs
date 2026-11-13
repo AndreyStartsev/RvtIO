@@ -35,6 +35,10 @@ internal static class BlockParser
         }
     }
 
+    /// <summary>The largest block data the scan of a chunk reads (a larger block is not parsed); the geometry of a framed record over it is not
+    /// decoded.</summary>
+    internal const uint MaxBlockSize = 1_000_000;
+
     public static bool ParseChunk(byte[] chunk, ParsingState state, bool collectBlockOnlyIds = false,
         List<PendingGRep>? deferred = null)
     {
@@ -78,7 +82,7 @@ internal static class BlockParser
             uint dataSize = BitConverter.ToUInt32(chunk, pos + 8);
 
             // Skip blocks with implausible dataSize (check before bounds to avoid int overflow)
-            if (dataSize > 1_000_000) { pos++; continue; }
+            if (dataSize > MaxBlockSize) { pos++; continue; }
             // Skip zero-elemId entries (padding/terminators) in 4-byte strides
             if (eid == 0) { pos += 4; continue; }
             if (dataSize == 0) { pos++; continue; }
@@ -98,265 +102,274 @@ internal static class BlockParser
             if (!knownOwner && !hasSizeFooter) { pos++; continue; }
 
             blockCount++;
-            int dataStart = pos + 16;
-            int dataEnd = dataStart + (int)dataSize;
-            uint classIdx = BitConverter.ToUInt32(chunk, pos + 12);
-
-            if (!knownOwner)
-            {
-                if (collectBlockOnlyIds)
-                    state.BlockOnlyIds.Add(eid);
-            }
-
-            // Collect block classIdx inventory (low 16 bits = class type, high 16 varies per block)
-            uint classKey = classIdx & 0xFFFF;
-            // classKey=0 is never a valid class - these are false positives from scanner misalignment
-            if (classKey == 0) { pos++; continue; }
-            if (ElementIdEncoding.IsSupported(eid))
-            {
-                if (!state.BlockClassInventory.TryGetValue(classKey, out var bcs))
-                    state.BlockClassInventory[classKey] = bcs = new BlockClassStats();
-                bcs.Count++;
-                bcs.TotalBytes += dataSize;
-                if (dataSize < bcs.MinSize) bcs.MinSize = (int)dataSize;
-                if (dataSize > bcs.MaxSize) bcs.MaxSize = (int)dataSize;
-                if (bcs.SampleElemIds.Count < 5) bcs.SampleElemIds.Add(eid);
-                if (bcs.SampleData == null)
-                {
-                    int sampleLen = Math.Min(32, (int)dataSize);
-                    bcs.SampleData = new byte[sampleLen];
-                    Array.Copy(chunk, dataStart, bcs.SampleData, 0, sampleLen);
-                }
-                if (state.ElemTable.TryGetValue(eid, out uint typeId) && typeId != 0)
-                {
-                    bcs.TypeIdCounts.TryGetValue(typeId, out int tc);
-                    bcs.TypeIdCounts[typeId] = tc + 1;
-                }
-            }
-
-            // Assign the category from the Tf classIdx mapping (if the element has none yet):
-            // first the id registry, then the R22 def table (id -> class name)
-            // joined with the name -> category map.
-            ushort tfClassId = (ushort)(classIdx & 0xFFFF);
-            if (tfClassId > 0 && state.Records.TryGetValue(eid, out var recForCat) && !recForCat.CategoryId.HasValue)
-            {
-                if (TfClassRegistry.R22TfClassIdToCategory.TryGetValue(tfClassId, out int catId))
-                    recForCat.CategoryId = catId;
-                // NOTE: an automatic fallback via R22ClassDefs.Names -> NameToCategory is not used:
-                // early categorization changes downstream pass behavior and needs per-row validation first.
-            }
-
-            if (tfClassId == 480 && !state.BasePointCoordinates.ContainsKey(eid))
-            {
-                var coordinates = TfBlockDeserializer.ExtractBasePointCoordinates(
-                    chunk, pos, dataSize, tfClassId);
-                if (coordinates is { } bp) state.BasePointCoordinates[eid] = bp;
-            }
-
-            // Project Level blocks are small and may live in structurally recovered chunks
-            // that the continuous anchored walk cannot enter. Decode them directly here so
-            // DatumPlane.m_text and m_isBuildingStory are not lost.
-            if (tfClassId == 2299)
-            {
-                var np = TfBlockDeserializer.ExtractParams(chunk, pos, dataSize, tfClassId)
-                    ?? new TfBlockDeserializer.NativeParams();
-                np.Fields["__isLevel"] = 1;
-                var levelName = TfBlockDeserializer.ExtractLevelName(
-                    chunk, pos, dataSize, tfClassId);
-                if (!string.IsNullOrWhiteSpace(levelName))
-                    np.StringFields["m_text"] = levelName;
-                if (TfBlockDeserializer.ExtractLevelElevation(
-                    chunk, pos, dataSize, tfClassId) is double levelElevation)
-                    np.DoubleFields["__levelElevation"] = levelElevation;
-                state.NativeParams[eid] = np;
-            }
-
-            if (state.AllKnownIds.Contains(eid))
-            {
-                ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
-
-                ExtractBlockDoubles(chunk, dataStart, dataEnd, eid, state.ElemDoubles);
-
-                // Blocks with high classIdx word = 0xFFFF contain BIP key->double pairs at stride 12
-                if ((classIdx >> 16) == 0xFFFF)
-                {
-                    ExtractBipDoublesFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBipDoubles, state.AllKnownIds);
-                    ExtractBaseFieldsFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBaseFields);
-                    ExtractWallIntBipsFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBipInts, state.Records);
-                    ExtractHostObjBipsFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBipInts);
-                    ExtractCurveDriverFromBlock(chunk, dataStart, dataEnd, eid, state.CurveDriverCandidates, state.Records);
-                    // Only extract names from proper Tf-serialized SymbolInfo blocks (not render material blocks = 0xFFFFFFFF)
-                    if (classIdx != 0xFFFFFFFF)
-                        ExtractNameFromBlock(chunk, dataStart, dataEnd, eid, state.NativeElementNames);
-                }
-
-                // classIdx=0x702 blocks contain user param values (strings + doubles) and BIP ElementId values
-                if ((classIdx & 0xFFFF) == 0x0702)
-                {
-                    ExtractParamValuesFrom0702Block(chunk, dataStart, dataEnd, eid, state.AllKnownIds, state.ElemParamStrings, state.ElemBipDoubles);
-                    ExtractBipIntsFrom0702Block(chunk, dataStart, dataEnd, eid, state.AllKnownIds, state.ElemBipInts, state.Records);
-                    ExtractFamilyInstanceTransform(chunk, dataStart, dataEnd, eid, state.FamilyInstanceTransforms, state.Records);
-                    ExtractInsertSillFrom0702Block(chunk, dataStart, dataEnd, eid, state.ElemBipDoubles);
-                }
-
-                // Dimension / constraint reference geometry. Two block families share the
-                // same payload layout ([self elemId @0x24][null refs][FCFFFFFF marker]
-                // [u32 point count @marker+7][reference-point (x,y,z) f64 triples @marker+11]):
-                //   0x091F - dimensions (OST_Dimensions / OST_WeakDims / OST_Constraints)
-                //   0x009D - constraints (OST_Constraints; coincident points = alignment/lock)
-                if (((classIdx & 0xFFFF) == 0x091F || (classIdx & 0xFFFF) == 0x009D)
-                    && !state.Dimensions.ContainsKey(eid))
-                    ExtractDimensionData(chunk, dataStart, dataEnd, eid, state.Dimensions);
-
-                // classIdx=0x0346 blocks: OST_SketchLines - the 2D profile curves of sketches.
-                // The curve is stored in the same GInfoBlob GLine/GArc form as wall location
-                // curves (Flags 0x01080004), decoded into a LocationCurve.
-                if ((classIdx & 0xFFFF) == 0x0346)
-                {
-                    state.CurveBlockOwners.Add(eid);
-                    if (!state.SketchCurves.ContainsKey(eid))
-                        ExtractSketchCurve(chunk, dataStart, dataEnd, eid, state.SketchCurves, state.DetailCurveStyles);
-                }
-
-                // Native parameter stores are extracted by the continuous-stream walker
-                // (TfStreamWalker in RvtFileReader) - blocks cross chunk boundaries, so the
-                // per-chunk walk here sees only ~8% of them.
-
-                // classIdx=0x09B6 blocks: OST_Materials - the material's shading appearance
-                // (name + simple-graphics color, shininess, transparency, smoothness).
-                if ((classIdx & 0xFFFF) == 0x09B6 && !state.MaterialAppearances.ContainsKey(eid))
-                    ExtractMaterialAppearance(chunk, dataStart, dataEnd, eid, state.MaterialAppearances, state.MaterialFinishes);
-
-                // HVAC load energy defaults (heat gains, lighting/power loads, air changes, set
-                // points) at fixed offsets. 0x085A = HVACLoadSpaceType, 0x0857 = HVACLoadBuildingType
-                // (same field layout).
-                if (((classIdx & 0xFFFF) == 0x085A || (classIdx & 0xFFFF) == 0x0857)
-                    && !state.HvacSpaceTypeParams.ContainsKey(eid))
-                    ExtractHvacSpaceType(chunk, dataStart, dataEnd, eid,
-                        state.HvacSpaceTypeParams, state.HvacScheduleRefs);
-
-                // classIdx=0x0884 blocks: analytical model Hub nodes - own-block signature
-                // used to categorize the (otherwise uncategorized) node as OST_AnalyticalNodes.
-                if ((classIdx & 0xFFFF) == 0x0884)
-                    state.AnalyticalNodeOwners.Add(eid);
-
-                // classIdx=0x03E3 blocks: view/sheet info. For ViewSheet elements the block
-                // carries [8 zero bytes][len-prefixed sheet number][len-prefixed issue date].
-                if ((classIdx & 0xFFFF) == 0x03E3 && !state.SheetInfo.ContainsKey(eid))
-                    ExtractSheetInfo(chunk, dataStart, dataEnd, eid, state.SheetInfo);
-
-                // View display name: name-field signature in the element's own block.
-                if (!state.ViewNames.ContainsKey(eid))
-                    ExtractViewName(chunk, dataStart, dataEnd, eid, state.ViewNames);
-
-                // classIdx=0x0E17 blocks (R22): Level class-specific data.
-                // Offset 0xF4 contains the level elevation as a double (in feet).
-                if ((classIdx & 0xFFFF) == 0x0E17 && dataSize >= 0xFC)
-                {
-                    double elev = BitConverter.ToDouble(chunk, dataStart + 0xF4);
-                    if (!double.IsNaN(elev) && !double.IsInfinity(elev) && Math.Abs(elev) < 100_000)
-                    {
-                        if (!state.ElemBipDoubles.TryGetValue(eid, out var bipMap))
-                            state.ElemBipDoubles[eid] = bipMap = new Dictionary<int, double>();
-                        bipMap[-1007102] = elev; // LEVEL_ELEV
-                    }
-                }
-
-                // classIdx=0x00012100 blocks: CompoundStructure data for wall types.
-                // Offset 0x18 contains the wall function enum (0=Interior..5=CoreShaft).
-                if (classIdx == 0x00012100 && dataSize >= 0x1C)
-                {
-                    int funcVal = BitConverter.ToInt32(chunk, dataStart + 0x18);
-                    if (funcVal >= 0 && funcVal <= 5)
-                        state.WallTypeFunctions[eid] = funcVal;
-                }
-
-                // 0xFFFF0200 / 0xFFFF1026 blocks: CompoundStructure with layer data.
-                // Scan for marker 0x1003 followed by layer count + 29-byte layer entries.
-                if ((classIdx >> 16) == 0xFFFF && dataSize > 100 && !state.CompoundLayers.ContainsKey(eid))
-                {
-                    ExtractCompoundLayers(chunk, dataStart, dataEnd, eid, state.CompoundLayers);
-                }
-
-                // classIdx=0x0FBD blocks: ForgeTypeId Spec Registry - unit format definitions
-                if ((classIdx & 0xFFFF) == 0x0FBD && state.ForgeSpecRegistry.Count == 0)
-                {
-                    ExtractForgeSpecRegistry(chunk, dataStart, dataEnd, state.ForgeSpecRegistry);
-                }
-
-                // classIdx=0x0B3A blocks: Family Parameter Definitions - ForgeId -> spec type mapping
-                if ((classIdx & 0xFFFF) == 0x0B3A)
-                {
-                    ExtractForgeParamSpec(chunk, dataStart, dataEnd, state.ForgeParamSpecs);
-                }
-
-                // 0x0725 blocks: FamilyType/Symbol definitions - extract element name
-                // The first valid string after the Tf header (~offset 400+) is the type name
-                if ((classIdx & 0xFFFF) == 0x0725 && dataSize > 400 && !state.NativeElementNames.ContainsKey(eid))
-                {
-                    ExtractNameFrom0725Block(chunk, dataStart, dataEnd, eid, state.NativeElementNames);
-                }
-
-                // 0x0725 blocks of family symbols ALSO contain type-level param value entries
-                // (after the chain table) shaped as `[type:4][marker:u16=1][zeros:8][double:8]
-                // [FFFFFFFF][paramKey:4]`. These are family-doc defaults that apply to all
-                // instances unless overridden by the instance's 0x0702 block.
-                if ((classIdx & 0xFFFF) == 0x0725 && dataSize > 400)
-                {
-                    ExtractFamilySymbolDoubles(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockDoubles);
-                    ExtractFamilySymbolStrings(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockStrings);
-                    ExtractFamilySymbolInts(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockInts);
-                    ExtractFamilySymbolElemIdPairs(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockElemIds);
-
-                    if (!state.FamilyCutGreps.ContainsKey(eid))
-                        pendingAll.Add(new PendingGRep(chunk, eid, dataStart - 16, dataSize, true));
-                }
-
-                // 0x0725 blocks also contain the family param mapping table.
-                // Each entry is 30 bytes: [FFFFFFFF:4][binKey:4][zeros:4][marker:u32 at offset 12][14 bytes].
-                // Entries with marker == 1 form a linked list: bin paramKey of entry N maps to
-                // bin paramKey of entry N+1 (the actual project param def ID).
-                if ((classIdx & 0xFFFF) == 0x0725 && dataSize > 400 && !state.FamilyParamMaps.ContainsKey(eid))
-                {
-                    var (map, typeValues) = ExtractFamilyParamMapAndValues(chunk, dataStart, dataEnd);
-                    if (map.Count > 0)
-                        state.FamilyParamMaps[eid] = map;
-                    if (typeValues.Count > 0)
-                        state.FamilyTypeValues[eid] = typeValues;
-                }
-
-                // GRep blocks (classIdx & 0xFFFF == 0x07D7 R22, 0x07D6 R20): geometry representation
-                // Some elements have multiple GRep blocks - prefer the one with world-coordinate
-                // face directions (non-axis-aligned XVectors indicate world coordinates).
-                if ((classIdx & 0xFFFF) is 0x07D7 or 0x07D6)
-                {
-                    // Diagnostic: RVTIO_DUMP_GREP=<eid> dumps the raw GRep block.
-                    if (DumpGrepEnvironment is { } dge
-                        && dge.Split(',').Any(x => uint.TryParse(x, out uint dgeId) && dgeId == eid))
-                    {
-                        try
-                        {
-                            int hdr = dataStart - 16;
-                            int dlen = Math.Min(dataEnd - hdr, chunk.Length - hdr);
-                            var dbuf = new byte[dlen];
-                            Array.Copy(chunk, hdr, dbuf, 0, dlen);
-                            File.WriteAllBytes(Path.Combine(Path.GetTempPath(), $"grep7d7_{eid}_{classIdx:X8}_{hdr}.bin"), dbuf);
-                        }
-                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                        {
-                            DiagnosticSink.WriteLine($"Block dump failed: {ex.Message}");
-                        }
-                    }
-                    // Production geometry is decoded only through the declared Tf schema:
-                    // a pattern scan cannot confirm field ownership.
-                    pendingAll.Add(new PendingGRep(chunk, eid, dataStart - 16, dataSize, false));
-                }
-            }
-
+            if (!ParseBlock(chunk, pos, eid, dataSize, knownOwner, state, collectBlockOnlyIds, pendingAll)) { pos++; continue; }
             pos += 16 + (int)dataSize;
         }
         if (deferred == null) ApplyPendingGReps(state, pendingAll);
         return blockCount > 0;
+    }
+
+    /// <summary>Reads one block [elemId:4][hash:4][dataSize:4][classIdx:4][data] whose header the caller accepted: the block inventory, the
+    /// category of its owner and every fact the block parser takes from a block. False when the class is 0 (no block).</summary>
+    internal static bool ParseBlock(byte[] chunk, int pos, uint eid, uint dataSize, bool knownOwner, ParsingState state,
+        bool collectBlockOnlyIds, List<PendingGRep> pendingAll)
+    {
+        int dataStart = pos + 16;
+        int dataEnd = dataStart + (int)dataSize;
+        uint classIdx = BitConverter.ToUInt32(chunk, pos + 12);
+
+        if (!knownOwner)
+        {
+            if (collectBlockOnlyIds)
+                state.BlockOnlyIds.Add(eid);
+        }
+
+        // Collect block classIdx inventory (low 16 bits = class type, high 16 varies per block)
+        uint classKey = classIdx & 0xFFFF;
+        // classKey=0 is never a valid class - these are false positives from scanner misalignment
+        if (classKey == 0) return false;
+        if (ElementIdEncoding.IsSupported(eid))
+        {
+            if (!state.BlockClassInventory.TryGetValue(classKey, out var bcs))
+                state.BlockClassInventory[classKey] = bcs = new BlockClassStats();
+            bcs.Count++;
+            bcs.TotalBytes += dataSize;
+            if (dataSize < bcs.MinSize) bcs.MinSize = (int)dataSize;
+            if (dataSize > bcs.MaxSize) bcs.MaxSize = (int)dataSize;
+            if (bcs.SampleElemIds.Count < 5) bcs.SampleElemIds.Add(eid);
+            if (bcs.SampleData == null)
+            {
+                int sampleLen = Math.Min(32, (int)dataSize);
+                bcs.SampleData = new byte[sampleLen];
+                Array.Copy(chunk, dataStart, bcs.SampleData, 0, sampleLen);
+            }
+            if (state.ElemTable.TryGetValue(eid, out uint typeId) && typeId != 0)
+            {
+                bcs.TypeIdCounts.TryGetValue(typeId, out int tc);
+                bcs.TypeIdCounts[typeId] = tc + 1;
+            }
+        }
+
+        // Assign the category from the Tf classIdx mapping (if the element has none yet):
+        // first the id registry, then the R22 def table (id -> class name)
+        // joined with the name -> category map.
+        ushort tfClassId = (ushort)(classIdx & 0xFFFF);
+        if (tfClassId > 0 && state.Records.TryGetValue(eid, out var recForCat) && !recForCat.CategoryId.HasValue)
+        {
+            if (TfClassRegistry.R22TfClassIdToCategory.TryGetValue(tfClassId, out int catId))
+                recForCat.CategoryId = catId;
+            // NOTE: an automatic fallback via R22ClassDefs.Names -> NameToCategory is not used:
+            // early categorization changes downstream pass behavior and needs per-row validation first.
+        }
+
+        if (tfClassId == 480 && !state.BasePointCoordinates.ContainsKey(eid))
+        {
+            var coordinates = TfBlockDeserializer.ExtractBasePointCoordinates(
+                chunk, pos, dataSize, tfClassId);
+            if (coordinates is { } bp) state.BasePointCoordinates[eid] = bp;
+        }
+
+        // Project Level blocks are small and may live in structurally recovered chunks
+        // that the continuous anchored walk cannot enter. Decode them directly here so
+        // DatumPlane.m_text and m_isBuildingStory are not lost.
+        if (tfClassId == 2299)
+        {
+            var np = TfBlockDeserializer.ExtractParams(chunk, pos, dataSize, tfClassId)
+                ?? new TfBlockDeserializer.NativeParams();
+            np.Fields["__isLevel"] = 1;
+            var levelName = TfBlockDeserializer.ExtractLevelName(
+                chunk, pos, dataSize, tfClassId);
+            if (!string.IsNullOrWhiteSpace(levelName))
+                np.StringFields["m_text"] = levelName;
+            if (TfBlockDeserializer.ExtractLevelElevation(
+                chunk, pos, dataSize, tfClassId) is double levelElevation)
+                np.DoubleFields["__levelElevation"] = levelElevation;
+            state.NativeParams[eid] = np;
+        }
+
+        if (state.AllKnownIds.Contains(eid))
+        {
+            ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
+
+            ExtractBlockDoubles(chunk, dataStart, dataEnd, eid, state.ElemDoubles);
+
+            // Blocks with high classIdx word = 0xFFFF contain BIP key->double pairs at stride 12
+            if ((classIdx >> 16) == 0xFFFF)
+            {
+                ExtractBipDoublesFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBipDoubles, state.AllKnownIds);
+                ExtractBaseFieldsFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBaseFields);
+                ExtractWallIntBipsFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBipInts, state.Records);
+                ExtractHostObjBipsFromBlock(chunk, dataStart, dataEnd, eid, state.ElemBipInts);
+                ExtractCurveDriverFromBlock(chunk, dataStart, dataEnd, eid, state.CurveDriverCandidates, state.Records);
+                // Only extract names from proper Tf-serialized SymbolInfo blocks (not render material blocks = 0xFFFFFFFF)
+                if (classIdx != 0xFFFFFFFF)
+                    ExtractNameFromBlock(chunk, dataStart, dataEnd, eid, state.NativeElementNames);
+            }
+
+            // classIdx=0x702 blocks contain user param values (strings + doubles) and BIP ElementId values
+            if ((classIdx & 0xFFFF) == 0x0702)
+            {
+                ExtractParamValuesFrom0702Block(chunk, dataStart, dataEnd, eid, state.AllKnownIds, state.ElemParamStrings, state.ElemBipDoubles);
+                ExtractBipIntsFrom0702Block(chunk, dataStart, dataEnd, eid, state.AllKnownIds, state.ElemBipInts, state.Records);
+                ExtractFamilyInstanceTransform(chunk, dataStart, dataEnd, eid, state.FamilyInstanceTransforms, state.Records);
+                ExtractInsertSillFrom0702Block(chunk, dataStart, dataEnd, eid, state.ElemBipDoubles);
+            }
+
+            // Dimension / constraint reference geometry. Two block families share the
+            // same payload layout ([self elemId @0x24][null refs][FCFFFFFF marker]
+            // [u32 point count @marker+7][reference-point (x,y,z) f64 triples @marker+11]):
+            //   0x091F - dimensions (OST_Dimensions / OST_WeakDims / OST_Constraints)
+            //   0x009D - constraints (OST_Constraints; coincident points = alignment/lock)
+            if (((classIdx & 0xFFFF) == 0x091F || (classIdx & 0xFFFF) == 0x009D)
+                && !state.Dimensions.ContainsKey(eid))
+                ExtractDimensionData(chunk, dataStart, dataEnd, eid, state.Dimensions);
+
+            // classIdx=0x0346 blocks: OST_SketchLines - the 2D profile curves of sketches.
+            // The curve is stored in the same GInfoBlob GLine/GArc form as wall location
+            // curves (Flags 0x01080004), decoded into a LocationCurve.
+            if ((classIdx & 0xFFFF) == 0x0346)
+            {
+                state.CurveBlockOwners.Add(eid);
+                if (!state.SketchCurves.ContainsKey(eid))
+                    ExtractSketchCurve(chunk, dataStart, dataEnd, eid, state.SketchCurves, state.DetailCurveStyles);
+            }
+
+            // Native parameter stores are extracted by the continuous-stream walker
+            // (TfStreamWalker in RvtFileReader) - blocks cross chunk boundaries, so the
+            // per-chunk walk here sees only ~8% of them.
+
+            // classIdx=0x09B6 blocks: OST_Materials - the material's shading appearance
+            // (name + simple-graphics color, shininess, transparency, smoothness).
+            if ((classIdx & 0xFFFF) == 0x09B6 && !state.MaterialAppearances.ContainsKey(eid))
+                ExtractMaterialAppearance(chunk, dataStart, dataEnd, eid, state.MaterialAppearances, state.MaterialFinishes);
+
+            // HVAC load energy defaults (heat gains, lighting/power loads, air changes, set
+            // points) at fixed offsets. 0x085A = HVACLoadSpaceType, 0x0857 = HVACLoadBuildingType
+            // (same field layout).
+            if (((classIdx & 0xFFFF) == 0x085A || (classIdx & 0xFFFF) == 0x0857)
+                && !state.HvacSpaceTypeParams.ContainsKey(eid))
+                ExtractHvacSpaceType(chunk, dataStart, dataEnd, eid,
+                    state.HvacSpaceTypeParams, state.HvacScheduleRefs);
+
+            // classIdx=0x0884 blocks: analytical model Hub nodes - own-block signature
+            // used to categorize the (otherwise uncategorized) node as OST_AnalyticalNodes.
+            if ((classIdx & 0xFFFF) == 0x0884)
+                state.AnalyticalNodeOwners.Add(eid);
+
+            // classIdx=0x03E3 blocks: view/sheet info. For ViewSheet elements the block
+            // carries [8 zero bytes][len-prefixed sheet number][len-prefixed issue date].
+            if ((classIdx & 0xFFFF) == 0x03E3 && !state.SheetInfo.ContainsKey(eid))
+                ExtractSheetInfo(chunk, dataStart, dataEnd, eid, state.SheetInfo);
+
+            // View display name: name-field signature in the element's own block.
+            if (!state.ViewNames.ContainsKey(eid))
+                ExtractViewName(chunk, dataStart, dataEnd, eid, state.ViewNames);
+
+            // classIdx=0x0E17 blocks (R22): Level class-specific data.
+            // Offset 0xF4 contains the level elevation as a double (in feet).
+            if ((classIdx & 0xFFFF) == 0x0E17 && dataSize >= 0xFC)
+            {
+                double elev = BitConverter.ToDouble(chunk, dataStart + 0xF4);
+                if (!double.IsNaN(elev) && !double.IsInfinity(elev) && Math.Abs(elev) < 100_000)
+                {
+                    if (!state.ElemBipDoubles.TryGetValue(eid, out var bipMap))
+                        state.ElemBipDoubles[eid] = bipMap = new Dictionary<int, double>();
+                    bipMap[-1007102] = elev; // LEVEL_ELEV
+                }
+            }
+
+            // classIdx=0x00012100 blocks: CompoundStructure data for wall types.
+            // Offset 0x18 contains the wall function enum (0=Interior..5=CoreShaft).
+            if (classIdx == 0x00012100 && dataSize >= 0x1C)
+            {
+                int funcVal = BitConverter.ToInt32(chunk, dataStart + 0x18);
+                if (funcVal >= 0 && funcVal <= 5)
+                    state.WallTypeFunctions[eid] = funcVal;
+            }
+
+            // 0xFFFF0200 / 0xFFFF1026 blocks: CompoundStructure with layer data.
+            // Scan for marker 0x1003 followed by layer count + 29-byte layer entries.
+            if ((classIdx >> 16) == 0xFFFF && dataSize > 100 && !state.CompoundLayers.ContainsKey(eid))
+            {
+                ExtractCompoundLayers(chunk, dataStart, dataEnd, eid, state.CompoundLayers);
+            }
+
+            // classIdx=0x0FBD blocks: ForgeTypeId Spec Registry - unit format definitions
+            if ((classIdx & 0xFFFF) == 0x0FBD && state.ForgeSpecRegistry.Count == 0)
+            {
+                ExtractForgeSpecRegistry(chunk, dataStart, dataEnd, state.ForgeSpecRegistry);
+            }
+
+            // classIdx=0x0B3A blocks: Family Parameter Definitions - ForgeId -> spec type mapping
+            if ((classIdx & 0xFFFF) == 0x0B3A)
+            {
+                ExtractForgeParamSpec(chunk, dataStart, dataEnd, state.ForgeParamSpecs);
+            }
+
+            // 0x0725 blocks: FamilyType/Symbol definitions - extract element name
+            // The first valid string after the Tf header (~offset 400+) is the type name
+            if ((classIdx & 0xFFFF) == 0x0725 && dataSize > 400 && !state.NativeElementNames.ContainsKey(eid))
+            {
+                ExtractNameFrom0725Block(chunk, dataStart, dataEnd, eid, state.NativeElementNames);
+            }
+
+            // 0x0725 blocks of family symbols ALSO contain type-level param value entries
+            // (after the chain table) shaped as `[type:4][marker:u16=1][zeros:8][double:8]
+            // [FFFFFFFF][paramKey:4]`. These are family-doc defaults that apply to all
+            // instances unless overridden by the instance's 0x0702 block.
+            if ((classIdx & 0xFFFF) == 0x0725 && dataSize > 400)
+            {
+                ExtractFamilySymbolDoubles(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockDoubles);
+                ExtractFamilySymbolStrings(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockStrings);
+                ExtractFamilySymbolInts(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockInts);
+                ExtractFamilySymbolElemIdPairs(chunk, dataStart, dataEnd, eid, state.FamilySymbolBlockElemIds);
+
+                if (!state.FamilyCutGreps.ContainsKey(eid))
+                    pendingAll.Add(new PendingGRep(chunk, eid, dataStart - 16, dataSize, true));
+            }
+
+            // 0x0725 blocks also contain the family param mapping table.
+            // Each entry is 30 bytes: [FFFFFFFF:4][binKey:4][zeros:4][marker:u32 at offset 12][14 bytes].
+            // Entries with marker == 1 form a linked list: bin paramKey of entry N maps to
+            // bin paramKey of entry N+1 (the actual project param def ID).
+            if ((classIdx & 0xFFFF) == 0x0725 && dataSize > 400 && !state.FamilyParamMaps.ContainsKey(eid))
+            {
+                var (map, typeValues) = ExtractFamilyParamMapAndValues(chunk, dataStart, dataEnd);
+                if (map.Count > 0)
+                    state.FamilyParamMaps[eid] = map;
+                if (typeValues.Count > 0)
+                    state.FamilyTypeValues[eid] = typeValues;
+            }
+
+            // GRep blocks (classIdx & 0xFFFF == 0x07D7 R22, 0x07D6 R20): geometry representation
+            // Some elements have multiple GRep blocks - prefer the one with world-coordinate
+            // face directions (non-axis-aligned XVectors indicate world coordinates).
+            if ((classIdx & 0xFFFF) is 0x07D7 or 0x07D6)
+            {
+                // Diagnostic: RVTIO_DUMP_GREP=<eid> dumps the raw GRep block.
+                if (DumpGrepEnvironment is { } dge
+                    && dge.Split(',').Any(x => uint.TryParse(x, out uint dgeId) && dgeId == eid))
+                {
+                    try
+                    {
+                        int hdr = dataStart - 16;
+                        int dlen = Math.Min(dataEnd - hdr, chunk.Length - hdr);
+                        var dbuf = new byte[dlen];
+                        Array.Copy(chunk, hdr, dbuf, 0, dlen);
+                        File.WriteAllBytes(Path.Combine(Path.GetTempPath(), $"grep7d7_{eid}_{classIdx:X8}_{hdr}.bin"), dbuf);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        DiagnosticSink.WriteLine($"Block dump failed: {ex.Message}");
+                    }
+                }
+                // Production geometry is decoded only through the declared Tf schema:
+                // a pattern scan cannot confirm field ownership.
+                pendingAll.Add(new PendingGRep(chunk, eid, dataStart - 16, dataSize, false));
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Merges one decoded GRep block into the element's geometry (arrival-order rules).</summary>

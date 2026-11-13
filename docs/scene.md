@@ -81,7 +81,8 @@ The text a value is written with under a key is frozen with the key: changing it
 
 - Values are text only, and only those whose display string the public API gives (see Property text). Typed values
   (numbers in SI units, booleans, element references) wait for public RvtIO API.
-- Shared, project and family parameters have no key yet; the format of their keys is registered with the first release.
+- Shared, project and family parameters have no key yet. Their formats (for example `revit:shared:<guid>`) are
+  registered in the IOScene key registry when the adapter first writes them; that is an addition.
 - No levels (`LevelId` and the `Levels` table stay empty): RvtIO has no public level of an element.
 - No tree: every element is a top-level element of the model. No links, grids or views.
 - Materials have a name and a colour; no roughness, metalness or textures.
