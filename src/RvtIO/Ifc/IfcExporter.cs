@@ -65426,8 +65426,11 @@ public partial class IfcExporter
     internal static bool? ResolveWallExtendToStructure(Element wall, bool currentProfile = false)
     {
         if (wall.CategoryId != -2000011) return null;
+        // As in Revit's exporter, the set-qualified name wins over the property name.
         ExactIsExternalParameterResult named =
-            ResolveExactNamedIntParameter(wall, "ExtendToStructure");
+            ResolveExactNamedIntParameter(wall, "Pset_WallCommon.ExtendToStructure");
+        if (named.State == ExactIsExternalParameterState.Absent)
+            named = ResolveExactNamedIntParameter(wall, "ExtendToStructure");
         if (named.State == ExactIsExternalParameterState.Value) return named.Value != 0;
         if (named.State == ExactIsExternalParameterState.Blocked) return null;
         return wall.SerializedWallJoinedToTop ?? (currentProfile ? false : null);

@@ -388,6 +388,50 @@ public class IfcExporterWallCommonPropertySetTests
     }
 
     [Theory]
+    [InlineData(0, true, "IFCBOOLEAN(.F.)")]
+    [InlineData(1, false, "IFCBOOLEAN(.T.)")]
+    [InlineData(1, null, "IFCBOOLEAN(.T.)")]
+    public void Wall_SetQualifiedExtendToStructureOverridesTheTopAttachment(int value, bool? joinedToTop, string expected)
+    {
+        var wall = Wall(100, 500, "Wall", 1);
+        wall.Parameters.Add(TypeParameter(500));
+        wall.SerializedWallJoinedToTop = joinedToTop;
+        wall.Parameters.Add(new Parameter
+        {
+            Definition = new Definition { Name = "Pset_WallCommon.ExtendToStructure" },
+            StorageType = StorageType.Integer, Value = value,
+        });
+        var type = new Element { Id = 500, CategoryId = -2000011, Name = "Basic wall" };
+        string ifc = ExportWalls(type, wall);
+        var values = OccurrenceCommonValues(ifc, SoleEntityId(ifc, "IFCWALLSTANDARDCASE"));
+        Assert.Equal(expected, values["ExtendToStructure"]);
+    }
+
+    [Theory]
+    [InlineData(0, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData(1, 0, "IFCBOOLEAN(.T.)")]
+    public void Wall_SetQualifiedExtendToStructureWinsOverThePropertyName(int qualified, int plain, string expected)
+    {
+        var wall = Wall(100, 500, "Wall", 1);
+        wall.Parameters.Add(TypeParameter(500));
+        wall.SerializedWallJoinedToTop = plain == 1;
+        wall.Parameters.Add(new Parameter
+        {
+            Definition = new Definition { Name = "ExtendToStructure" },
+            StorageType = StorageType.Integer, Value = plain,
+        });
+        wall.Parameters.Add(new Parameter
+        {
+            Definition = new Definition { Name = "Pset_WallCommon.ExtendToStructure" },
+            StorageType = StorageType.Integer, Value = qualified,
+        });
+        var type = new Element { Id = 500, CategoryId = -2000011, Name = "Basic wall" };
+        string ifc = ExportWalls(type, wall);
+        var values = OccurrenceCommonValues(ifc, SoleEntityId(ifc, "IFCWALLSTANDARDCASE"));
+        Assert.Equal(expected, values["ExtendToStructure"]);
+    }
+
+    [Theory]
     [InlineData("missing_type")] [InlineData("missing_link")]
     public void Wall_TopAttachmentNeedsNoWallType(string mutation)
     {
