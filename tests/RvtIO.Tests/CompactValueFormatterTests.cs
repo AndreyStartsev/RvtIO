@@ -185,6 +185,14 @@ public class CompactValueFormatterTests
         => Assert.Equal(expected, Format(value, "squareMeters-1.0.1", accuracy, "mSup2-1.0.1"));
 
     [Fact]
+    public void ZeroAccuracyProducesX64IndefiniteNaNSignBit()
+    {
+        Assert.Equal(0xFFF8_0000_0000_0000UL, BitConverter.DoubleToUInt64Bits(CompactValueFormatter.RoundToAccuracy(1.0, 0.0, 0)));
+        Assert.Equal(0xFFF8_0000_0000_0000UL, BitConverter.DoubleToUInt64Bits(CompactValueFormatter.RoundToAccuracy(0.0, 0.0, 0)));
+        Assert.Equal(0x7FF8_0000_0000_0000UL, BitConverter.DoubleToUInt64Bits(CompactValueFormatter.RoundToAccuracy(-1.0, 0.0, 0)));
+    }
+
+    [Fact]
     public void GeneralUnitDropsTrailingZeros()
     {
         Assert.Equal("0.1", Format(0.1, "general-1.0.1", accuracy: 1e-6));
