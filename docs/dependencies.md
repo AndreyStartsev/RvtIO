@@ -30,11 +30,13 @@ Build settings shared by every project live in `Directory.Build.props`; the SDK 
 
 | Package | Version | Used for |
 |---|---|---|
-| IOScene | `[0.1.0, 0.2.0-0)` | The scene model (`SceneDocument`) that `RvtIO.Scene` builds; `SceneJson` of IOScene saves it as JSON. |
+| IOScene | `[0.1.0, 0.2.0-0.0)` | The scene model (`SceneDocument`) that `RvtIO.Scene` builds; `SceneJson` of IOScene saves it as JSON. |
 
-Any 0.1 release from 0.1.0 on is accepted; the `-0` upper bound keeps out the previews of the next breaking line.
-That prerelease bound raises NU5104 when packing, which `RvtIO.Scene.csproj` suppresses, and `tools/pack-release.ps1`
-fails a release whose lower bound is missing or a preview.
+Any 0.1 release from 0.1.0 on is accepted; the `-0.0` upper bound keeps out the previews of the next breaking line
+except `0.2.0-0`, which IOScene does not publish (nuget.org refuses the shorter bound `-0` in a dependency). That
+prerelease bound raises NU5104 when packing, which `RvtIO.Scene.csproj` suppresses. `tools/pack-release.ps1` fails a
+release whose IOScene lower bound is missing or a preview, or whose `RvtIO.Scene` dependency bounds nuget.org would
+refuse (a bound with metadata, or a prerelease label of one part that does not start with a letter).
 
 ## Test packages
 
