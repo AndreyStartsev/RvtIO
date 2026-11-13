@@ -104,6 +104,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = framedStreams,
+            PartitionChunkCount = partitionStreams.Sum(s => s.Count),
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
@@ -873,6 +874,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = framedStreams,
+            PartitionChunkCount = partitionStreams.Sum(s => s.Count),
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
@@ -2139,39 +2141,41 @@ public partial class RvtFileReader
     /// wall (<see cref="RecordWallLocationLine"/>) is read from its root record once every root is counted.</summary>
     internal static void RecordFramedRoots(ParsingState state)
     {
-        var walls = new List<(byte[] Item, ushort Class, uint Owner)>();
+        var walls = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>();
         foreach (var frame in state.FramedPartitions!)
-        {
-            var starts = new long[frame!.Segments.Count];
-            for (int i = 1; i < starts.Length; i++) starts[i] = starts[i - 1] + frame.Segments[i - 1].Length;
-            foreach (var record in frame.Items)
+            foreach (var record in frame!.Items)
             {
                 if (record.Channel != 102 || record.Length < 18 || record.Owner > uint.MaxValue) continue;
                 // the item [owner:4][checksum:4][size:4][class:2 ...][size:4] is the block layout the walk hands over
-                var item = ItemBytes(frame.Segments, starts, record.Offset, record.Length);
-                ushort classId = BitConverter.ToUInt16(item, 12);
-                StairComponentSource.Record(state, item, 0, (uint)(item.Length - 16), classId, (uint)record.Owner);
-                if (classId is 3524 or 361) walls.Add((item, classId, (uint)record.Owner));
+                var (data, start, _) = frame.Bytes(record);
+                ushort classId = BitConverter.ToUInt16(data, start + 12);
+                StairComponentSource.Record(state, data, start, (uint)(record.Length - 16), classId, (uint)record.Owner);
+                if (classId is 3524 or 361) walls.Add((data, start, (uint)(record.Length - 16), classId, (uint)record.Owner));
             }
-        }
-        foreach (var (item, classId, owner) in walls) RecordWallLocationLine(state, item, 0, (uint)(item.Length - 16), classId, owner);
+        foreach (var (data, start, size, classId, owner) in walls) RecordWallLocationLine(state, data, start, size, classId, owner);
     }
 
-    /// <summary>The <paramref name="length"/> bytes at <paramref name="offset"/> of the concatenated segments (an item can run into the next segment of its chain).</summary>
-    private static byte[] ItemBytes(IReadOnlyList<byte[]> segments, long[] starts, long offset, int length)
+    /// <summary>Hands <see cref="BlockParser.ParseBlock"/> the channel-102 and 103 records of the project's own block (the root objects and the
+    /// geometry of the elements, in their current copy) instead of the blocks a scan of the partition chunks finds: the scan also takes the blocks
+    /// of the documents of loaded families, whose ids repeat project ids, and it stops or jumps at a header-like byte run and at a block that runs
+    /// into the next chunk.</summary>
+    internal static void ParseFramedBlocks(ParsingState state, bool collectBlockOnlyIds, List<BlockParser.PendingGRep> pending)
     {
-        var item = new byte[length];
-        int s = Array.BinarySearch(starts, offset);
-        if (s < 0) s = ~s - 1;
-        for (int done = 0; done < length; s++)
-        {
-            int from = (int)(offset + done - starts[s]), n = Math.Min(length - done, segments[s].Length - from);
-            Buffer.BlockCopy(segments[s], from, item, done, n);
-            done += n;
-        }
-        return item;
+        foreach (var frame in state.FramedPartitions!)
+            foreach (var record in frame!.Items)
+            {
+                if (record.Channel == 101 || record.Length < 18 || record.Owner is 0 or > uint.MaxValue) continue;
+                var (data, start, copied) = frame.Bytes(record);
+                uint eid = (uint)record.Owner;
+                int queued = pending.Count;
+                BlockParser.ParseBlock(data, start, eid, (uint)(record.Length - 16), state.AllKnownIds.Contains(eid), state, collectBlockOnlyIds, pending);
+                // shortcut: the geometry of a record that runs into the next segment or is over the size limit of the scan is not decoded (the
+                // scan never reached such a block, and the decoder takes minutes on some of them: 28 to 180 s each for ten 0.7 to 0.9 MB geometry
+                // records of one model, none of which changed the output); decode it once the geometry decoder is linear in the block size.
+                if ((copied || record.Length - 16 > BlockParser.MaxBlockSize) && pending.Count > queued)
+                    pending.RemoveRange(queued, pending.Count - queued);
+            }
     }
-
     /// <summary>Continuous-stream anchored block walk (see TfStreamWalker): native param
     /// stores + full-coverage re-run of block-driven signals (curve owners, node owners,
     /// registry categories, sketch/detail curves).</summary>
@@ -2187,7 +2191,7 @@ public partial class RvtFileReader
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
         var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
-        bool framedRoots = state.WideSchema == null && state.FramedPartitions is { Count: > 0 } framed && framed.All(f => f is { IdWidth: 4 });
+        bool framedRoots = state.ReadsFramedRecords;
         if (framedRoots) RecordFramedRoots(state);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
         {
@@ -2454,7 +2458,7 @@ public partial class RvtFileReader
         return stored;
     }
 
-    private static void ParseBlocks(ParsingState state, TextWriter? diag)
+    internal static void ParseBlocks(ParsingState state, TextWriter? diag)
     {
         var lap = System.Diagnostics.Stopwatch.StartNew();
         void Lap(string name) { diag?.WriteLine($"Timing: {name} {lap.Elapsed.TotalSeconds:F1}s"); lap.Restart(); }
@@ -2499,11 +2503,16 @@ public partial class RvtFileReader
             BlockParser.CollectBipStrings(chunk, state);
 
         Lap("bip strings");
+        // a file read by its framing: the blocks of the partitions are its records, the chunks of Formats and Global are scanned
+        var partitionChunks = state.ReadsFramedRecords
+            ? state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance) : null;
+        bool Scanned(byte[] chunk) => partitionChunks?.Contains(chunk) != true;
         // First pass: parse blocks, collect block-only IDs
         var firstPassGReps = new List<BlockParser.PendingGRep>();
-        foreach (var chunk in state.NonRecordChunks)
+        if (partitionChunks != null) ParseFramedBlocks(state, collectBlockOnlyIds: true, firstPassGReps);
+        foreach (var chunk in state.NonRecordChunks.Where(Scanned))
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
-        foreach (var chunk in state.RecordChunks)
+        foreach (var chunk in state.RecordChunks.Where(Scanned))
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
         BlockParser.ApplyPendingGReps(state, firstPassGReps);
         diag?.WriteLine($"Block-only elements: {state.BlockOnlyIds.Count}");
@@ -2515,9 +2524,10 @@ public partial class RvtFileReader
             foreach (var bid in state.BlockOnlyIds)
                 state.AllKnownIds.Add(bid);
             var secondPassGReps = new List<BlockParser.PendingGRep>();
-            foreach (var chunk in state.NonRecordChunks)
+            if (partitionChunks != null) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
+            foreach (var chunk in state.NonRecordChunks.Where(Scanned))
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
-            foreach (var chunk in state.RecordChunks)
+            foreach (var chunk in state.RecordChunks.Where(Scanned))
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
             BlockParser.ApplyPendingGReps(state, secondPassGReps);
         }
