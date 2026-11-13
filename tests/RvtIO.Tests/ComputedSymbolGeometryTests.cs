@@ -78,6 +78,21 @@ public class ComputedSymbolGeometryTests
     }
 
     [Fact]
+    public void ComputedSymbolThatPlacesASymbolWithoutGeometry_IsMarkedUnresolved()
+    {
+        var element = Instance(7, Unfilled);
+        ElementBuilder.AttachComputedSymbolGeometry(element, 7, State());
+        Assert.False(element.SerializedComputedSymbolGeometry!.UnresolvedSymbol);
+
+        var state = State();
+        state.GrepBlocks[70].Instances = [new GRepInstance { SymbolElemId = 999, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] }];
+        ElementBuilder.AttachComputedSymbolGeometry(element, 7, state);
+
+        Assert.Equal(4, element.SerializedComputedSymbolGeometry!.Faces.Count);
+        Assert.True(element.SerializedComputedSymbolGeometry.UnresolvedSymbol);
+    }
+
+    [Fact]
     public void InstanceWithAFilledFace_KeepsItsOwnGeometry()
     {
         var element = Instance(7, Filled);

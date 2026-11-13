@@ -2,10 +2,11 @@
   "metadata": [
     {
       "src": [
-        { "src": "src/RvtIO", "files": ["RvtIO.csproj"] }
+        { "src": "src/RvtIO", "files": ["RvtIO.csproj"] },
+        { "src": "src/RvtIO.Scene", "files": ["RvtIO.Scene.csproj"] }
       ],
       "dest": "docs/api",
-      "properties": { "TargetFramework": "net10.0" },
+      "properties": { "TargetFramework": "net10.0", "TargetFrameworks": "net10.0" },
       "outputFormat": "apiPage"
     }
   ],

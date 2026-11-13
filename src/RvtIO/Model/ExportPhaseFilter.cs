@@ -1,6 +1,4 @@
-using RvtIO.Model;
-
-namespace RvtIO.Ifc;
+namespace RvtIO.Model;
 
 /// <summary>
 /// Which elements exist in the export phase: the phases are taken in the order of the project's phase list

@@ -64,6 +64,17 @@ namespace RvtIO.Model
         /// representation-map structure instead of duplicating the expanded mesh.</summary>
         internal List<GeoInstance>? ExactMappedInstances { get; set; }
 
+        /// <summary>A symbol placed into this geometry was cut by the tight box of the owning GRep, or left out because it lay
+        /// outside it (ElementBuilder.ClipGeometryToBounds): the faces are not the placed symbols as they are.</summary>
+        internal bool PlacedSymbolClipped { get; set; }
+
+        /// <summary>A component placed at a rescaled placement was replaced by its tight box (ElementBuilder.ScaledComponentFaceBudget).</summary>
+        internal bool PlacedSymbolBox { get; set; }
+
+        /// <summary>A GInstance of this geometry, or of a symbol it places at any depth, placed nothing: its symbol has no
+        /// geometry.</summary>
+        internal bool UnresolvedSymbol { get; set; }
+
         /// <summary>Number of stored GFace and Edge objects in the GRep block this geometry was
         /// built from (null when the block's object graph was not walked). Such node counts of a family instance's
         /// geometry are compared with its symbol's to decide whether the
@@ -89,7 +100,9 @@ namespace RvtIO.Model
     {
         /// <summary>The id of the symbol that is placed.</summary>
         public int SymbolId { get; set; }
-        /// <summary>The 12 values of the placement transform.</summary>
+        /// <summary>The 12 values of the placement transform: the 3x3 matrix row by row, then the translation, so a point p of the
+        /// symbol maps to (t[9] + p.X t[0] + p.Y t[1] + p.Z t[2], t[10] + p.X t[3] + ..., t[11] + p.X t[6] + ...) and the basis vectors are the
+        /// columns (see <see cref="RvtIO.Meshes.MeshTransform.FromRowMajor"/>).</summary>
         public double[] Transform { get; set; } = new double[12];
 
         /// <summary>Where the GInstance stands among the nodes of its GRep in the depth-first walk (internal order key).</summary>
@@ -188,7 +201,7 @@ namespace RvtIO.Model
         internal int GeometryStyle { get; set; } = -1;
 
         /// <summary>GInfo flags of the serialized Face this polygon came from; null for a face placed from a nested symbol
-        /// or not read (see <c>IfcExporter.HasOnlyUnfilledFacesCurrent</c>).</summary>
+        /// or not read (see <see cref="ProductRules.HasOnlyUnfilledFaces"/>).</summary>
         internal uint? GInfoFlags { get; set; }
 
         /// <summary>The material of a face that was placed here from a nested symbol (GInstance); RenderStyleId is

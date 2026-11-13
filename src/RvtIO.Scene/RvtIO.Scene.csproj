@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Turns a Revit project read by RvtIO into an IOScene scene document.</Description>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>RvtIO.Scene</RootNamespace>
+    <AssemblyName>RvtIO.Scene</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The IOScene range ends at 0.2.0-0 so that previews of the next breaking line stay out; NU5104 flags that bound. -->
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RvtIO.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RvtIO\RvtIO.csproj" />
+    <PackageReference Include="IOScene" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The package icon is the engine's, which the shared pack metadata otherwise expects beside this project. -->
+    <None Remove="$(MSBuildProjectDirectory)/icon.png" />
+    <None Include="..\RvtIO\icon.png" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
+  <!-- Adapter and engine ship on one tag, so the packed engine dependency is exact [X.Y.Z], not >=; a mix gives NU1608. -->
+  <Target Name="PinProjectReferencesExactly" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_Pinned Include="@(_ProjectReferencesWithVersions)"><ProjectVersion>[%(_ProjectReferencesWithVersions.ProjectVersion)]</ProjectVersion></_Pinned>
+      <_ProjectReferencesWithVersions Remove="@(_ProjectReferencesWithVersions)" />
+      <_ProjectReferencesWithVersions Include="@(_Pinned)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

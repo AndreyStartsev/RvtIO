@@ -11,6 +11,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The scene contract of RvtIO.Scene: any patch of the 0.1 line, never a preview of the next (breaking) minor. -->
+    <PackageVersion Include="IOScene" Version="[0.1.0, 0.2.0-0)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Build-time only. -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.100" />
   </ItemGroup>

@@ -42,7 +42,7 @@ internal static partial class ElementBuilder
             // A family symbol holds solids too but has no Volume, and a void form (all faces
             // unfilled) is not a body.
             if (e.NativeMasterSymbolId != null && (!classByElement.TryGetValue((uint)e.Id, out var rootClass) || rootClass != FamilyInstanceRootClassId)) continue;
-            if (Ifc.IfcExporter.HasOnlyUnfilledFacesCurrent(e)) continue;
+            if (ProductRules.HasOnlyUnfilledFaces(e)) continue;
             if (category == -2001320 && e.FramingCopingDistance is not < 0) continue;
             int level = Array.FindIndex(e.LevelSolidCounts, count => count > 0);
             if (level < 0 || e.LevelShells[level] is not { } shell) continue;

@@ -10,6 +10,7 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 - Queries elements through `FilteredElementCollector`.
 - Exports IFC2X3 coordination view, with optional Revit parameters as property sets.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
+- Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
 
 ## Install
 
@@ -28,6 +29,9 @@ Add the library to a .NET project:
 ```sh
 dotnet add package RvtIO
 ```
+
+`RvtIO.Scene` (a separate package released with RvtIO) turns a Revit project into an `IOScene` scene document for
+viewers; see the [scene adapter](docs/scene.md) for usage and limits.
 
 The library targets .NET 8 and .NET 10. It uses managed code without native dependencies or Windows-only APIs and supports Windows, Linux and macOS. Tests currently run on Windows.
 
@@ -167,7 +171,7 @@ The tested projects include basic and advanced architecture, structure and MEP s
 
 ## Limitations
 
-- Version 0.3.0 is a preview. The API can change before 1.0.
+- Version 0.4.0 is a preview. The API can change before 1.0.
 - Geometry coverage is partial for some element kinds.
 - Revit 2027 support is partial.
 - There is no support for writing or modifying Revit files.
