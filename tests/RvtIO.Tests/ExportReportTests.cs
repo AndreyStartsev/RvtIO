@@ -167,7 +167,8 @@ public class ExportReportTests
     [Fact]
     public void RealPathKeepsAPathWithoutLinksAndTheComponentsThatDoNotExist()
     {
-        string folder = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "rvt-realpath-" + Guid.NewGuid().ToString("N"), "a", "b.json"));
+        string tempRoot = ExportReport.RealPath(Path.GetFullPath(Path.GetTempPath()));
+        string folder = Path.Combine(tempRoot, "rvt-realpath-" + Guid.NewGuid().ToString("N"), "a", "b.json");
         Assert.Equal(folder, ExportReport.RealPath(folder));
         string root = Path.GetPathRoot(folder)!;
         Assert.Equal(root, ExportReport.RealPath(root));

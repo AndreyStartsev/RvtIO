@@ -333,6 +333,9 @@ public partial class IfcExporter
     /// <summary>Receives the elements the export leaves out, with the class and the reason (see <see cref="ExportReport"/>). Null to collect nothing.</summary>
     public SkipLog? SkipLog { get; init; }
 
+    /// <summary>UTC timestamp written into the STEP <c>FILE_NAME</c> header (<c>yyyy-MM-ddTHH:mm:ss</c>). Null (the default) uses the current UTC time.</summary>
+    public DateTimeOffset? Timestamp { get; init; }
+
     /// <summary>Products written by the last export, as counted in the "IFC export:" diagnostic line.</summary>
     public int ExportedProducts { get; private set; }
 
@@ -6632,7 +6635,7 @@ public partial class IfcExporter
         }
         if (CurrentProfile) ApplyCurrentOpeningOrder(w, openingOrderKeys);
         w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily, CurrentProfile));
-        w.WriteTo(output, headerFileName, "IFC2X3", desc, appName, headerOrganization);
+        w.WriteTo(output, headerFileName, "IFC2X3", desc, appName, headerOrganization, Timestamp);
 
         ExportedProducts = exportedCount;
         _diag?.WriteLine($"IFC export: {exportedCount} elements exported, {skippedCount} skipped (faces:{withFaces}, bbox:{withBbox}, no-geom:{noGeom})");

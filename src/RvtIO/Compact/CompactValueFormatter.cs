@@ -134,6 +134,9 @@ internal static partial class CompactValueFormatter
         return true;
     }
 
+    private const ulong X64IndefiniteNaN = 0xFFF8_0000_0000_0000UL;
+    private const ulong PositiveQuietNaN = 0x7FF8_0000_0000_0000UL;
+
     internal static double RoundToAccuracy(double value, double accuracy, int method, double tolerance = RoundTolerance)
     {
         if (-tolerance > accuracy) return value;
@@ -148,6 +151,10 @@ internal static partial class CompactValueFormatter
             default: return negative ? -value : value;
         }
         double rounded = steps * accuracy;
+        // Match the x64 floating-point indefinite QNaN sign bit (0xFFF8000000000000) when zero-accuracy
+        // division or infinity*zero produces NaN, instead of ARM64's positive default QNaN (0x7FF8000000000000).
+        if (double.IsNaN(rounded) && !double.IsNaN(value) && !double.IsNaN(accuracy))
+            return BitConverter.UInt64BitsToDouble(negative ? PositiveQuietNaN : X64IndefiniteNaN);
         return negative ? -rounded : rounded;
     }
 

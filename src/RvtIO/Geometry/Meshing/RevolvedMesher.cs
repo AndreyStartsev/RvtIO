@@ -401,7 +401,7 @@ internal static class RevolvedMesher
     /// <summary>Unit surface normal (sign is irrelevant, only differences are compared), the limit value at a pole.</summary>
     private static double[] NormalAt(RevolvedEval s, double[] env, double u, double v)
     {
-        double[] Jac(double uu, double vv)
+        (double[] Cross, double PuNorm) Jac(double uu, double vv)
         {
             double h = 1e-6 * Math.Max(Math.Abs(env[1] - env[0]), 1e-12);
             var a = s.Pt(uu + h, vv); var b = s.Pt(uu - h, vv);
@@ -409,14 +409,14 @@ internal static class RevolvedMesher
             double hv = 1e-6 * Math.Max(Math.Abs(env[3] - env[2]), 1e-12);
             var c = s.Pt(uu, vv + hv); var d = s.Pt(uu, vv - hv);
             var pv = new[] { (c[0] - d[0]) / (2 * hv), (c[1] - d[1]) / (2 * hv), (c[2] - d[2]) / (2 * hv) };
-            return Cross(pu, pv);
+            return (Cross(pu, pv), Norm(pu[0], pu[1], pu[2]));
         }
-        var j = Jac(u, v);
+        var (j, puNorm) = Jac(u, v);
         double n = Norm(j[0], j[1], j[2]);
-        if (n > 1e-9) return new[] { j[0] / n, j[1] / n, j[2] / n };
+        if (n > 1e-7 * Math.Max(puNorm, 1.0)) return new[] { j[0] / n, j[1] / n, j[2] / n };
         double dd = 1e-4 * (env[1] - env[0]);
         double uu2 = Math.Abs(u - env[0]) < Math.Abs(u - env[1]) ? u + dd : u - dd;
-        j = Jac(uu2, v);
+        (j, _) = Jac(uu2, v);
         double m = Math.Max(Norm(j[0], j[1], j[2]), 1e-300);
         return new[] { j[0] / m, j[1] / m, j[2] / m };
     }

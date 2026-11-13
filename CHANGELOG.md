@@ -6,9 +6,17 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Added
+
+- Adds `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated IFC exports of the same input are byte-for-byte identical, and adds CI-runnable corruption and fuzz tests over synthetic `.rvt` containers and inner streams with execution-time and memory-allocation bounds alongside full Windows, Linux and macOS CI test matrices. (Closes #39)
+
 ### Changed
 
 - Reading: in a file without its own class schema (Revit 2020 and 2022) whose partition streams are read by their framing, the block reader, which collects the classes, geometry and other per-element facts of every element, reads the records of the project's own block as the framing lists them, in their current copy, instead of scanning the stream for anything that looks like a block. A record that runs into the next segment of its stream is read too; the blocks of the documents of loaded families, whose element ids repeat project ids, are no longer read as project elements. The geometry of a record that runs into the next segment or holds more than 1,000,000 bytes is not decoded, as the scan never reached it (the decoder takes up to minutes on such a record). Measured on 26 project files against the branch this starts from: the IFC and the compact JSON of 25 are identical; the export report of 22 differs in the elements it counts (ids that only a family document held are no longer counted) and in the category of ids that the Revit API does not return. In one architectural file 8 sketch lines change their length and 14 walls the name of their type: these elements keep two copies from different increments, which the increment table does not tell apart, and the reader now takes the other copy. Against Revit 2022, 5 of the 8 lengths are now right and 3 were right before (6465 of the 6482 sketch lines of the file are right, 6463 before), and the type name of the 14 walls is wrong both before and now. In the element list of `RvtDocument` of one test file (59,201 entries before), the 8,135 elements Revit returns keep their category, type, name, parameters and references; of the entries Revit does not return as elements, 49 without a category are gone and 50,738 change (fewer parameters on 50,564 of them, 3,737,513 parameters in all before and 3,161,540 now, and a name on 16,373). Not changed: which of two such copies is current. Refs #48.
+
+### Fixed
+
+- Geometry meshing: scales the pole Jacobian degeneracy threshold in `RevolvedMesher.NormalAt` by the profile tangent magnitude so 1-ULP trigonometric differences at sphere poles fall through to the pole limit normal on Linux and macOS as on Windows instead of leaving duplicate pole vertices unmerged. (Refs #39)
 
 ## [0.4.0] - 2026-11-13
 

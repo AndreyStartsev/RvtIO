@@ -49,10 +49,12 @@ internal static partial class UnitSchemaEvaluator
             if (name == SlopeName)
             {
                 // Either near-vertical interval snaps to the FIRST lower bound, including the negative-angle case.
+                // Use the exact native tan(0x3FF921445170E214) bits directly so ARM64 libm does not drift by 1 ULP.
                 if (AngleBetween(Bits(0x3FF921445170E214), Bits(0x3FF922B25717780D), converted)
                     || AngleBetween(Bits(0x4012D94EBE7E4F0E), Bits(0x4012D9AA3FE7F48B), converted))
-                    converted = Bits(0x3FF921445170E214);
-                converted = Math.Tan(converted);
+                    converted = Bits(0x40B66193F0CCDEE8);
+                else
+                    converted = Math.Tan(converted);
             }
             if (name == RatioName && Math.Abs(converted) > Epsilon) converted = 1.0 / converted;
             if (!double.IsFinite(converted)) return false;
