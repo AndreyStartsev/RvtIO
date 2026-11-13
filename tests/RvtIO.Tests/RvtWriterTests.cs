@@ -63,6 +63,7 @@ public sealed class RvtWriterTests : IDisposable
             writer.Top(new Cls("SignatureMarker", new NoRef(), 1, [], []));  // markerId + 3
             // Sample domain class with one int32 field (type 0x05) so WideBlockWalker walks it cleanly!
             writer.Top(new Cls("SyntheticItem", new NoRef(), 2, [new Fld("m_code", 0x05)], ["00112233445566778899aabbccddeeff"]));
+            writer.Top(new Cls("RvtLinkSymbol", new NoRef(), 1, [new Fld("m_code", 0x05)], ["112233445566778899aabbccddeeff00"]));
         }
 
         while (writer.Placed.Count < totalClasses)
@@ -107,9 +108,16 @@ public sealed class RvtWriterTests : IDisposable
         return ms.ToArray();
     }
 
-    internal static byte[] BuildTransmissionDataBytes(string linkedPath)
+    internal static byte[] BuildTransmissionDataBytes(
+        string linkedPath,
+        string pathType = "Relative",
+        string loadState = "Loaded",
+        string? extraReferenceXml = null)
     {
-        string xml = $"""<TransmissionData version="4" isTransmitted="false"><ExternalFileReference><ElementId>501</ElementId><ExternalFileReferenceType>Revit Link</ExternalFileReferenceType><LastSavedPath>{linkedPath}</LastSavedPath><LastSavedPathType>Relative</LastSavedPathType><LastSavedLoadState>Loaded</LastSavedLoadState></ExternalFileReference></TransmissionData>""";
+        string escapedPath = System.Security.SecurityElement.Escape(linkedPath) ?? "";
+        string escapedType = System.Security.SecurityElement.Escape(pathType) ?? "";
+        string escapedState = System.Security.SecurityElement.Escape(loadState) ?? "";
+        string xml = $"""<TransmissionData version="4" isTransmitted="false"><ExternalFileReference><ElementId>501</ElementId><ExternalFileReferenceType>Revit Link</ExternalFileReferenceType><LastSavedPath>{escapedPath}</LastSavedPath><LastSavedPathType>{escapedType}</LastSavedPathType><LastSavedLoadState>{escapedState}</LastSavedLoadState></ExternalFileReference>{extraReferenceXml ?? ""}</TransmissionData>""";
         byte[] utf16 = Encoding.Unicode.GetBytes(xml);
         byte[] data = new byte[4 + utf16.Length];
         BinaryPrimitives.WriteInt32LittleEndian(data, xml.Length);
@@ -133,6 +141,10 @@ public sealed class RvtWriterTests : IDisposable
         public bool IncludeFramingMarkers { get; init; } = true;
         public bool IncludePartitions { get; init; } = true;
         public string? LinkedPath { get; init; } = @"links\Arch_Link.rvt";
+        public string LinkedPathType { get; init; } = "Relative";
+        public string LinkedLoadState { get; init; } = "Loaded";
+        public byte[]? RawTransmissionDataBytes { get; init; }
+        public bool IncludeRevitLinkRecord { get; init; }
     }
 
     internal string CreateSyntheticRevitFile(SyntheticFileOptions? options = null)
@@ -178,10 +190,15 @@ public sealed class RvtWriterTests : IDisposable
             pi.Write([1, 2, 3, 4, 5, 6, 7, 8]);
         }
 
-        if (opt.LinkedPath is not null)
+        if (opt.RawTransmissionDataBytes is not null)
         {
             using var td = root.CreateStream("TransmissionData");
-            td.Write(BuildTransmissionDataBytes(opt.LinkedPath));
+            td.Write(opt.RawTransmissionDataBytes);
+        }
+        else if (opt.LinkedPath is not null)
+        {
+            using var td = root.CreateStream("TransmissionData");
+            td.Write(BuildTransmissionDataBytes(opt.LinkedPath, opt.LinkedPathType, opt.LinkedLoadState));
         }
 
         using (var custom = root.CreateStream("CustomOpaqueVendorStream"))
@@ -225,13 +242,21 @@ public sealed class RvtWriterTests : IDisposable
             BinaryPrimitives.WriteInt32LittleEndian(code100, 100);
             byte[] unknownOpaqueBody = [0x99, 0x88, 0x77, 0x66, 0x55];
 
+            var projectRecords = new List<(ulong Owner, ushort ClassTag, byte[] Payload)>
+            {
+                (101UL, syntheticItemTag, code100),
+                (202UL, 65000, unknownOpaqueBody), // unknown class tag + opaque payload
+            };
+            if (opt.IncludeRevitLinkRecord)
+            {
+                ushort linkTag = (ushort)parsedSchema.Classes.Single(c => c.Name == "RvtLinkSymbol").Id;
+                projectRecords.Add((501UL, linkTag, code100));
+            }
+
             var projectBlock = PartitionStreamEditorTests.MakeStandardBlock(
                 idWidth,
                 keyed: false,
-                [
-                    (101UL, syntheticItemTag, code100),
-                    (202UL, 65000, unknownOpaqueBody), // unknown class tag + opaque payload
-                ]);
+                projectRecords.ToArray());
             var familyBlock = PartitionStreamEditorTests.MakeStandardBlock(
                 idWidth,
                 keyed: true,
@@ -752,5 +777,205 @@ public sealed class RvtWriterTests : IDisposable
 
         Assert.Equal(sourceSha, FileSha256(source));
         Assert.Equal(new[] { source }, Directory.EnumerateFileSystemEntries(_folder).Order(StringComparer.Ordinal));
+    }
+
+    private static string ResolveExternalReferenceTarget(string hostPath)
+    {
+        var doc = RvtDocument.Open(hostPath);
+        Assert.NotNull(doc.TransmissionData);
+        var extRef = Assert.Single(doc.TransmissionData!.ExternalReferences);
+        Assert.False(string.IsNullOrWhiteSpace(extRef.Path));
+        string normalized = extRef.Path!
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar);
+        string hostDir = Path.GetDirectoryName(Path.GetFullPath(hostPath))!;
+        return Path.GetFullPath(Path.Combine(hostDir, normalized));
+    }
+
+    [Fact]
+    public void SaveAs_AndRewrite_WithValidRelativeLink_PreserveTargetInSameDirectory_AndRefuseDifferentDirectory()
+    {
+        string linksDir = Path.Combine(_folder, "links");
+        string inputDir = Path.Combine(_folder, "input");
+        string nestedDir = Path.Combine(_folder, "output", "nested");
+        Directory.CreateDirectory(linksDir);
+        Directory.CreateDirectory(inputDir);
+        Directory.CreateDirectory(nestedDir);
+
+        string linkedFile = CreateSyntheticRevitFile(
+            Path.Combine(linksDir, "linked.rvt"),
+            new SyntheticFileOptions
+            {
+                FileName = "linked.rvt",
+                SchemaRelease = 2022,
+                SavedRelease = 2022,
+                LinkedPath = null,
+            });
+        string linkedSha = FileSha256(linkedFile);
+
+        string hostFile = CreateSyntheticRevitFile(
+            Path.Combine(inputDir, "host.rvt"),
+            new SyntheticFileOptions
+            {
+                FileName = "host.rvt",
+                SchemaRelease = 2022,
+                SavedRelease = 2022,
+                LinkedPath = @"..\links\linked.rvt",
+                LinkedPathType = "Relative",
+                LinkedLoadState = "Loaded",
+                IncludeRevitLinkRecord = true,
+            });
+        string hostSha = FileSha256(hostFile);
+
+        // Precondition: the relative reference in input/host.rvt resolves to the real linked.rvt file on disk.
+        string initialResolved = ResolveExternalReferenceTarget(hostFile);
+        Assert.True(File.Exists(initialResolved));
+        Assert.True(ExportReport.SameFile(linkedFile, initialResolved));
+
+        byte[] schemaBytes = BuildSchemaBytesForRelease(2022);
+        ushort itemTag = (ushort)TfSchemaReader.Parse(schemaBytes).Classes.Single(c => c.Name == "SyntheticItem").Id;
+        byte[] updatedItemBody = new byte[6];
+        BinaryPrimitives.WriteUInt16LittleEndian(updatedItemBody.AsSpan(0, 2), itemTag);
+        BinaryPrimitives.WriteInt32LittleEndian(updatedItemBody.AsSpan(2, 4), 777);
+
+        var rewriteRequest = new RvtWriteRequest
+        {
+            PagedStreamEdits = [new RvtPagedStreamEdit("Global/Latest", new byte[] { 42, 43, 44, 45 })],
+            PartitionRecordEdits = [new RvtPartitionRecordEdit(1, 102, 101UL, updatedItemBody)],
+        };
+
+        // 1. Same-directory destinations preserve the resolved link target on disk for SaveAs, RvtDocument.SaveAs, and Rewrite.
+        string sameSaveAs = Path.Combine(inputDir, "host_saveas.rvt");
+        var saveAsRes = RvtWriter.SaveAs(hostFile, sameSaveAs);
+        Assert.Equal(0, saveAsRes.ReplacedStreamCount);
+        string sameSaveAsResolved = ResolveExternalReferenceTarget(sameSaveAs);
+        Assert.True(File.Exists(sameSaveAsResolved));
+        Assert.True(ExportReport.SameFile(linkedFile, sameSaveAsResolved));
+
+        string sameDocSaveAs = Path.Combine(inputDir, "host_doc_saveas.rvt");
+        RvtDocument.Open(hostFile).SaveAs(sameDocSaveAs);
+        string sameDocResolved = ResolveExternalReferenceTarget(sameDocSaveAs);
+        Assert.True(File.Exists(sameDocResolved));
+        Assert.True(ExportReport.SameFile(linkedFile, sameDocResolved));
+
+        string sameRewrite = Path.Combine(inputDir, "host_rewrite.rvt");
+        var rewriteRes = RvtWriter.Rewrite(hostFile, sameRewrite, rewriteRequest);
+        Assert.Equal(1, rewriteRes.RewrittenRecordCount);
+        string sameRewriteResolved = ResolveExternalReferenceTarget(sameRewrite);
+        Assert.True(File.Exists(sameRewriteResolved));
+        Assert.True(ExportReport.SameFile(linkedFile, sameRewriteResolved));
+
+        // 2. Different-directory destinations would break ../links/linked.rvt resolution and must be refused before publishing output.
+        string brokenCandidateTarget = Path.GetFullPath(Path.Combine(nestedDir, "..", "links", "linked.rvt"));
+        Assert.False(File.Exists(brokenCandidateTarget));
+        Assert.False(ExportReport.SameFile(linkedFile, brokenCandidateTarget));
+
+        string nestedSaveAs = Path.Combine(nestedDir, "host_saveas.rvt");
+        var exSaveAs = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(hostFile, nestedSaveAs));
+        Assert.Equal("relative-reference-relocation", exSaveAs.Kind);
+
+        string nestedDocSaveAs = Path.Combine(nestedDir, "host_doc_saveas.rvt");
+        var exDocSaveAs = Assert.Throws<RvtWriteRefusedException>(() => RvtDocument.Open(hostFile).SaveAs(nestedDocSaveAs));
+        Assert.Equal("relative-reference-relocation", exDocSaveAs.Kind);
+
+        string nestedRewrite = Path.Combine(nestedDir, "host_rewrite.rvt");
+        var exRewrite = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.Rewrite(hostFile, nestedRewrite, rewriteRequest));
+        Assert.Equal("relative-reference-relocation", exRewrite.Kind);
+
+        Assert.Empty(Directory.EnumerateFileSystemEntries(nestedDir));
+        Assert.Equal(hostSha, FileSha256(hostFile));
+        Assert.Equal(linkedSha, FileSha256(linkedFile));
+    }
+
+    [Fact]
+    public void SaveAs_AndRewrite_ToDifferentDirectory_SucceedForNonRelativeLinks_AndRefuseCorruptOrStrippedLinkMetadata()
+    {
+        string linksDir = Path.Combine(_folder, "links");
+        string inputDir = Path.Combine(_folder, "input");
+        string nestedDir = Path.Combine(_folder, "output", "nested");
+        Directory.CreateDirectory(linksDir);
+        Directory.CreateDirectory(inputDir);
+        Directory.CreateDirectory(nestedDir);
+
+        string linkedFile = CreateSyntheticRevitFile(
+            Path.Combine(linksDir, "linked.rvt"),
+            new SyntheticFileOptions
+            {
+                FileName = "linked.rvt",
+                SchemaRelease = 2025,
+                SavedRelease = 2025,
+                LinkedPath = null,
+            });
+        string fullLinked = Path.GetFullPath(linkedFile);
+
+        // 1. Absolute + Content external references remain valid across directories.
+        const string keynoteXml = "<ExternalFileReference><ElementId>502</ElementId><ExternalFileReferenceType>Keynote Table</ExternalFileReferenceType><LastSavedPath>Keynotes.txt</LastSavedPath><LastSavedPathType>Content</LastSavedPathType><LastSavedLoadState>Loaded</LastSavedLoadState></ExternalFileReference>";
+        string absHost = CreateSyntheticRevitFile(
+            Path.Combine(inputDir, "host_abs.rvt"),
+            new SyntheticFileOptions
+            {
+                FileName = "host_abs.rvt",
+                SchemaRelease = 2025,
+                SavedRelease = 2025,
+                RawTransmissionDataBytes = BuildTransmissionDataBytes(fullLinked, "Absolute", "Loaded", keynoteXml),
+                IncludeRevitLinkRecord = true,
+            });
+
+        string nestedAbsSaveAs = Path.Combine(nestedDir, "host_abs_saveas.rvt");
+        RvtWriter.SaveAs(absHost, nestedAbsSaveAs);
+        var reopenedAbs = RvtDocument.Open(nestedAbsSaveAs);
+        Assert.NotNull(reopenedAbs.TransmissionData);
+        Assert.Equal(2, reopenedAbs.TransmissionData!.ExternalReferences.Count);
+        string resolvedAbs = Path.GetFullPath(reopenedAbs.TransmissionData.ExternalReferences[0].Path!);
+        Assert.True(File.Exists(resolvedAbs));
+        Assert.True(ExportReport.SameFile(linkedFile, resolvedAbs));
+
+        string nestedAbsRewrite = Path.Combine(nestedDir, "host_abs_rewrite.rvt");
+        RvtWriter.Rewrite(absHost, nestedAbsRewrite, new RvtWriteRequest
+        {
+            PagedStreamEdits = [new RvtPagedStreamEdit("Global/Latest", new byte[] { 1, 2, 3, 4 })],
+        });
+        Assert.True(File.Exists(nestedAbsRewrite));
+
+        // 2. Malformed TransmissionData succeeds in the same directory (verbatim copy) and refuses cross-directory relocation.
+        string corruptTdHost = CreateSyntheticRevitFile(
+            Path.Combine(inputDir, "host_corrupt_td.rvt"),
+            new SyntheticFileOptions
+            {
+                FileName = "host_corrupt_td.rvt",
+                SchemaRelease = 2025,
+                SavedRelease = 2025,
+                RawTransmissionDataBytes = [0x05, 0x00, 0x00, 0x00, 0x3C, 0x00], // truncated UTF-16 XML
+            });
+
+        string sameCorruptCopy = Path.Combine(inputDir, "host_corrupt_td_copy.rvt");
+        RvtWriter.SaveAs(corruptTdHost, sameCorruptCopy);
+        Assert.True(File.Exists(sameCorruptCopy));
+
+        string nestedCorruptCopy = Path.Combine(nestedDir, "host_corrupt_td.rvt");
+        var exCorrupt = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(corruptTdHost, nestedCorruptCopy));
+        Assert.Equal("unreadable-transmission-data", exCorrupt.Kind);
+        Assert.False(File.Exists(nestedCorruptCopy));
+
+        // 3. RvtLinkSymbol record in Partitions/1 with stripped TransmissionData refuses cross-directory relocation.
+        string strippedTdHost = CreateSyntheticRevitFile(
+            Path.Combine(inputDir, "host_stripped_td.rvt"),
+            new SyntheticFileOptions
+            {
+                FileName = "host_stripped_td.rvt",
+                SchemaRelease = 2025,
+                SavedRelease = 2025,
+                LinkedPath = null,
+                IncludeRevitLinkRecord = true,
+            });
+
+        string sameStrippedCopy = Path.Combine(inputDir, "host_stripped_td_copy.rvt");
+        RvtWriter.SaveAs(strippedTdHost, sameStrippedCopy);
+        Assert.True(File.Exists(sameStrippedCopy));
+
+        string nestedStrippedCopy = Path.Combine(nestedDir, "host_stripped_td.rvt");
+        var exStripped = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(strippedTdHost, nestedStrippedCopy));
+        Assert.Equal("missing-metadata", exStripped.Kind);
+        Assert.False(File.Exists(nestedStrippedCopy));
     }
 }

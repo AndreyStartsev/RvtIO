@@ -29,7 +29,7 @@ Every write call inspects the source file first and checks the requested operati
 | File kind | Local project (`.rvt`, `.rte`) and family (`.rfa`, `.rft`) containers (`RvtFileKind.Project`, `RvtFileKind.Family`) | Containers whose kind cannot be identified (`unknown-file-kind`) |
 | Sharing and hosting | Non-workshared local files (`Worksharing: Not enabled`, `IsSingleUserCloudModel: False`) | Workshared central or local copies (`workshared-model`), cloud models (`cloud-model`), or missing/unrecognised `BasicFileInfo` sharing/hosting/release fields (`missing-metadata`) |
 | Release and ID width | Releases `2020` to `2023` (4-byte element IDs) and `2024` to `2027` (8-byte element IDs) when `BasicFileInfo` and `Formats/Latest` agree | Releases outside `2020` to `2027` (`unsupported-release`), unrecognised schemas (`unrecognised-release`), or saved/schema mismatches (`release-mismatch`) |
-| `SaveAs` | All streams, storages, storage directory-entry metadata (`CLSID`, `StateBits`, timestamps), external references, preview images, and unknown payloads copied with sector size (`512` or `4,096` bytes) preserved | Truncated containers (`RvtInputException`) or corrupt page parity (`corrupt-page-parity`) |
+| `SaveAs` | All streams, storages, storage directory-entry metadata (`CLSID`, `StateBits`, timestamps), external references, preview images, and unknown payloads copied with sector size (`512` or `4,096` bytes) preserved | Truncated containers (`RvtInputException`), corrupt page parity (`corrupt-page-parity`), or cross-directory relocation that changes relative external reference targets (`relative-reference-relocation`, `unreadable-transmission-data`) |
 | `PagedStreamRewrite` | Replacing the uncompressed payload of `Formats/Latest` or `Global/<Name>` while preserving stream prefixes, gzip framing, page parity, and container compatibility | Unreadable `Global/*` streams (`unreadable-paged-stream`) or malformed/incompatible replacement `Formats/Latest` schemas (`invalid-schema-payload`, `release-mismatch`, `incompatible-schema-payload`) |
 | `PartitionRecordRewrite` | Replacing targeted record bodies inside `Partitions/<n>` (`101`, `102`, `103`) while preserving untouched blocks, loaded families, channels, and unknown class payloads | Missing framing marker classes (`missing-framing-markers`), missing partition streams (`missing-partitions`), framing errors (`partition-framing-failed`), or mismatched input Adler-32 checksums (`partition-checksum-failed`) |
 
@@ -78,7 +78,9 @@ When rewriting data, `RvtWriter` enforces the following invariants:
 | `unknown-file-kind` | Container has neither `PartAtom` nor `ProjectInformation` and its path extension is not `.rvt`/`.rte`/`.rfa`/`.rft`. |
 | `cloud-model` | `BasicFileInfo` marks a single-user or workshared cloud model (`IsSingleUserCloudModel: True` or cloud central path). |
 | `workshared-model` | `BasicFileInfo` reports worksharing enabled. |
-| `missing-metadata` | `BasicFileInfo` is missing, unreadable, or lacks a recognised `Worksharing`, `IsSingleUserCloudModel`, or saving-release field. |
+| `missing-metadata` | `BasicFileInfo` is missing, unreadable, or lacks a recognised `Worksharing`, `IsSingleUserCloudModel`, or saving-release field, or `TransmissionData` is missing when relocating a file with `RvtLinkSymbol` records. |
+| `relative-reference-relocation` | Saving to a different directory would change the resolved target of a relative external file reference (or an unverified `PointCloudType` path). |
+| `unreadable-transmission-data` | `TransmissionData` cannot be parsed cleanly when saving to a different directory. |
 | `corrupt-page-parity` | A `Formats/*`, `Global/*`, or `Partitions/*` stream fails Hamming page parity verification. |
 | `missing-schema` | `Formats/Latest` is missing, unreadable, or cannot be parsed. |
 | `unrecognised-release` | `Formats/Latest` does not match a known Revit schema release. |

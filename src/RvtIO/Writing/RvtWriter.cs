@@ -1,4 +1,7 @@
+using System.Buffers.Binary;
 using System.Globalization;
+using System.Text;
+using System.Xml;
 using ICSharpCode.SharpZipLib.Checksum;
 using OpenMcdf;
 using RvtIO.Parsing;
@@ -196,6 +199,7 @@ public static class RvtWriter
 
         string fullOutput = ValidateOutputPath(outputPath);
         RvtContainerCheck.Verify(sourcePath);
+        string fullSource = Path.GetFullPath(sourcePath);
 
         Dictionary<string, byte[]>? replacements = null;
         RvtWriteCapabilities capabilities;
@@ -210,6 +214,8 @@ public static class RvtWriter
                 RequireSupported(capabilities, RvtWriteOperation.PagedStreamRewrite);
             if (request.PartitionRecordEdits.Count > 0)
                 RequireSupported(capabilities, RvtWriteOperation.PartitionRecordRewrite);
+
+            ValidateExternalReferenceRelocation(root, inspection, fullSource, fullOutput);
 
             if (request.PagedStreamEdits.Count > 0 || request.PartitionRecordEdits.Count > 0)
                 replacements = BuildReplacements(root, inspection, request);
@@ -240,7 +246,9 @@ public static class RvtWriter
     private sealed record Inspection(
         RvtWriteCapabilities Capabilities,
         PartitionFraming.Tags? FramingTags,
-        IReadOnlyDictionary<string, string> CanonicalStreamPaths);
+        IReadOnlyDictionary<string, string> CanonicalStreamPaths,
+        bool HasPartitionRevitLinks,
+        bool HasPartitionPointClouds);
 
     private static RvtWriteCapabilities InspectContainer(string containerPath, string? pathHint = null)
     {
@@ -360,6 +368,8 @@ public static class RvtWriter
         int? effectiveRelease = SchemaRelease.Effective(savedRelease, schemaRelease);
         int? idWidth = SchemaRelease.IdWidth(effectiveRelease);
         PartitionFraming.Tags? framingTags = formatsSchema is null ? null : PartitionFraming.TagsOf(formatsSchema);
+        ushort? rvtLinkClassTag = FindClassTag(schemaDoc, "RvtLinkSymbol");
+        ushort? pointCloudClassTag = FindClassTag(schemaDoc, "PointCloudType");
 
         (string Code, string Reason)? baseFailure = EvaluateBaseEligibility(
             fileKind,
@@ -374,6 +384,8 @@ public static class RvtWriter
         RvtOperationSupport saveAsSupport;
         RvtOperationSupport pagedSupport;
         RvtOperationSupport partitionSupport;
+        bool hasPartitionRevitLinks = false;
+        bool hasPartitionPointClouds = false;
 
         if (baseFailure is { } refusal)
         {
@@ -387,7 +399,14 @@ public static class RvtWriter
             pagedSupport = globalDecodeFailure is { } gFail
                 ? new RvtOperationSupport(RvtWriteOperation.PagedStreamRewrite, false, gFail.Code, gFail.Reason)
                 : new RvtOperationSupport(RvtWriteOperation.PagedStreamRewrite, true);
-            partitionSupport = EvaluatePartitionEligibility(partitionEntries, framingTags, idWidth);
+            partitionSupport = EvaluatePartitionEligibility(
+                partitionEntries,
+                framingTags,
+                idWidth,
+                rvtLinkClassTag,
+                pointCloudClassTag,
+                out hasPartitionRevitLinks,
+                out hasPartitionPointClouds);
         }
 
         var operations = new Dictionary<RvtWriteOperation, RvtOperationSupport>
@@ -411,7 +430,24 @@ public static class RvtWriter
             Operations = operations,
         };
 
-        return new Inspection(capabilities, framingTags, canonicalPaths);
+        return new Inspection(
+            capabilities,
+            framingTags,
+            canonicalPaths,
+            hasPartitionRevitLinks,
+            hasPartitionPointClouds);
+    }
+
+    private static ushort? FindClassTag(SchemaDocument? schemaDoc, string className)
+    {
+        if (schemaDoc is null) return null;
+        foreach (var cls in schemaDoc.Classes)
+        {
+            if (string.Equals(cls.Name, className, StringComparison.Ordinal)
+                && cls.Id is >= 0 and <= ushort.MaxValue)
+                return (ushort)cls.Id;
+        }
+        return null;
     }
 
     private static bool? ParseWorksharingState(string? value)
@@ -477,8 +513,15 @@ public static class RvtWriter
     private static RvtOperationSupport EvaluatePartitionEligibility(
         List<(string Path, Storage Parent, string Name, long Length)> partitionEntries,
         PartitionFraming.Tags? framingTags,
-        int? idWidth)
+        int? idWidth,
+        ushort? rvtLinkClassTag,
+        ushort? pointCloudClassTag,
+        out bool hasPartitionRevitLinks,
+        out bool hasPartitionPointClouds)
     {
+        hasPartitionRevitLinks = false;
+        hasPartitionPointClouds = false;
+
         if (framingTags is null)
             return new RvtOperationSupport(RvtWriteOperation.PartitionRecordRewrite, false, "missing-framing-markers", "Formats/Latest lacks the partition framing marker classes.");
         if (idWidth is not (4 or 8))
@@ -488,6 +531,8 @@ public static class RvtWriter
 
         var adler = new Adler32();
         ulong terminator = idWidth.Value == 8 ? ulong.MaxValue : uint.MaxValue;
+        bool sawRevitLink = false;
+        bool sawPointCloud = false;
         foreach (var entry in partitionEntries)
         {
             byte[] raw = ReadStreamBytes(entry.Parent, entry.Name, entry.Length);
@@ -498,6 +543,12 @@ public static class RvtWriter
             {
                 if (checksumMismatch) return;
                 if (record.Owner == terminator && record.Body.Length == 0) return;
+                if (record.Block == 0 && record.Channel == 102 && record.Body.Length >= 2)
+                {
+                    ushort classTag = BinaryPrimitives.ReadUInt16LittleEndian(record.Body.Span);
+                    if (rvtLinkClassTag == classTag) sawRevitLink = true;
+                    if (pointCloudClassTag == classTag) sawPointCloud = true;
+                }
                 if (record.Channel == 101) return;
                 adler.Reset();
                 adler.Update(record.Body.ToArray());
@@ -508,6 +559,9 @@ public static class RvtWriter
                     badChannel = record.Channel;
                 }
             }, out string? reason, out _);
+
+            hasPartitionRevitLinks = sawRevitLink;
+            hasPartitionPointClouds = sawPointCloud;
 
             if (!ok)
                 return new RvtOperationSupport(
@@ -525,6 +579,248 @@ public static class RvtWriter
         }
 
         return new RvtOperationSupport(RvtWriteOperation.PartitionRecordRewrite, true);
+    }
+
+    private sealed record TransmissionRefEntry(
+        string? ElementId,
+        string? LastSavedPath,
+        string? LastSavedPathType,
+        string? LastSavedLoadState,
+        string? DesiredPath,
+        string? DesiredPathType,
+        string? DesiredLoadState);
+
+    private static void ValidateExternalReferenceRelocation(
+        RootStorage root,
+        Inspection inspection,
+        string fullSource,
+        string fullOutput)
+    {
+        string sourceDir = Path.GetDirectoryName(fullSource) ?? "";
+        string outputDir = Path.GetDirectoryName(fullOutput) ?? "";
+        bool sameDirectory = SameDirectory(sourceDir, outputDir);
+
+        if (inspection.HasPartitionPointClouds && !sameDirectory)
+        {
+            throw new RvtWriteRefusedException(
+                "relative-reference-relocation",
+                "Saving to a different directory cannot verify external file paths of PointCloudType records, which are not listed in TransmissionData.");
+        }
+
+        if (!inspection.CanonicalStreamPaths.TryGetValue("TransmissionData", out string? tdPath))
+        {
+            if (inspection.HasPartitionRevitLinks && !sameDirectory)
+            {
+                throw new RvtWriteRefusedException(
+                    "missing-metadata",
+                    "TransmissionData is missing while RvtLinkSymbol records exist in Partitions/, so external reference preservation across directories cannot be verified.");
+            }
+            return;
+        }
+
+        byte[] tdBytes = ReadStreamByPath(root, tdPath);
+        if (!TryParseTransmissionReferences(tdBytes, out var references))
+        {
+            if (!sameDirectory)
+            {
+                throw new RvtWriteRefusedException(
+                    "unreadable-transmission-data",
+                    "TransmissionData cannot be parsed cleanly, so relative external reference targets cannot be verified when changing directories.");
+            }
+            return;
+        }
+
+        foreach (var entry in references)
+        {
+            CheckRelativeReferenceTarget(
+                entry.LastSavedPath,
+                entry.LastSavedPathType,
+                entry.LastSavedLoadState,
+                entry.ElementId,
+                sourceDir,
+                outputDir,
+                sameDirectory);
+
+            if (entry.DesiredPath is not null || entry.DesiredPathType is not null)
+            {
+                CheckRelativeReferenceTarget(
+                    entry.DesiredPath,
+                    entry.DesiredPathType,
+                    entry.DesiredLoadState,
+                    entry.ElementId,
+                    sourceDir,
+                    outputDir,
+                    sameDirectory);
+            }
+        }
+    }
+
+    private static void CheckRelativeReferenceTarget(
+        string? rawPath,
+        string? pathType,
+        string? loadState,
+        string? elementId,
+        string sourceDir,
+        string outputDir,
+        bool sameDirectory)
+    {
+        if (string.Equals(loadState?.Trim(), "Imported", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        string? trimmedType = pathType?.Trim();
+        bool isExplicitRelative = string.Equals(trimmedType, "Relative", StringComparison.OrdinalIgnoreCase);
+        bool isExplicitNonRelative = !string.IsNullOrEmpty(trimmedType)
+            && (string.Equals(trimmedType, "Absolute", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(trimmedType, "Server", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(trimmedType, "Content", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(trimmedType, "Library", StringComparison.OrdinalIgnoreCase));
+
+        bool isImplicitRelative = !isExplicitNonRelative
+            && string.IsNullOrEmpty(trimmedType)
+            && !string.IsNullOrWhiteSpace(rawPath)
+            && !IsRootedOrUriLikePath(rawPath);
+
+        if (!isExplicitRelative && !isImplicitRelative)
+            return;
+
+        string elementSuffix = string.IsNullOrWhiteSpace(elementId) ? "" : $" (element {elementId.Trim()})";
+        if (string.IsNullOrWhiteSpace(rawPath))
+        {
+            if (!sameDirectory)
+            {
+                throw new RvtWriteRefusedException(
+                    "relative-reference-relocation",
+                    $"Saving to a different directory cannot preserve relative external reference{elementSuffix} because its relative path is empty.");
+            }
+            return;
+        }
+
+        string normalizedRel = rawPath.Trim()
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar);
+
+        string sourceTarget;
+        string outputTarget;
+        try
+        {
+            sourceTarget = Path.GetFullPath(Path.Combine(sourceDir, normalizedRel));
+            outputTarget = Path.GetFullPath(Path.Combine(outputDir, normalizedRel));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            if (sameDirectory) return;
+            throw new RvtWriteRefusedException(
+                "relative-reference-relocation",
+                $"Saving to a different directory cannot resolve relative external reference '{rawPath.Trim()}'{elementSuffix}.",
+                ex);
+        }
+
+        if (!ExportReport.SameFile(sourceTarget, outputTarget))
+        {
+            throw new RvtWriteRefusedException(
+                "relative-reference-relocation",
+                $"Saving to a different directory changes the resolved target of relative external reference '{rawPath.Trim()}'{elementSuffix}; relative external references cannot be rewritten losslessly.");
+        }
+    }
+
+    private static bool TryParseTransmissionReferences(byte[] data, out List<TransmissionRefEntry> references)
+    {
+        references = [];
+        if (data.Length < 4) return false;
+
+        int charCount = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(0, 4));
+        if (charCount <= 0 || 4L + (long)charCount * 2L > data.Length)
+            return false;
+
+        string xml = Encoding.Unicode.GetString(data, 4, charCount * 2);
+        XmlDocument doc;
+        try
+        {
+            doc = new XmlDocument { XmlResolver = null };
+            using var stringReader = new StringReader(xml);
+            using var xmlReader = XmlReader.Create(
+                stringReader,
+                new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+            doc.Load(xmlReader);
+        }
+        catch (XmlException)
+        {
+            return false;
+        }
+
+        var rootElement = doc.DocumentElement;
+        if (rootElement is null || !string.Equals(rootElement.Name, "TransmissionData", StringComparison.Ordinal))
+            return false;
+
+        foreach (XmlNode node in rootElement.ChildNodes)
+        {
+            if (node.NodeType != XmlNodeType.Element
+                || !string.Equals(node.Name, "ExternalFileReference", StringComparison.Ordinal))
+                continue;
+
+            string? elementId = null;
+            string? lastPath = null;
+            string? lastPathType = null;
+            string? lastLoadState = null;
+            string? desiredPath = null;
+            string? desiredPathType = null;
+            string? desiredLoadState = null;
+
+            foreach (XmlNode child in node.ChildNodes)
+            {
+                if (child.NodeType != XmlNodeType.Element) continue;
+                switch (child.Name)
+                {
+                    case "ElementId": elementId = child.InnerText; break;
+                    case "LastSavedPath": lastPath = child.InnerText; break;
+                    case "LastSavedPathType": lastPathType = child.InnerText; break;
+                    case "LastSavedLoadState": lastLoadState = child.InnerText; break;
+                    case "DesiredPath": desiredPath = child.InnerText; break;
+                    case "DesiredPathType": desiredPathType = child.InnerText; break;
+                    case "DesiredLoadState": desiredLoadState = child.InnerText; break;
+                }
+            }
+
+            references.Add(new TransmissionRefEntry(
+                elementId,
+                lastPath,
+                lastPathType,
+                lastLoadState,
+                desiredPath,
+                desiredPathType,
+                desiredLoadState));
+        }
+
+        return true;
+    }
+
+    private static bool SameDirectory(string sourceDir, string outputDir)
+    {
+        if (string.IsNullOrEmpty(sourceDir) || string.IsNullOrEmpty(outputDir))
+            return false;
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        string trimmedSource = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceDir));
+        string trimmedOutput = Path.TrimEndingDirectorySeparator(Path.GetFullPath(outputDir));
+        return string.Equals(trimmedSource, trimmedOutput, comparison)
+            && ExportReport.SameFile(trimmedSource, trimmedOutput);
+    }
+
+    private static bool IsRootedOrUriLikePath(string rawPath)
+    {
+        string trimmed = rawPath.Trim();
+        if (Path.IsPathRooted(trimmed)) return true;
+        if (trimmed.Length >= 3
+            && char.IsAsciiLetter(trimmed[0])
+            && trimmed[1] == ':'
+            && (trimmed[2] == '\\' || trimmed[2] == '/'))
+            return true;
+        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal)
+            || trimmed.StartsWith("//", StringComparison.Ordinal)
+            || trimmed.Contains("://", StringComparison.Ordinal))
+            return true;
+        return false;
     }
 
     private static Dictionary<string, byte[]> BuildReplacements(

@@ -25,6 +25,10 @@ A file may lie directly in the folder or in one level of subfolders (`2020`, `20
 `ContainerRewriterSampleTests` copies every `.rvt` file in the folder and in one level of subfolders to a temporary file (deleted after
 each file; it needs free disk space for the largest file) and compares the compact JSON of the copy with that of the source for the ten largest files of up to 8 MB.
 
+`RvtWriterSampleTests` runs `RvtWriter.SaveAs` and targeted partition rewrites on every `.rvt` and `.rfa` file in the folder and in one
+level of subfolders, checking stream hashes, element identities, references, geometry and framing checksums (or refusal on unsupported
+containers and cross-directory relative references).
+
 `SchemaStreamEditorSampleTests` reads the `Formats/Latest` stream of every `.rvt` file in the folder and in one level of subfolders,
 whatever its name, and tests one stream per distinct schema, so one project per release is enough.
 
@@ -45,8 +49,8 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 
 ## What runs without the private files
 
-With no private file at all, 10450 of the 10894 test cases run and pass on net8.0 and 444 are skipped (net10.0: 10454 of
-10898, 444 skipped): 438 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
+With no private file at all, 10483 of the 10929 test cases run and pass on net8.0 and 446 are skipped (net10.0: 10487 of
+10933, 446 skipped): 440 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
 and 6 need other inputs (two need symbolic links, three
 need `RVTIO_FREEFORM_FULL`, `RVTIO_CYL_FULL` or `RVTIO_MESH_FULL`, one is a known gap). The tests that run use synthetic data built
 in the tests and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
@@ -56,7 +60,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 
 ## Tests that need the private files
 
-295 test methods (438 cases, theory rows counted) are skipped without the files:
+297 test methods (440 cases, theory rows counted) are skipped without the files:
 
 | Class | Methods | Cases | Files |
 |---|---|---|---|
@@ -109,6 +113,7 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `RecordRoutingTests` | 1 | 1 | TESTFILE.rvt |
 | `ReferenceApiTests` | 18 | 18 | TESTFILE.rvt, bim_dump.txt |
 | `RvtSceneIdentitySampleTests` | 1 | 1 | TESTFILE.rvt |
+| `RvtWriterSampleTests` | 2 | 2 | any `.rvt` or `.rfa` files |
 | `SchemaModelTests` | 1 | 1 | Test_2022.rvt |
 | `SchemaReleaseTests` | 2 | 7 | Test_2020.rvt, Test_2022.rvt, Test_2025.rvt, TESTFILE.rvt |
 | `SchemaStreamEditorSampleTests` | 2 | 2 | any `.rvt` project files |

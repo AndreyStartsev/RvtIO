@@ -94,6 +94,7 @@ public sealed class RvtWriterSampleTests : IDisposable
             var caps = RvtWriter.InspectCapabilities(source);
             string ext = Path.GetExtension(source);
             string copy = Fresh("rvtwriter-saveas" + ext);
+            string? stagedSource = null;
             try
             {
                 if (!caps.Supports(RvtWriteOperation.SaveAs))
@@ -105,17 +106,29 @@ public sealed class RvtWriterSampleTests : IDisposable
                 }
 
                 supportedCount++;
-                var writeResult = RvtWriter.SaveAs(source, copy);
+                RvtWriteResult writeResult;
+                try
+                {
+                    writeResult = RvtWriter.SaveAs(source, copy);
+                }
+                catch (RvtWriteRefusedException ex) when (ex.Kind == "relative-reference-relocation")
+                {
+                    Assert.False(File.Exists(copy));
+                    stagedSource = Fresh("rvtwriter-staged-saveas" + ext);
+                    File.Copy(source, stagedSource);
+                    writeResult = RvtWriter.SaveAs(stagedSource, copy);
+                }
+
                 Assert.Equal(caps.FileKind, writeResult.FileKind);
                 Assert.Equal(caps.EffectiveRelease, writeResult.EffectiveRelease);
 
-                var expectedStreams = StreamHashes(source);
+                var expectedStreams = StreamHashes(stagedSource ?? source);
                 var actualStreams = StreamHashes(copy);
                 Assert.Equal(
                     expectedStreams.Select(s => (s.Key, s.Value.Length, s.Value.Sha256)),
                     actualStreams.Select(s => (s.Key, s.Value.Length, s.Value.Sha256)));
 
-                var srcDoc = RvtDocument.Open(source);
+                var srcDoc = RvtDocument.Open(stagedSource ?? source);
                 var dstDoc = RvtDocument.Open(copy);
 
                 Assert.Equal(srcDoc.Elements.Count, dstDoc.Elements.Count);
@@ -130,6 +143,7 @@ public sealed class RvtWriterSampleTests : IDisposable
             finally
             {
                 File.Delete(copy);
+                if (stagedSource is not null) File.Delete(stagedSource);
             }
         }
 
@@ -199,29 +213,43 @@ public sealed class RvtWriterSampleTests : IDisposable
 
             string ext = Path.GetExtension(source);
             string rewritten = Fresh("rvtwriter-rewrite" + ext);
+            string? stagedSource = null;
             try
             {
                 var pagedEdits = globalPtPayload is not null
                     ? new[] { new RvtPagedStreamEdit("Global/PartitionTable", globalPtPayload) }
                     : Array.Empty<RvtPagedStreamEdit>();
 
-                var res = RvtWriter.Rewrite(source, rewritten, new RvtWriteRequest
+                var request = new RvtWriteRequest
                 {
                     PagedStreamEdits = pagedEdits,
                     PartitionRecordEdits =
                     [
                         new RvtPartitionRecordEdit(targetPart.Value, 102, targetOwner, targetBody),
                     ],
-                });
+                };
+
+                RvtWriteResult res;
+                try
+                {
+                    res = RvtWriter.Rewrite(source, rewritten, request);
+                }
+                catch (RvtWriteRefusedException ex) when (ex.Kind == "relative-reference-relocation")
+                {
+                    Assert.False(File.Exists(rewritten));
+                    stagedSource = Fresh("rvtwriter-staged-rewrite" + ext);
+                    File.Copy(source, stagedSource);
+                    res = RvtWriter.Rewrite(stagedSource, rewritten, request);
+                }
 
                 Assert.Equal(1, res.RewrittenRecordCount);
 
-                var srcCensus = CoverageCensus.Read(source);
+                var srcCensus = CoverageCensus.Read(stagedSource ?? source);
                 var dstCensus = CoverageCensus.Read(rewritten);
                 Assert.Equal(0, dstCensus.Totals.ChecksumMismatches);
                 Assert.Equal(srcCensus.Totals.Items, dstCensus.Totals.Items);
 
-                var srcDoc = RvtDocument.Open(source);
+                var srcDoc = RvtDocument.Open(stagedSource ?? source);
                 var dstDoc = RvtDocument.Open(rewritten);
                 Assert.Equal(srcDoc.Elements.Count, dstDoc.Elements.Count);
                 Assert.Equal(
@@ -232,6 +260,7 @@ public sealed class RvtWriterSampleTests : IDisposable
             finally
             {
                 File.Delete(rewritten);
+                if (stagedSource is not null) File.Delete(stagedSource);
             }
         }
 

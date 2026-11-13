@@ -150,6 +150,32 @@ public sealed class SaveAsCommandTests : IDisposable
             Assert.False(srcNode.TryGetProperty("workshared", out _));
             Assert.False(srcNode.TryGetProperty("cloudModel", out _));
         }
+
+        // Cross-directory write with a relative external reference -> refused (exit 5) with relative-reference-relocation
+        string nestedDir = Path.Combine(_folder, "nested_out");
+        Directory.CreateDirectory(nestedDir);
+        string linkedHost = RvtWriterTests.CreateSyntheticRevitFile(
+            P("linked_host_2025.rvt"),
+            new RvtWriterTests.SyntheticFileOptions
+            {
+                FileName = "linked_host_2025.rvt",
+                SchemaRelease = 2025,
+                SavedRelease = 2025,
+                LinkedPath = @"links\linked.rvt",
+                LinkedPathType = "Relative",
+            });
+        string relocatedOut = Path.Combine(nestedDir, "linked_host_2025.rvt");
+        string relocReport = P("relocated_refused.json");
+        var (relocExit, relocOut, relocErr) = Run(linkedHost, relocatedOut, "--report", relocReport);
+        Assert.Equal(SaveAsCommand.Refused, relocExit);
+        Assert.Equal("", relocOut);
+        Assert.Contains("Nothing was written (exit code 5)", relocErr);
+        Assert.False(File.Exists(relocatedOut));
+        using (var json = JsonDocument.Parse(File.ReadAllText(relocReport)))
+        {
+            Assert.Equal("refused", json.RootElement.GetProperty("status").GetString());
+            Assert.Equal("relative-reference-relocation", json.RootElement.GetProperty("kind").GetString());
+        }
     }
 
     [Fact]
