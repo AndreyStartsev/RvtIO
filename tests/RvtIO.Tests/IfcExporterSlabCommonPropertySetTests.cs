@@ -275,6 +275,7 @@ public class IfcExporterSlabCommonPropertySetTests
     [InlineData("slope_type_parameter", false)]
     [InlineData("slope_parameter", false)]
     [InlineData("pitch_parameter", false)]
+    [InlineData("qualified_pitch_parameter", false)]
     [InlineData("ramp_parameter", false)]
     public void PitchAngle_IsZeroOnlyForAValidatedHorizontalSlab(string mode, bool expected)
     {
@@ -334,6 +335,7 @@ public class IfcExporterSlabCommonPropertySetTests
             case "slope_type_parameter": type.Parameters.Add(Named("Slope", 0.0)); break;
             case "slope_parameter": slab.Parameters.Add(Named("Slope", 0.0)); break;
             case "pitch_parameter": slab.Parameters.Add(Named("PitchAngle", 0.0)); break;
+            case "qualified_pitch_parameter": slab.Parameters.Add(Named("Pset_SlabCommon.PitchAngle", 0.0)); break;
             case "ramp_parameter":
                 slab.Parameters.Add(new Parameter
                     { Id = -1008301, StorageType = StorageType.Double, Value = 0.0 });

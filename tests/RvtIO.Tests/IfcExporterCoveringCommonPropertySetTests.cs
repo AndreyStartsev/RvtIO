@@ -13,6 +13,29 @@ namespace RvtIO.Tests;
 public class IfcExporterCoveringCommonPropertySetTests
 {
     [Fact]
+    public void SetQualifiedFinish_WinsOverThePropertyName()
+    {
+        Element covering = Product(
+            id: 8010, typeId: 8011, categoryId: -2000038,
+            category: "OST_Ceilings", name: "Acoustic ceiling");
+        covering.Parameters.Add(new Parameter
+        {
+            Id = 9810, Definition = new Definition { Id = 9810, Name = "Finish" },
+            StorageType = StorageType.String, Value = "Plain finish",
+        });
+        covering.Parameters.Add(new Parameter
+        {
+            Id = 9811, Definition = new Definition { Id = 9811, Name = "Pset_CoveringCommon.Finish" },
+            StorageType = StorageType.String, Value = "Qualified finish",
+        });
+
+        string ifc = ExportToText(covering);
+
+        Assert.Equal("IFCTEXT('Qualified finish')",
+            Properties(ifc, SolePset(ifc, "Pset_CoveringCommon"))["Finish"].Expression);
+    }
+
+    [Fact]
     public void EmittedCeilingCovering_ReusesQtoReferenceEntity_AndOwnFinishParameter()
     {
         Element covering = Product(
