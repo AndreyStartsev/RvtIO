@@ -8,12 +8,12 @@ projects through `InternalsVisibleTo`.
 
 | Type | Use |
 |---|---|
-| `RvtDocument` | Opens a file (`Open`) and gives the elements, project information, file metadata and category lookups. |
+| `RvtDocument` | Opens a file (`Open`), saves a verified lossless copy (`SaveAs`), and gives the elements, project information, file metadata and category lookups. |
 | `RvtFileReader` | Lower level read (`Read`) that returns the `RevitFileInfo` behind a document. |
 | `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition streams read and the streams cut by a limit. |
 | `ExportReport`, `SkipLog` | The machine-readable report of a run (`ToJson`) and the elements an export left out; see [the export report](export-report.md). |
-| `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes 0 to 4 and 6 of the command line tool (code 5 is returned only by `downgrade --check`), the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
+| `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes 0 to 4 and 6 of the command line tool (code 5 is returned by `downgrade --check` and `save-as` when refused), the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
 | `FilteredElementCollector` | Query over the elements of a document (`OfCategory`, `WhereElementIsNotElementType`, `Where`, ...). |
 
 ## Model
@@ -65,6 +65,15 @@ The drawable elements follow a subset of the product rules of the IFC export of 
 hidden Geometry nodes follow its rules: they are listed in the documentation comment of `ElementMeshes`, with the product rules
 that are not applied (the "export to IFC" flag, topography, walls that are not visible and others), so the meshes can include
 elements that the IFC leaves out. Curved surfaces are the dense polygons the reader decodes for them.
+
+## Writing and save-as
+
+| Type | Use |
+|---|---|
+| `RvtWriter` | Inspects the write-capability matrix (`InspectCapabilities`), writes lossless copies (`SaveAs`), and persists targeted stream and partition-record edits (`Rewrite`) for local `2020` to `2027` `.rvt` and `.rfa` files; see [writing and save-as](writing.md). |
+| `RvtWriteCapabilities`, `RvtOperationSupport`, `RvtFileKind`, `RvtWriteOperation` | Capability classification by file kind (`Project`, `Family`), release (`2020` to `2027`), element ID width (`4` or `8` bytes), worksharing/cloud flags, and operation (`SaveAs`, `PagedStreamRewrite`, `PartitionRecordRewrite`). |
+| `RvtWriteRequest`, `RvtPagedStreamEdit`, `RvtPartitionRecordEdit`, `RvtWriteResult` | Edit specifications for `Formats/Latest`, `Global/*`, and `Partitions/<n>` records, and the verified write summary. |
+| `RvtWriteRefusedException` | Thrown with a stable `Kind` code when a file state or edit request is outside the supported write scope. |
 
 ## Diagnostics
 

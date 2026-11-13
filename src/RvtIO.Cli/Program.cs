@@ -70,6 +70,9 @@ internal static partial class Program
                                             (first argument) plan the class table edit that would let an older release load a newer
                                             project and report it; the profile is a project or family saved by that older release;
                                             writes nothing but the report; exit code 5 when the releases are out of scope
+          save-as <source.rvt|source.rfa> [<output.rvt|output.rfa>] [--check] [--report <report.json>]
+                                            (first argument) inspect the write-capability matrix (--check) or write a verified lossless
+                                            copy of a local 2020-2027 project or family; exit code 5 when refused by the matrix
           coverage <file.rvt> [--report <report.json>] [--top <n>]
                                             (first argument) count the records of the partition streams that the class schema of the
                                             file walks to their last byte, per channel and class; writes nothing but the report
@@ -135,6 +138,7 @@ internal static partial class Program
         // --schema-dump / --schema-check / --schema-diff: the class schema embedded in a Revit file (Formats/Latest), see TfSchemaTools.
         if (args[0].StartsWith("--schema-")) return RvtIO.Parsing.TfSchemaTools.Run(args, Console.Out, Console.Error);
         if (args[0] == "downgrade") return RvtIO.Cli.DowngradeCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "save-as") return RvtIO.Cli.SaveAsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "coverage") return RvtIO.Cli.CoverageCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "--rebar-dump") return RvtIO.RebarDump.Run(args[1..]);
         if (args[0] == "--parse-block") return ParseBlock(args);
