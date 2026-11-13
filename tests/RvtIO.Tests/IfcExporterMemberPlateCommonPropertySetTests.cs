@@ -609,6 +609,26 @@ public class IfcExporterMemberPlateCommonPropertySetTests
     }
 
     [Fact]
+    public void HostSetQualifiedIsExternal_StaysOutOfTheValueItsHostedColumnInherits()
+    {
+        var slabType = new Element { Id = 3201, CategoryId = -2000032 };
+        var columnType = new Element { Id = 3203, CategoryId = -2001330 };
+        Element slab = BareTypedElement(3210, -2000032, slabType.Id);
+        slab.Parameters.Add(new Parameter { Definition = new Definition { Name = "IsExternal" },
+            StorageType = StorageType.Integer, Value = 1 });
+        slab.Parameters.Add(new Parameter { Definition = new Definition { Name = "Pset_SlabCommon.IsExternal" },
+            StorageType = StorageType.Integer, Value = 0 });
+        Element column = BareTypedElement(3211, -2001330, columnType.Id, slab.Id);
+
+        IReadOnlyDictionary<int, bool> values = IfcExporter.ResolveMemberPlateIsExternalValues(
+            [slabType, columnType, slab, column], [slab.Id, column.Id],
+            new Dictionary<int, string> { [slab.Id] = "Pset_SlabCommon", [column.Id] = "Pset_ColumnCommon" });
+
+        Assert.False(values[slab.Id]);
+        Assert.True(values[column.Id]);
+    }
+
+    [Fact]
     public void CurtainComponentIsExternal_ReadsFunctionOnlyFromResolvedType()
     {
         var wallType = new Element { Id = 3100, CategoryId = -2000011 };
