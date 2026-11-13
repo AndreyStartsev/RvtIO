@@ -26,9 +26,19 @@ Build settings shared by every project live in `Directory.Build.props`; the SDK 
   `System.IO.Compression` was not done: it would risk behavior changes on corrupt or truncated streams
   (the inflater is driven with `noHeader: true` and explicit partial-read handling) for no security gain.
 
+## Runtime packages (scene adapter)
+
+| Package | Version | Used for |
+|---|---|---|
+| IOScene | `[0.1.0, 0.2.0-0)` | The scene model (`SceneDocument`) that `RvtIO.Scene` builds; `SceneJson` of IOScene saves it as JSON. |
+
+Any 0.1 release from 0.1.0 on is accepted; the `-0` upper bound keeps out the previews of the next breaking line.
+That prerelease bound raises NU5104 when packing, which `RvtIO.Scene.csproj` suppresses, and `tools/pack-release.ps1`
+fails a release whose lower bound is missing or a preview.
+
 ## Test packages
 
-Pinned to exact versions: Microsoft.NET.Test.Sdk 18.11.0, xunit 2.9.3 and xunit.runner.visualstudio 4.0.1.
+Pinned to exact versions: Microsoft.NET.Test.Sdk 18.11.1, xunit 2.9.3 and xunit.runner.visualstudio 4.0.1.
 The test SDK and Visual Studio adapter are updated together; the xUnit test framework remains at 2.9.3.
 The tests project also references OpenMcdf directly (it opens containers itself).
 
@@ -47,7 +57,7 @@ Re-run the audit when changing dependencies.
 ## Build settings
 
 `Directory.Build.props` sets `LangVersion` 14.0, `Nullable` enable, `ImplicitUsings` enable, `Deterministic` true,
-`EmbedUntrackedSources` true, `PublishRepositoryUrl` true, `VersionPrefix` 0.3.0, snapshot symbol packages (`snupkg`),
+`EmbedUntrackedSources` true, `PublishRepositoryUrl` true, `VersionPrefix` 0.4.0, symbol packages (`snupkg`),
 and `ContinuousIntegrationBuild` true when `CI`, `GITHUB_ACTIONS` or `TF_BUILD` is set. `Microsoft.SourceLink.GitHub`
 is a build-time dependency only (`PrivateAssets` all). `tests/Directory.Build.props` imports it and turns
 `GenerateDocumentationFile` off. The library, the CLI and the tests target `net8.0` and `net10.0`.
