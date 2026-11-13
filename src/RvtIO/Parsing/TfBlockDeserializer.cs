@@ -3165,7 +3165,7 @@ internal static partial class TfBlockDeserializer
     /// serialized form of Revit's "Attach Top": a JoinToRoofGStep (class 2262) with
     /// <c>m_baseOrTop = 1</c> and at least one target id. The deferred queue is walked in
     /// order; every geometry step listed by the wall's GeomStepList is read with the exact
-    /// per-class layout of <see cref="TryReadExactWallGeomStep"/>, and all of them must share
+    /// per-class layout of <see cref="TryReadExactWallGeomStep"/> (any m_version of a class it reads), and all of them must share
     /// the wall's own back-reference. Returns null when the block, a step class or version,
     /// or any earlier deferred object cannot be read exactly; true/false otherwise.</summary>
     internal static bool? ExtractWallJoinedToTop(
@@ -3261,7 +3261,7 @@ internal static partial class TfBlockDeserializer
                     int stepStart = cur.Pos - blockStart;
                     failure = $"step {queuedClass} @{stepStart}";
                     if (!TryReadExactWallGeomStep(cur, queuedClass,
-                            out uint stepOwner, out bool stepJoinsTop, out string? stepFailure))
+                            out uint stepOwner, out bool stepJoinsTop, out string? stepFailure, anyVersion: true))
                     {
                         failure = $"step {queuedClass} {stepFailure} @{stepStart}";
                         return null;
@@ -3543,6 +3543,13 @@ internal static partial class TfBlockDeserializer
         (4147, 1), (4151, 3), (4153, 0), (4153, 3), (4153, 4), (4155, 1), (4155, 33),
     };
 
+    // The classes of those pairs. The top-attachment walk accepts any m_version of them: the layout read below follows
+    // the class schema, and on Autodesk's samples of Revit 2020 to 2025 every wall the strict pairs read keeps its value,
+    // each wall reads the same in every save of its project, and rac_advanced 2020 equals Revit's IFC2X3 export of it
+    // on all 146 walls (ExtendToStructure; the strict pairs read none of them).
+    private static readonly HashSet<ushort> ExactWallGeomStepClasses =
+        ExactWallGeomStepVersions.Select(pair => pair.Class).ToHashSet();
+
     /// <summary>Reads one wall geometry step. GeomGenerator persists its face, curve and
     /// edge history tables as counted FaceHistEntry (16 bytes), CurveHistEntry (24) and
     /// EdgeHistEntry (20) records, followed by an empty reverse table, m_id, then GeomStep's
@@ -3551,7 +3558,7 @@ internal static partial class TfBlockDeserializer
     /// ElementId&gt; 8, an affected-edge entry an ElementId plus a counted tag set, a merged
     /// face entry an int key plus a counted int set.</summary>
     private static bool TryReadExactWallGeomStep(
-        Cursor c, ushort classId, out uint owner, out bool joinsTop, out string? failure)
+        Cursor c, ushort classId, out uint owner, out bool joinsTop, out string? failure, bool anyVersion = false)
     {
         owner = 0;
         joinsTop = false;
@@ -3583,7 +3590,7 @@ internal static partial class TfBlockDeserializer
         int version = ReadI32(c);
         ReadI32(c);
         owner = ReadU32(c);
-        if (!ExactWallGeomStepVersions.Contains((classId, version)))
+        if (anyVersion ? !ExactWallGeomStepClasses.Contains(classId) : !ExactWallGeomStepVersions.Contains((classId, version)))
         {
             failure = $"v{version}";
             return false;

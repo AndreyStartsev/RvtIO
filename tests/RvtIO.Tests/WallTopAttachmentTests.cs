@@ -58,6 +58,20 @@ public class WallTopAttachmentTests
         Assert.Equal((int)BitConverter.ToUInt32(block, 0), parameters.Fields["m_id"]);
     }
 
+    [Theory]
+    [InlineData(14)] // the JoinToRoofGStep m_version in rac_advanced 2020
+    [InlineData(17)]
+    public void OtherStepVersion_IsReadWithTheSameLayout(int version)
+    {
+        // m_version is the step's own counter; the layout follows the class schema (rac_advanced 2020 saves
+        // BaseWallGStep v6 and JoinToRoofGStep v14 and equals Revit's export on all 146 walls).
+        byte[] block = Convert.FromBase64String(TopAttachedWall);
+        BitConverter.GetBytes(version).CopyTo(block, JoinToRoofVersionOffset);
+        Assert.True(Extract(block));
+        BitConverter.GetBytes(0).CopyTo(block, JoinToRoofBaseOrTopOffset);
+        Assert.False(Extract(block));
+    }
+
     [Fact]
     public void BaseAttachment_IsNotJoinedToTop()
     {
@@ -68,7 +82,6 @@ public class WallTopAttachmentTests
 
     [Theory]
     [InlineData("base_or_top_range")]
-    [InlineData("unknown_version")]
     [InlineData("footer")]
     [InlineData("data_size")]
     [InlineData("not_a_wall")]
@@ -81,9 +94,6 @@ public class WallTopAttachmentTests
         {
             case "base_or_top_range":
                 BitConverter.GetBytes(2).CopyTo(block, JoinToRoofBaseOrTopOffset);
-                break;
-            case "unknown_version":
-                BitConverter.GetBytes(17).CopyTo(block, JoinToRoofVersionOffset);
                 break;
             case "footer":
                 block[^1] ^= 0xFF;
