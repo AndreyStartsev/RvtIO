@@ -631,17 +631,23 @@ public static class RvtWriter
 
         if (!sameDirectory)
         {
-            // every RvtLinkSymbol needs its own reference entry: without one the target of the link cannot be checked
-            var referencedIds = new HashSet<ulong>();
+            // every RvtLinkSymbol needs its own reference entry with a saved path and path type: without them the target of the link
+            // cannot be checked (Revit writes both for a link)
+            var usableIds = new HashSet<ulong>();
+            var unusableIds = new HashSet<ulong>();
             foreach (var entry in references)
-                if (ulong.TryParse(entry.ElementId?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out ulong id))
-                    referencedIds.Add(id);
-            ulong[] unlisted = inspection.PartitionRevitLinkIds.Where(id => !referencedIds.Contains(id)).Order().ToArray();
-            if (unlisted.Length > 0)
+            {
+                if (!ulong.TryParse(entry.ElementId?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out ulong id)) continue;
+                bool usable = !string.IsNullOrWhiteSpace(entry.LastSavedPath) && !string.IsNullOrWhiteSpace(entry.LastSavedPathType);
+                (usable ? usableIds : unusableIds).Add(id);
+            }
+            ulong[] unverified = inspection.PartitionRevitLinkIds
+                .Where(id => !usableIds.Contains(id) || unusableIds.Contains(id)).Order().ToArray();
+            if (unverified.Length > 0)
             {
                 throw new RvtWriteRefusedException(
                     "missing-metadata",
-                    $"TransmissionData lists no external reference for RvtLinkSymbol element(s) {string.Join(", ", unlisted)} in Partitions/, so their link targets cannot be verified across directories.");
+                    $"TransmissionData lists no external reference with a saved path and path type for RvtLinkSymbol element(s) {string.Join(", ", unverified)} in Partitions/, so their link targets cannot be verified across directories.");
             }
         }
 

@@ -983,7 +983,7 @@ public sealed class RvtWriterTests : IDisposable
     }
 
     [Fact]
-    public void SaveAs_ToDifferentDirectory_RefusesALinkThatTransmissionDataDoesNotList()
+    public void SaveAs_ToDifferentDirectory_RefusesALinkWithoutAUsableTransmissionDataEntry()
     {
         string inputDir = Path.Combine(_folder, "input");
         string nestedDir = Path.Combine(_folder, "output", "nested");
@@ -999,8 +999,20 @@ public sealed class RvtWriterTests : IDisposable
             return data;
         }
 
-        // a valid but empty TransmissionData, and one that lists only another reference, while Partitions/1 holds RvtLinkSymbol 501
-        foreach (var (name, td) in new[] { ("empty", Xml("")), ("other", Xml(keynoteXml)) })
+        string Link(string path, string type) =>
+            $"<ExternalFileReference><ElementId>501</ElementId><ExternalFileReferenceType>Revit Link</ExternalFileReferenceType><LastSavedPath>{path}</LastSavedPath><LastSavedPathType>{type}</LastSavedPathType><LastSavedLoadState>Loaded</LastSavedLoadState></ExternalFileReference>";
+
+        // Partitions/1 holds RvtLinkSymbol 501: a valid but empty TransmissionData, one that lists only another reference, and ones whose
+        // entry for 501 lacks the saved path, its type or both (or adds such an entry to a complete one)
+        foreach (var (name, td) in new[]
+        {
+            ("empty", Xml("")),
+            ("other", Xml(keynoteXml)),
+            ("bare", Xml(Link("", ""))),
+            ("nopath", Xml(Link("", "Relative to Central Model"))),
+            ("notype", Xml(Link(@"..\links\linked.rvt", ""))),
+            ("second", Xml(Link(@"C:\links\linked.rvt", "Absolute") + Link("", ""))),
+        })
         {
             string host = CreateSyntheticRevitFile(
                 Path.Combine(inputDir, $"host_{name}.rvt"),
