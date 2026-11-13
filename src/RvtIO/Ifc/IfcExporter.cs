@@ -66128,7 +66128,7 @@ public partial class IfcExporter
             && ResolveBeamSpanMillimetresCurrent(elem, elementsById.GetValueOrDefault(elem.FamilyTypeId), driveCurveFirst: true) is double braceSpan)
             valueIds.Add(GetOrAddPropertySingleValue(
                 w, valuePool, "Span", $"IFCPOSITIVELENGTHMEASURE({D17(braceSpan)})"));
-        if (elem.CategoryId == CurtainWallMullionCategoryId && !CurrentProfile)
+        if (elem.CategoryId == CurtainWallMullionCategoryId)
         {
             Element? elementType = elem.FamilyTypeId > 0
                 && elementsById.TryGetValue(
