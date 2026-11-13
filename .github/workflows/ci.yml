@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -31,14 +31,3 @@ jobs:
           name: packages-${{ matrix.os }}
           path: artifacts/*.nupkg
           if-no-files-found: error
-
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-      - run: dotnet build src/RvtIO.Cli/RvtIO.Cli.csproj -c Release

@@ -33,7 +33,7 @@ dotnet add package RvtIO
 `RvtIO.Scene` (a separate package released with RvtIO) turns a Revit project into an `IOScene` scene document for
 viewers; see the [scene adapter](docs/scene.md) for usage and limits.
 
-The library targets .NET 8 and .NET 10. It uses managed code without native dependencies or Windows-only APIs and supports Windows, Linux and macOS. Tests currently run on Windows.
+The library targets .NET 8 and .NET 10. It uses managed code without native dependencies or Windows-only APIs and is tested on Windows, Linux and macOS.
 
 ## Command line
 
@@ -83,7 +83,7 @@ rvtio project.rvt project.ifc --ifc-opening-legacy-axes
 
 `--ifc-opening-host-axes`, the opt-in of the earlier release for the new reading, is still accepted and does nothing. In the library the option is `IfcExporter.OpeningQuantitiesSwapped`; `IfcExporter.OpeningQuantitiesInHostAxes` is kept and is the opposite of it.
 
-Use `--ifc-revit-parameter-groups` for one property set per parameter group. A file saved in several increments can hold an element in more than one partition stream; the tool keeps only its current copy (every copy is kept when the file's increment tables cannot be decoded). Use `--keep-all-copies` to decode every copy instead (the earlier behavior; `--resolve-current-copies` is still accepted and does nothing). Run `rvtio --help` for all options. Unknown options exit with code 1; options starting with `--dev-` are not a stable interface.
+Use `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated exports of the same input are byte-for-byte identical. Use `--ifc-revit-parameter-groups` for one property set per parameter group. A file saved in several increments can hold an element in more than one partition stream; the tool keeps only its current copy (every copy is kept when the file's increment tables cannot be decoded). Use `--keep-all-copies` to decode every copy instead (the earlier behavior; `--resolve-current-copies` is still accepted and does nothing). Run `rvtio --help` for all options. Unknown options exit with code 1; options starting with `--dev-` are not a stable interface.
 
 ### Exit codes and the export report
 

@@ -6,6 +6,14 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Added
+
+- Adds `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated IFC exports of the same input are byte-for-byte identical, and adds CI-runnable corruption and fuzz tests over synthetic `.rvt` containers and inner streams with execution-time and memory-allocation bounds alongside full Windows, Linux and macOS CI test matrices. (Closes #39)
+
+### Fixed
+
+- Geometry meshing: scales the pole Jacobian degeneracy threshold in `RevolvedMesher.NormalAt` by the profile tangent magnitude so 1-ULP trigonometric differences at sphere poles fall through to the pole limit normal on Linux and macOS as on Windows instead of leaving duplicate pole vertices unmerged. (Refs #39)
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
