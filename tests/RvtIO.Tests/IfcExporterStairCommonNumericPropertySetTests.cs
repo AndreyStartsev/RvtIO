@@ -86,6 +86,8 @@ public class IfcExporterStairCommonNumericPropertySetTests
     [InlineData("TreadLength", "occurrence")]
     [InlineData("TreadLength", "type")]
     [InlineData("TreadLength[Type]", "type")]
+    [InlineData("Pset_StairCommon.NumberOfRiser", "occurrence")]
+    [InlineData("Pset_StairCommon.RiserHeight[Type]", "type")]
     public void ExactNamedOverrideCandidate_BlocksOnlyItsProperty(
         string propertyName, string scope)
     {
@@ -99,7 +101,7 @@ public class IfcExporterStairCommonNumericPropertySetTests
 
         Dictionary<string, PropertyValue> properties = Properties(
             ifc, SolePset(ifc, "Pset_StairCommon"));
-        string blocked = propertyName.Replace("[Type]", string.Empty);
+        string blocked = propertyName.Replace("[Type]", string.Empty).Replace("Pset_StairCommon.", string.Empty);
         Assert.DoesNotContain(blocked, properties.Keys);
         Assert.Contains("Reference", properties.Keys);
         foreach (string name in new[] { "NumberOfRiser", "RiserHeight", "TreadLength" })
@@ -155,6 +157,22 @@ public class IfcExporterStairCommonNumericPropertySetTests
         Dictionary<string, PropertyValue> properties = Properties(
             ifc, SolePset(ifc, "Pset_StairCommon"));
         Assert.Equal(new[] { "Reference" }, properties.Keys);
+    }
+
+    [Theory]
+    [InlineData(0, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData(1, 0, "IFCBOOLEAN(.T.)")]
+    public void SetQualifiedIsExternal_WinsOverThePropertyName(int qualified, int plain, string expression)
+    {
+        Element stair = Stair(4330, 5330, "Qualified external stair");
+        Element type = StairType(5330);
+        Confirm(stair, 7, 0.5, 1.0);
+        stair.Parameters.Add(Param(7310, "IsExternal", StorageType.Integer, plain));
+        stair.Parameters.Add(Param(7311, "Pset_StairCommon.IsExternal", StorageType.Integer, qualified));
+
+        string ifc = ExportToText(stair, type);
+
+        Assert.Equal(expression, Properties(ifc, SolePset(ifc, "Pset_StairCommon"))["IsExternal"].Expression);
     }
 
     [Theory]

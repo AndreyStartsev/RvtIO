@@ -63978,7 +63978,7 @@ public partial class IfcExporter
         IReadOnlyDictionary<int, int> elementIdOccurrenceCounts, bool currentProfile = false)
     {
         const int CeilingsCategoryId = -2000038;
-        (bool Blocked, string? Value) occurrenceFinish = ResolveExactNamedText(ceiling, "Finish");
+        (bool Blocked, string? Value) occurrenceFinish = ResolveExactNamedText(ceiling, "Finish", "Pset_CoveringCommon");
         if (occurrenceFinish.Blocked) return null;
         if (occurrenceFinish.Value != null)
             return occurrenceFinish.Value.Length > 0 ? occurrenceFinish.Value : null;
@@ -63991,7 +63991,7 @@ public partial class IfcExporter
             || !elementsById.TryGetValue(typeId, out Element? type)
             || type.CategoryId != CeilingsCategoryId)
             return null;
-        (bool Blocked, string? Value) typeFinish = ResolveExactNamedText(type, "Finish");
+        (bool Blocked, string? Value) typeFinish = ResolveExactNamedText(type, "Finish", "Pset_CoveringCommon");
         if (typeFinish.Blocked) return null;
         if (!string.IsNullOrEmpty(typeFinish.Value)) return typeFinish.Value;
 
@@ -64027,6 +64027,11 @@ public partial class IfcExporter
     /// An exact text parameter by name: absent (null value), blocked when any match is approximate,
     /// non-text or conflicting, else its value.
     /// </summary>
+    private static (bool Blocked, string? Value) ResolveExactNamedText(Element element, string name, string propertySet) =>
+        element.Parameters.Any(parameter => ParameterNameEquals(parameter, $"{propertySet}.{name}"))
+            ? ResolveExactNamedText(element, $"{propertySet}.{name}")
+            : ResolveExactNamedText(element, name);
+
     private static (bool Blocked, string? Value) ResolveExactNamedText(Element element, string name)
     {
         List<Parameter> matches = element.Parameters
@@ -64138,7 +64143,7 @@ public partial class IfcExporter
             || type.CategoryId != occurrence.CategoryId)
             return null;
 
-        ExactIsExternalParameterResult named = ResolveExactIsExternalParameter(occurrence, type);
+        ExactIsExternalParameterResult named = ResolveExactIsExternalParameter(occurrence, type, "Pset_RailingCommon");
         if (named.State == ExactIsExternalParameterState.Value) return named.Value != 0;
         if (named.State == ExactIsExternalParameterState.Blocked) return null;
 
@@ -64173,7 +64178,7 @@ public partial class IfcExporter
         if (stairType != null)
         {
             ExactIsExternalParameterResult isExternal =
-                ResolveExactIsExternalParameter(elem, stairType);
+                ResolveExactIsExternalParameter(elem, stairType, psetName);
             if (isExternal.State == ExactIsExternalParameterState.Absent)
                 isExternal = ResolveExactFunctionParameter(
                     stairType, includeSerializedCurtainWallFunction: false);
@@ -64191,7 +64196,7 @@ public partial class IfcExporter
             if (!currentProfile && elem.SerializedActualNumberOfRisers is int numberOfRisers
                 && numberOfRisers > 0
                 && !HasStairCommonOverrideCandidate(
-                    elem, stairType, "NumberOfRiser"))
+                    elem, stairType, "NumberOfRiser", psetName))
             {
                 valueIds.Add(w.Add("IFCPROPERTYSINGLEVALUE",
                     $"{S("NumberOfRiser")},$,IFCCOUNTMEASURE({D17(numberOfRisers)}),$"));
@@ -64201,7 +64206,7 @@ public partial class IfcExporter
                 && double.IsFinite(riserHeightFeet)
                 && riserHeightFeet > 0
                 && !HasStairCommonOverrideCandidate(
-                    elem, stairType, "RiserHeight"))
+                    elem, stairType, "RiserHeight", psetName))
             {
                 double riserHeightMillimetres = riserHeightFeet * 304.8;
                 if (double.IsFinite(riserHeightMillimetres)
@@ -64216,7 +64221,7 @@ public partial class IfcExporter
                 && double.IsFinite(treadDepthFeet)
                 && treadDepthFeet > 0
                 && !HasStairCommonOverrideCandidate(
-                    elem, stairType, "TreadLength"))
+                    elem, stairType, "TreadLength", psetName))
             {
                 double treadLengthMillimetres = treadDepthFeet * 304.8;
                 if (double.IsFinite(treadLengthMillimetres)
@@ -64266,7 +64271,7 @@ public partial class IfcExporter
     private static void AddStairTreadCount(StepWriter w, Element stair,
         IReadOnlyDictionary<int, Element> elementsById, Element stairType, List<int> valueIds)
     {
-        if (HasStairCommonOverrideCandidate(stair, stairType, "NumberOfTreads")) return;
+        if (HasStairCommonOverrideCandidate(stair, stairType, "NumberOfTreads", "Pset_StairCommon")) return;
         int treads = 0, runs = 0;
         foreach (var run in elementsById.Values)
         {
@@ -64311,7 +64316,7 @@ public partial class IfcExporter
         elementsById.TryGetValue(input.StairsId, out var stairs);
         Element? stairsType = stairs?.SerializedStairTypeId is int stairsTypeId
             && elementsById.TryGetValue(stairsTypeId, out var foundType) ? foundType : null;
-        bool Free(string name) => !HasStairCommonOverrideCandidate(run, runType, name);
+        bool Free(string name) => !HasStairCommonOverrideCandidate(run, runType, name, "Pset_StairFlightCommon");
         void Add(string name, string value) => valueIds.Add(w.Add("IFCPROPERTYSINGLEVALUE", $"{S(name)},$,{value},$"));
         string Length(string measure, double millimetres) => $"{measure}({D17(millimetres)})";
 
@@ -64367,20 +64372,20 @@ public partial class IfcExporter
     }
 
     private static bool HasStairCommonOverrideCandidate(
-        Element occurrence, Element type, string propertyName) =>
-        occurrence.Parameters.Any(parameter =>
-            ParameterNameEquals(parameter, propertyName))
-        || type.Parameters.Any(parameter =>
-            ParameterNameEquals(parameter, propertyName)
-            || ParameterNameEquals(parameter, propertyName + "[Type]"));
+        Element occurrence, Element type, string propertyName, string propertySet) =>
+        new[] { $"{propertySet}.{propertyName}", propertyName }.Any(name =>
+            occurrence.Parameters.Any(parameter => ParameterNameEquals(parameter, name))
+            || type.Parameters.Any(parameter =>
+                ParameterNameEquals(parameter, name)
+                || ParameterNameEquals(parameter, name + "[Type]")));
 
     /// <summary>LoadBearing of a framing occurrence: its own parameter, otherwise .T. for structural framing.</summary>
     private static void AddStructuralFramingLoadBearing(
         StepWriter w, Element elem, List<int> valueIds,
-        Dictionary<(string PropertyName, string ValueExpr), int> valuePool)
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool, string propertySet)
     {
         ExactIsExternalParameterResult loadBearing =
-            ResolveExactOccurrenceBooleanParameter(elem, "LoadBearing");
+            ResolveExactOccurrenceBooleanParameter(elem, "LoadBearing", propertySet);
         if (loadBearing.State == ExactIsExternalParameterState.Value)
         {
             valueIds.Add(GetOrAddPropertySingleValue(
@@ -64410,7 +64415,7 @@ public partial class IfcExporter
         if (isExternal is bool beamExternal)
             valueIds.Add(GetOrAddPropertySingleValue(
                 w, valuePool, "IsExternal", beamExternal ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)"));
-        AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool);
+        AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool, "Pset_BeamCommon");
 
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"beam-common-pset:{elem.Id}"))},{R(ownerHistId)},{S("Pset_BeamCommon")},$,{StepWriter.List(valueIds.Select(R))}");
@@ -64452,7 +64457,7 @@ public partial class IfcExporter
         };
 
         ExactIsExternalParameterResult loadBearing =
-            ResolveExactOccurrenceBooleanParameter(elem, "LoadBearing");
+            ResolveExactOccurrenceBooleanParameter(elem, "LoadBearing", "Pset_ColumnCommon");
         if (loadBearing.State == ExactIsExternalParameterState.Value)
         {
             valueIds.Add(GetOrAddPropertySingleValue(
@@ -65536,6 +65541,7 @@ public partial class IfcExporter
         if (type == null || type.Id == slab.Id
             || slab.Parameters.Any(parameter =>
                 ParameterNameEquals(parameter, "PitchAngle")
+                || ParameterNameEquals(parameter, "Pset_SlabCommon.PitchAngle")
                 || ParameterNameEquals(parameter, "Slope")
                 || parameter.Id is RampMinInverseSlopeParamId
                     or BeamEnd0ElevationParamId or BeamEnd1ElevationParamId)
@@ -65904,25 +65910,38 @@ public partial class IfcExporter
         return values;
     }
 
+    /// <param name="propertySet">The set the value is written in; its set-qualified parameter name is read first.</param>
     private static ExactIsExternalParameterResult ResolveExactIsExternalParameter(
-        Element element, Element? elementType)
+        Element element, Element? elementType, string? propertySet = null)
     {
         ExactIsExternalParameterResult result = ResolveExactNamedIntParameter(
-            element, "IsExternal");
+            element, "IsExternal", propertySet);
         if (result.State != ExactIsExternalParameterState.Absent)
             return result;
 
         Element? typeScope = elementType;
         if (typeScope != null && typeScope.Id != element.Id)
         {
-            result = ResolveExactNamedIntParameter(typeScope, "IsExternal");
+            result = ResolveExactNamedIntParameter(typeScope, "IsExternal", propertySet);
             if (result.State != ExactIsExternalParameterState.Absent)
                 return result;
         }
 
         if (typeScope == null)
             return new(ExactIsExternalParameterState.Absent);
-        return ResolveExactNamedIntParameter(typeScope, "IsExternal[Type]");
+        return ResolveExactNamedIntParameter(typeScope, "IsExternal[Type]", propertySet);
+    }
+
+    /// <summary>The parameter named <paramref name="name"/>, or with <paramref name="propertySet"/> first the one named
+    /// "<paramref name="propertySet"/>.<paramref name="name"/>": Revit's exporter reads a property's set-qualified name before
+    /// its own name (revit-ifc PropertySetEntryMap.CreatePropertyFromElementOrSymbol).</summary>
+    private static ExactIsExternalParameterResult ResolveExactNamedIntParameter(
+        Element element, string name, string? propertySet)
+    {
+        if (propertySet != null
+            && ResolveExactNamedIntParameter(element, $"{propertySet}.{name}") is { State: not ExactIsExternalParameterState.Absent } qualified)
+            return qualified;
+        return ResolveExactNamedIntParameter(element, name);
     }
 
     private static ExactIsExternalParameterResult ResolveExactNamedIntParameter(
@@ -65938,6 +65957,12 @@ public partial class IfcExporter
     /// Strict occurrence-only boolean lookup used by generated property-set entries whose
     /// calculator fallback is legal only when the parameter is genuinely absent.
     /// </summary>
+    private static ExactIsExternalParameterResult
+        ResolveExactOccurrenceBooleanParameter(Element element, string name, string propertySet) =>
+        ResolveExactOccurrenceBooleanParameter(element, $"{propertySet}.{name}") is { State: not ExactIsExternalParameterState.Absent } qualified
+            ? qualified
+            : ResolveExactOccurrenceBooleanParameter(element, name);
+
     private static ExactIsExternalParameterResult
         ResolveExactOccurrenceBooleanParameter(Element element, string name)
     {
@@ -66114,7 +66139,7 @@ public partial class IfcExporter
         };
         bool framing = elem.CategoryId == StructuralFramingCategoryId;
         if (framing)
-            AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool);
+            AddStructuralFramingLoadBearing(w, elem, valueIds, valuePool, "Pset_MemberCommon");
         if (referenceValue != null)
         {
             valueIds.Add(GetOrAddPropertySingleValue(
@@ -66221,10 +66246,16 @@ public partial class IfcExporter
             }
         }
 
-        List<Parameter> typeSpanCandidates = elementType?.Parameters.Where(
-            parameter => ParameterNameEquals(parameter, "Span")).ToList() ?? [];
-        List<Parameter> typeSpanTypeCandidates = elementType?.Parameters.Where(
-            parameter => ParameterNameEquals(parameter, "Span[Type]")).ToList() ?? [];
+        // A type is read by the same names, then by the names with [Type] (revit-ifc order).
+        List<Parameter> TypeCandidates(string name)
+        {
+            var qualified = elementType?.Parameters.Where(
+                parameter => ParameterNameEquals(parameter, "Pset_MemberCommon." + name)).ToList() ?? [];
+            return qualified.Count > 0 ? qualified
+                : elementType?.Parameters.Where(parameter => ParameterNameEquals(parameter, name)).ToList() ?? [];
+        }
+        List<Parameter> typeSpanCandidates = TypeCandidates("Span");
+        List<Parameter> typeSpanTypeCandidates = TypeCandidates("Span[Type]");
         ExactSpanParameterResult calculatorSpan = instanceSpan;
         if (calculatorSpan.State == ExactSpanParameterState.Absent
             && elementType != null)
@@ -68448,9 +68479,10 @@ public partial class IfcExporter
         if (typeClass is "IFCCOLUMNTYPE" or "IFCBEAMTYPE")
         {
             // IFC2X3 ColumnCommon/BeamCommon have no localized-name map.
-            var loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing");
+            string loadBearingSet = typeClass == "IFCCOLUMNTYPE" ? "Pset_ColumnCommon" : "Pset_BeamCommon";
+            var loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing", loadBearingSet);
             if (loadBearing.State == ExactIsExternalParameterState.Absent)
-                loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing[Type]");
+                loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing[Type]", loadBearingSet);
             bool structuralCategory = typeElem.CategoryId is StructuralColumnCategoryId or StructuralFramingCategoryId
                 or (int)BuiltIns.BuiltInCategory.OST_StructuralFramingSystem
                 or (int)BuiltIns.BuiltInCategory.OST_StructuralTruss;
@@ -68497,7 +68529,12 @@ public partial class IfcExporter
                 || type.SerializedHostId != null || products.ContainsKey(type.Id))
                 continue;
 
-            var named = ResolveExactIsExternalParameter(type, type);
+            var named = ResolveExactIsExternalParameter(type, type, product.ifcType switch
+            {
+                "IFCDOOR" => "Pset_DoorCommon",
+                "IFCWINDOW" => "Pset_WindowCommon",
+                _ => "Pset_BeamCommon",
+            });
             bool? value = null;
             if (named.State == ExactIsExternalParameterState.Value)
                 value = named.Value != 0;

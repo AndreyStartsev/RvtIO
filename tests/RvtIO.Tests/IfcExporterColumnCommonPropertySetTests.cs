@@ -166,6 +166,22 @@ public class IfcExporterColumnCommonPropertySetTests
         Assert.Equal("IFCBOOLEAN(.T.)", properties["IsExternal"].Expression);
     }
 
+    [Theory]
+    [InlineData(0, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData(1, 0, "IFCBOOLEAN(.T.)")]
+    public void SetQualifiedLoadBearing_WinsOverThePropertyName(int qualified, int plain, string expression)
+    {
+        Element column = Product(
+            id: 2060, typeId: 2062, categoryId: -2001330,
+            name: "Qualified column", centreX: 0);
+        column.Parameters.Add(BooleanParameter(8310, "LoadBearing", plain));
+        column.Parameters.Add(BooleanParameter(8311, "Pset_ColumnCommon.LoadBearing", qualified));
+
+        string ifc = ExportToText(column);
+
+        Assert.Equal(expression, Properties(ifc, Psets(ifc, "Pset_ColumnCommon").Single())["LoadBearing"].Expression);
+    }
+
     [Fact]
     public void BlockedOrConflictingOccurrenceLoadBearing_OmitsWithoutCategoryFallback()
     {

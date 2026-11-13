@@ -118,6 +118,27 @@ public class IfcExporterMemberSpanValidationTests
         Assert.Equal(IfcExporter.MemberSpanSource.DirectCanonical, source);
     }
 
+    [Theory]
+    [InlineData("Span", "Pset_MemberCommon.Span")]
+    [InlineData("Span[Type]", "Pset_MemberCommon.Span[Type]")]
+    public void TypeSetQualifiedSpan_WinsOverThePropertyName(string plain, string qualified)
+    {
+        var mullion = ExactMullion(bodySpanFeet: 9.2, curveLengthFeet: 10);
+        mullion.Parameters.RemoveAll(parameter => parameter.Id == -1004005);
+        var type = new Element();
+        Parameter Span(int id, string name, double feet) => new()
+        {
+            Id = id, Definition = new Definition { Id = id, Name = name },
+            StorageType = StorageType.Double, Value = feet, SpecType = "autodesk.spec.aec:length-2.0.0",
+        };
+        type.Parameters.Add(Span(9101, plain, 6));
+        type.Parameters.Add(Span(9102, qualified, 4));
+
+        Assert.True(IfcExporter.TryResolveExactMemberSpanMillimetres(
+            mullion, type, out double spanMillimetres, out _));
+        Assert.Equal(4 * FeetToMetres * 1000, spanMillimetres, precision: 9);
+    }
+
     [Fact]
     public void TypeCanonicalSpan_UsesCalculatorScalingWhenDirectSourcesAreAbsent()
     {

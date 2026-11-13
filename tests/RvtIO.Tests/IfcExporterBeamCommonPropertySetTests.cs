@@ -126,6 +126,22 @@ public class IfcExporterBeamCommonPropertySetTests
             ifc);
     }
 
+    [Theory]
+    [InlineData(0, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData(1, 0, "IFCBOOLEAN(.T.)")]
+    public void SetQualifiedLoadBearing_WinsOverThePropertyName(int qualified, int plain, string expression)
+    {
+        Element beam = Product(
+            id: 5017, typeId: 5018, categoryId: -2001320,
+            category: "OST_StructuralFraming", name: "Qualified beam");
+        beam.Parameters.Add(BooleanParameter(id: 7055, name: "LoadBearing", value: plain));
+        beam.Parameters.Add(BooleanParameter(id: 7056, name: "Pset_BeamCommon.LoadBearing", value: qualified));
+
+        string ifc = ExportToText(beam);
+
+        Assert.Equal(expression, Properties(ifc, "Pset_BeamCommon")["LoadBearing"].Expression);
+    }
+
     [Fact]
     public void BlockedOrConflictingOccurrenceValue_OmitsWithoutCategoryFallback()
     {

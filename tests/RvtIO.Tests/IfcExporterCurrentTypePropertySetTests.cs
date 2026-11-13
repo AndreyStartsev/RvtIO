@@ -167,6 +167,18 @@ public class IfcExporterCurrentTypePropertySetTests
     }
 
     [Fact]
+    public void TypeIsExternal_SetQualifiedNameWinsOverThePropertyName()
+    {
+        var type = Type(1, "t", null);
+        type.Parameters.Add(new Parameter { Definition = new Definition { Name = "IsExternal" },
+            StorageType = StorageType.Integer, Value = 1 });
+        type.Parameters.Add(new Parameter { Definition = new Definition { Name = "Pset_WallCommon.IsExternal" },
+            StorageType = StorageType.Integer, Value = 0 });
+        Assert.False(IfcExporter.ResolveTypeIsExternalCurrent(type, "Pset_WallCommon"));
+        Assert.True(IfcExporter.ResolveTypeIsExternalCurrent(type, "Pset_DoorCommon"));
+    }
+
+    [Fact]
     public void TypeIsExternal_NamedParameterWins_AndBlockedParameterYieldsNoValue()
     {
         var type = Type(1, "t", null);

@@ -200,6 +200,8 @@ public class IfcExporterRailingCommonHeightPropertySetTests
     [InlineData("occurrence", "IsExternal", 0, "IFCBOOLEAN(.F.)")]
     [InlineData("type", "IsExternal", 1, "IFCBOOLEAN(.T.)")]
     [InlineData("type", "IsExternal[Type]", 1, "IFCBOOLEAN(.T.)")]
+    [InlineData("occurrence", "Pset_RailingCommon.IsExternal", 0, "IFCBOOLEAN(.F.)")]
+    [InlineData("type", "Pset_RailingCommon.IsExternal[Type]", 1, "IFCBOOLEAN(.T.)")]
     [InlineData("function", null, 1, "IFCBOOLEAN(.T.)")]
     [InlineData("function", null, 0, "IFCBOOLEAN(.F.)")]
     public void OfficialPrecedence_NamedParameterThenTypeFunction(
@@ -216,6 +218,21 @@ public class IfcExporterRailingCommonHeightPropertySetTests
         string ifc = ExportToText(railing, type);
 
         Assert.Equal(expected,
+            Properties(ifc, SolePset(ifc, "Pset_RailingCommon"))["IsExternal"].Expression);
+    }
+
+    [Fact]
+    public void SetQualifiedIsExternal_WinsOverThePropertyName()
+    {
+        Element railing = Product(9125, 9126, -2000126, "OST_StairsRailing", "Railing");
+        AddExactHeightSource(railing, 19125, SampleTopHeightFeet);
+        railing.Parameters.Add(IntParameter(29125, "IsExternal", 1));
+        railing.Parameters.Add(IntParameter(29126, "Pset_RailingCommon.IsExternal", 0));
+        Element type = RailingType(19125);
+
+        string ifc = ExportToText(railing, type);
+
+        Assert.Equal("IFCBOOLEAN(.F.)",
             Properties(ifc, SolePset(ifc, "Pset_RailingCommon"))["IsExternal"].Expression);
     }
 

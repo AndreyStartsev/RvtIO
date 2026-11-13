@@ -106,9 +106,9 @@ public partial class IfcExporter
     /// <summary>IsExternal of a type element: the lookup goes through the type of the
     /// element, and a type has none; only the roof and mass exterior wall categories answer true. A
     /// named IsExternal parameter still wins; a parameter that cannot be read exactly yields no value.</summary>
-    internal static bool? ResolveTypeIsExternalCurrent(Element typeElem)
+    internal static bool? ResolveTypeIsExternalCurrent(Element typeElem, string? propertySet = null)
     {
-        ExactIsExternalParameterResult named = ResolveExactIsExternalParameter(typeElem, typeElem);
+        ExactIsExternalParameterResult named = ResolveExactIsExternalParameter(typeElem, typeElem, propertySet);
         if (named.State == ExactIsExternalParameterState.Value) return named.Value != 0;
         if (named.State == ExactIsExternalParameterState.Blocked) return null;
         return typeElem.CategoryId is RoofCategoryId or MassExteriorWallCategoryId;
@@ -128,15 +128,15 @@ public partial class IfcExporter
             : GetOrAddPropertySingleValue(w, pool, "Reference", $"IFCIDENTIFIER({S(reference)})");
         int? Label() => reference == null ? null
             : GetOrAddPropertySingleValue(w, pool, "Reference", $"IFCLABEL({S(reference)})");
-        int? IsExternal() => ResolveTypeIsExternalCurrent(typeElem) is bool external
+        int? IsExternal(string set) => ResolveTypeIsExternalCurrent(typeElem, set) is bool external
             ? GetOrAddPropertySingleValue(w, pool, "IsExternal", external ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)")
             : null;
-        int? LoadBearing()
+        int? LoadBearing(string set)
         {
             // An own LoadBearing parameter, else the structural categories.
-            var loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing");
+            var loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing", set);
             if (loadBearing.State == ExactIsExternalParameterState.Absent)
-                loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing[Type]");
+                loadBearing = ResolveExactNamedIntParameter(typeElem, "LoadBearing[Type]", set);
             bool structuralCategory = typeElem.CategoryId is StructuralColumnCategoryId or StructuralFramingCategoryId
                 or (int)BuiltIns.BuiltInCategory.OST_StructuralFramingSystem
                 or (int)BuiltIns.BuiltInCategory.OST_StructuralTruss;
@@ -186,7 +186,7 @@ public partial class IfcExporter
         switch (typeClass)
         {
             case "IFCBEAMTYPE":
-                Add("Pset_BeamCommon", 1, Identifier(), IsExternal(), LoadBearing(), FireRating());
+                Add("Pset_BeamCommon", 1, Identifier(), IsExternal("Pset_BeamCommon"), LoadBearing("Pset_BeamCommon"), FireRating());
                 // The description registered for the column pitch is named after the beam and applies
                 // to beams, so a beam type receives the set twice.
                 Add("Pset_ReinforcementBarPitchOfBeam", 2, Label());
@@ -195,44 +195,44 @@ public partial class IfcExporter
                 Add("Pset_BuildingElementProxyCommon", 1, Identifier());
                 break;
             case "IFCCOLUMNTYPE":
-                Add("Pset_ColumnCommon", 1, Identifier(), IsExternal(), LoadBearing(), FireRating());
+                Add("Pset_ColumnCommon", 1, Identifier(), IsExternal("Pset_ColumnCommon"), LoadBearing("Pset_ColumnCommon"), FireRating());
                 break;
             case "IFCCOVERINGTYPE":
                 Add("Pset_CoveringCommon", 1, Identifier(), TotalThickness(), FireRating());
                 break;
             case "IFCCURTAINWALLTYPE":
-                Add("Pset_CurtainWallCommon", 1, Identifier(), IsExternal(), FireRating());
+                Add("Pset_CurtainWallCommon", 1, Identifier(), IsExternal("Pset_CurtainWallCommon"), FireRating());
                 break;
             case "IFCDOORSTYLE":
                 Add("Pset_DistributionFlowElementCommon", 1, Identifier());
-                Add("Pset_DoorCommon", 1, Identifier(), IsExternal(), ThermalTransmittance(), FireRating());
+                Add("Pset_DoorCommon", 1, Identifier(), IsExternal("Pset_DoorCommon"), ThermalTransmittance(), FireRating());
                 break;
             case "IFCLIGHTFIXTURETYPE":
                 Add("Pset_LightFixtureTypeCommon", 1, TotalWattage());
                 break;
             case "IFCMEMBERTYPE":
-                Add("Pset_MemberCommon", 1, Identifier(), IsExternal(),
-                    typeElem.CategoryId == StructuralFramingCategoryId ? LoadBearing() : null, FireRating());
+                Add("Pset_MemberCommon", 1, Identifier(), IsExternal("Pset_MemberCommon"),
+                    typeElem.CategoryId == StructuralFramingCategoryId ? LoadBearing("Pset_MemberCommon") : null, FireRating());
                 break;
             case "IFCPLATETYPE":
-                Add("Pset_PlateCommon", 1, Identifier(), IsExternal(), FireRating());
+                Add("Pset_PlateCommon", 1, Identifier(), IsExternal("Pset_PlateCommon"), FireRating());
                 break;
             case "IFCRAILINGTYPE":
-                Add("Pset_RailingCommon", 1, Identifier(), IsExternal());
+                Add("Pset_RailingCommon", 1, Identifier(), IsExternal("Pset_RailingCommon"));
                 break;
             case "IFCSLABTYPE":
                 Add("Pset_ReinforcementBarPitchOfSlab", 1, Label());
-                Add("Pset_SlabCommon", 1, Identifier(), HostThermalTransmittance(), IsExternal(), FireRating());
+                Add("Pset_SlabCommon", 1, Identifier(), HostThermalTransmittance(), IsExternal("Pset_SlabCommon"), FireRating());
                 break;
             case "IFCSTAIRFLIGHTTYPE":
                 Add("Pset_StairFlightCommon", 1, Identifier(), NosingLength());
                 break;
             case "IFCWALLTYPE":
                 Add("Pset_ReinforcementBarPitchOfWall", 1, Label());
-                Add("Pset_WallCommon", 1, Identifier(), HostThermalTransmittance(), IsExternal(), FireRating());
+                Add("Pset_WallCommon", 1, Identifier(), HostThermalTransmittance(), IsExternal("Pset_WallCommon"), FireRating());
                 break;
             case "IFCWINDOWSTYLE":
-                Add("Pset_WindowCommon", 1, Identifier(), IsExternal(), ThermalTransmittance(), FireRating());
+                Add("Pset_WindowCommon", 1, Identifier(), IsExternal("Pset_WindowCommon"), ThermalTransmittance(), FireRating());
                 break;
         }
         if (typeClass != "IFCLIGHTFIXTURETYPE")
