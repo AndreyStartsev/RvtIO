@@ -22,7 +22,12 @@ projects through `InternalsVisibleTo`.
 `TransmissionInfo`, `ExternalFileRef`, `ClassSchema`, `ClassField`, `MaterialLayer` and the geometry types (`GeometryData`,
 `GeoFace`, `GeoEdge`, `GeoSolid`, `GeoBrepSolid`, `GeoOpening`, `GeoInstance`, `LocationCurve`, `DimensionData`,
 `InstanceTransform`) are the data a read returns. `ParameterListConverter` is the `System.Text.Json` converter that writes
-the parameter lists of a `RevitFileInfo`.
+the parameter lists of a `RevitFileInfo`: full JSON keeps every `Parameter` entry (`Parameter.HasValue` is `Value != null`),
+including default slots synthesized for API parity, while `CompactJsonExporter`, `IfcExporter` and `RvtSceneReader` leave out
+parameters that carry no value in Revit (`Parameter.HasRevitValue` is `false` for `Double` with `|v| >= 1e29` or non-finite,
+unresolved `ElementId` sentinels `-1`, `0`, or non-positive pointers on unhosted host-id parameters, `-1` placeholders on
+non-integer built-in parameters, unstored reader placeholders and `Parameter.IsApproximate` estimates; stored `0`, `0.0`,
+`false`, `""` and valid negative `ElementId` option or category values are kept).
 
 `Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 

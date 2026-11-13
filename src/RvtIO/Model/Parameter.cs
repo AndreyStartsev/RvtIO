@@ -12,9 +12,11 @@ namespace RvtIO.Model
         internal Parameter ShallowCopy(object? value)
         {
             var copy = (Parameter)MemberwiseClone();
-            copy.Value = value;
+            copy._value = value;
             return copy;
         }
+
+        private object? _value;
 
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
@@ -42,7 +44,15 @@ namespace RvtIO.Model
         /// Null when the value could not be resolved from the binary data.
         /// This is the only per-element-instance field of a parameter.
         /// </summary>
-        public object? Value { get; set; }
+        public object? Value
+        {
+            get => _value;
+            set
+            {
+                _value = value;
+                HasNoRevitValue = false;
+            }
+        }
 
         /// <summary>True if the parameter is read-only (computed, system-generated, etc.).
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
@@ -80,6 +90,49 @@ namespace RvtIO.Model
         /// <summary>The value was set by <c>ApplyNativeParams</c>: a parameter store of the element or a rule over decoded fields.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal bool FromNativeFields { get; set; }
+
+        /// <summary>True when the parameter slot exists on the element with a synthesized default or
+        /// unset sentinel, rather than a value stored or computed in Revit.</summary>
+        [JsonIgnore]
+        internal bool HasNoRevitValue { get; set; }
+
+        /// <summary>True when <paramref name="elementId"/> is a resolved reference or valid option value rather than
+        /// an invalid (<c>-1</c>), uninitialized (<c>0</c>), or unhosted host-pointer sentinel.</summary>
+        internal static bool IsSetElementId(int parameterId, int elementId) =>
+            parameterId is -1002108 or -1010303
+                ? elementId > 0
+                : elementId != -1 && elementId != 0;
+
+        /// <summary>
+        /// Whether this parameter carries a value stored or computed in Revit rather than an unset sentinel,
+        /// synthesized reader placeholder, or approximate fallback (<see cref="IsApproximate"/>).
+        /// Unlike <see cref="HasValue"/> (which checks <c>Value != null</c> on the raw decoded slot), this is
+        /// <c>false</c> for <see cref="StorageType.None"/>, non-finite or <c>|v| &gt;= 1e29</c> doubles,
+        /// unresolved element ids (<c>-1</c> and <c>0</c>, or non-positive pointers on host-id parameters),
+        /// <c>-1</c> placeholders on non-integer built-in parameters, and unstored default slots synthesized by
+        /// the reader, while remaining <c>true</c> for stored <c>0</c>, <c>0.0</c>, <c>false</c>, <c>""</c>,
+        /// and valid negative <see cref="StorageType.ElementId"/> option or category values.
+        /// </summary>
+        [JsonIgnore]
+        public bool HasRevitValue
+        {
+            get
+            {
+                if (HasNoRevitValue || IsApproximate || _value == null || StorageType == StorageType.None)
+                    return false;
+                return StorageType switch
+                {
+                    StorageType.Double => _value is double d && double.IsFinite(d) && Math.Abs(d) < 1e29,
+                    StorageType.ElementId => _value is int eid && IsSetElementId(Id, eid),
+                    StorageType.Integer => _value is int iv
+                        ? !(iv == -1 && (Id is >= -1019017 and <= -1019012
+                            || (Id < 0 && Parsing.ApiParameterDefinitions.TryGetStorage(Id, out var apiSt) && apiSt != StorageType.Integer)))
+                        : _value is bool,
+                    StorageType.String => _value is string,
+                    _ => false,
+                };
+            }
+        }
 
         /// <summary>Whether this parameter has a non-null value.</summary>
         [JsonIgnore]
