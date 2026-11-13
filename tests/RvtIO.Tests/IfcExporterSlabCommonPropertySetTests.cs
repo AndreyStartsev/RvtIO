@@ -200,6 +200,7 @@ public class IfcExporterSlabCommonPropertySetTests
     [InlineData("type_function_exterior", "IFCBOOLEAN(.T.)")]
     [InlineData("type_function_interior", "IFCBOOLEAN(.F.)")]
     [InlineData("occurrence_parameter", "IFCBOOLEAN(.T.)")]
+    [InlineData("qualified_occurrence_parameter", "IFCBOOLEAN(.F.)")]
     [InlineData("no_source", "IFCBOOLEAN(.F.)")]
     public void IsExternal_FollowsCategoryUtilPrecedence(string mode, string expected)
     {
@@ -220,6 +221,22 @@ public class IfcExporterSlabCommonPropertySetTests
                 StorageType = StorageType.Integer,
                 Value = mode == "type_function_exterior" ? 1 : 0,
             });
+        if (mode == "qualified_occurrence_parameter")
+        {
+            // Pset_SlabCommon.IsExternal 0 wins over IsExternal 1.
+            slab.Parameters.Add(new Parameter
+            {
+                Id = 29381, Definition = new Definition { Id = 29381, Name = "IsExternal" },
+                StorageType = StorageType.Integer, Value = 1,
+            });
+            slab.Parameters.Add(new Parameter
+            {
+                Id = 29382, Definition = new Definition { Id = 29382, Name = "Pset_SlabCommon.IsExternal" },
+                StorageType = StorageType.Integer, Value = 0,
+            });
+            type.Parameters.Add(new Parameter
+                { Id = -1001006, StorageType = StorageType.Integer, Value = 0 });
+        }
         if (mode == "occurrence_parameter")
         {
             slab.Parameters.Add(new Parameter

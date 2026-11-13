@@ -4793,7 +4793,7 @@ public partial class IfcExporter
                 {
                     ExportRampCommonPropertySet(
                         w, elem, elemEntityId, ownerHistId, quantityTakeOffReferenceValueId.Value, propertySingleValueIds,
-                        OccurrenceIsExternalCurrent(elem, elemById) ?? false);
+                        OccurrenceIsExternalCurrent(elem, elemById, "Pset_RampCommon") ?? false);
                 }
                 if (quantityTakeOffReferenceValueId.HasValue
                     && ifcType == "IFCBEAM")
@@ -4802,7 +4802,7 @@ public partial class IfcExporter
                         w, elem, elemEntityId, ownerHistId,
                         quantityTakeOffReferenceValueId.Value,
                         propertySingleValueIds,
-                        CurrentProfile ? OccurrenceIsExternalCurrent(elem, elemById) ?? false : null,
+                        CurrentProfile ? OccurrenceIsExternalCurrent(elem, elemById, "Pset_BeamCommon") ?? false : null,
                         CurrentProfile ? ResolveBeamSpanMillimetresCurrent(elem, elemById.GetValueOrDefault(elem.FamilyTypeId)) : null);
                 }
                 if (quantityTakeOffReferenceValueId.HasValue
@@ -5042,13 +5042,21 @@ public partial class IfcExporter
             .Concat(pendingColumnCommonPropertySets.Select(item => item.Element.Id))
             .Concat(pendingSlabCommonPropertySets.Select(item => item.Element.Id))
             .ToHashSet();
+        // The set each of those occurrences writes IsExternal in, by its class.
+        var occurrenceCommonSets = new Dictionary<int, string>();
+        foreach (var item in pendingMemberPlatePropertySets)
+            occurrenceCommonSets.TryAdd(item.Element.Id, item.IfcType == "IFCMEMBER" ? "Pset_MemberCommon" : "Pset_PlateCommon");
+        foreach (var item in pendingColumnCommonPropertySets)
+            occurrenceCommonSets.TryAdd(item.Element.Id, "Pset_ColumnCommon");
+        foreach (var item in pendingSlabCommonPropertySets)
+            occurrenceCommonSets.TryAdd(item.Element.Id, "Pset_SlabCommon");
         IReadOnlyDictionary<int, bool?> componentTypeIsExternalByElementId = new Dictionary<int, bool?>();
         // The current profile evaluates the category rule without the shared cache of
         // the legacy profile exporter.
         IReadOnlyDictionary<int, bool> occurrenceIsExternalByElementId = CurrentProfile
-            ? ResolveOccurrenceIsExternalValuesCurrent(elemById, exportedOccurrenceCommonIds)
+            ? ResolveOccurrenceIsExternalValuesCurrent(elemById, exportedOccurrenceCommonIds, occurrenceCommonSets)
             : ResolveMemberPlateIsExternalValues(
-                info.Elements, exportedOccurrenceCommonIds, out componentTypeIsExternalByElementId);
+                info.Elements, exportedOccurrenceCommonIds, out componentTypeIsExternalByElementId, occurrenceCommonSets);
         foreach (var pending in pendingMemberPlatePropertySets)
         {
             bool isExternal = occurrenceIsExternalByElementId.TryGetValue(
@@ -5106,10 +5114,10 @@ public partial class IfcExporter
             bool? isExternal = pending.IfcType switch
             {
                 "IFCWINDOW" => CurrentProfile
-                    ? OccurrenceIsExternalCurrent(pending.Element, elemById)
+                    ? OccurrenceIsExternalCurrent(pending.Element, elemById, "Pset_WindowCommon")
                     : firstWindowOfType.Contains(pending.Element.Id) && HostWallIsExternal(pending.Element),
                 "IFCDOOR" => pending.ReferenceValueId.HasValue
-                    ? CurrentProfile ? OccurrenceIsExternalCurrent(pending.Element, elemById) ?? false
+                    ? CurrentProfile ? OccurrenceIsExternalCurrent(pending.Element, elemById, "Pset_DoorCommon") ?? false
                         : doorIsExternalByType[pending.Element.FamilyTypeId]
                     : null,
                 _ => null,
@@ -65713,10 +65721,13 @@ public partial class IfcExporter
             IReadOnlyCollection<int>? eligibleComponentIds = null)
         => ResolveMemberPlateIsExternalValues(elements, eligibleComponentIds, out _);
 
+    /// <param name="propertySets">The set each occurrence writes IsExternal in; its type reads the same set's name. Other
+    /// elements the rule visits (hosts) are read by the property name alone.</param>
     private static IReadOnlyDictionary<int, bool> ResolveMemberPlateIsExternalValues(
         IReadOnlyList<Element> elements,
         IReadOnlyCollection<int>? eligibleComponentIds,
-        out IReadOnlyDictionary<int, bool?> typeValues)
+        out IReadOnlyDictionary<int, bool?> typeValues,
+        IReadOnlyDictionary<int, string>? propertySets = null)
     {
         var elementsById = new Dictionary<int, Element>();
         foreach (Element element in elements)
@@ -65742,6 +65753,18 @@ public partial class IfcExporter
         List<Element> curtainComponents = targets.Where(element =>
             element.CategoryId is CurtainWallMullionCategoryId
                 or CurtainWallPanelCategoryId).ToList();
+        // An element's set depends on the element alone, so a cached value never depends on the path that reached it.
+        var setById = new Dictionary<int, string?>();
+        if (propertySets != null)
+            foreach (Element target in targets)
+                if (propertySets.TryGetValue(target.Id, out string? set))
+                {
+                    setById[target.Id] = set;
+                    if (target.FamilyTypeId > 0 && target.FamilyTypeId != target.Id)
+                        setById[target.FamilyTypeId] = setById.TryGetValue(target.FamilyTypeId, out string? known)
+                            && known != set ? null : set;
+                }
+        string? SetOf(int id) => setById.GetValueOrDefault(id);
         var cache = new Dictionary<int, bool>();
         var visiting = new HashSet<int>();
         Element? ResolveElementType(Element element, bool asType)
@@ -65768,7 +65791,7 @@ public partial class IfcExporter
                 Element? elementType = ResolveElementType(element, asType);
 
                 ExactIsExternalParameterResult explicitResult =
-                    ResolveExactIsExternalParameter(element, elementType);
+                    ResolveExactIsExternalParameter(element, elementType, SetOf(element.Id));
                 if (explicitResult.State == ExactIsExternalParameterState.Value)
                 {
                     bool explicitValue = explicitResult.Value != 0;
@@ -65896,7 +65919,7 @@ public partial class IfcExporter
                 || type.CategoryId != target.CategoryId || type.SerializedHostId != null
                 || !cache.TryGetValue(type.Id, out bool typeValue))
                 continue;
-            var named = ResolveExactIsExternalParameter(type, type);
+            var named = ResolveExactIsExternalParameter(type, type, SetOf(type.Id));
             if (named.State == ExactIsExternalParameterState.Blocked
                 || named.State == ExactIsExternalParameterState.Absent
                     && ResolveExactFunctionParameter(type).State == ExactIsExternalParameterState.Blocked)
@@ -68549,14 +68572,15 @@ public partial class IfcExporter
         return result;
     }
 
-    private static bool? ResolveValidatedCurtainWallIsExternal(Element element, Element? elementType)
+    private static bool? ResolveValidatedCurtainWallIsExternal(
+        Element element, Element? elementType, string propertySet = "Pset_CurtainWallCommon")
     {
         if (elementType?.SerializedCurtainWallFunction == null)
-            return ResolveValidatedBasicWallIsExternal(element, elementType);
+            return ResolveValidatedBasicWallIsExternal(element, elementType, propertySet);
         if (element.CategoryId != -2000011 || elementType?.CategoryId != -2000011
             || elementType.SerializedBasicWallTypeFunction != null
             || elementType.SerializedCurtainWallFunction is not (>= 0 and <= 5)
-            || ResolveExactIsExternalParameter(element, elementType).State != ExactIsExternalParameterState.Absent)
+            || ResolveExactIsExternalParameter(element, elementType, propertySet).State != ExactIsExternalParameterState.Absent)
             return null;
         var function = ResolveExactFunctionParameter(elementType);
         return function.State == ExactIsExternalParameterState.Value
@@ -68568,11 +68592,12 @@ public partial class IfcExporter
     /// The native BasicWallType function is authoritative only with absent named overrides and no
     /// conflicting FUNCTION_PARAM.
     /// </summary>
-    private static bool? ResolveValidatedBasicWallIsExternal(Element element, Element? elementType)
+    private static bool? ResolveValidatedBasicWallIsExternal(
+        Element element, Element? elementType, string propertySet = "Pset_WallCommon")
     {
         if (element.CategoryId != -2000011 || elementType?.CategoryId != -2000011
             || elementType.SerializedBasicWallTypeFunction is not (>= 0 and <= 5)
-            || ResolveExactIsExternalParameter(element, elementType).State != ExactIsExternalParameterState.Absent)
+            || ResolveExactIsExternalParameter(element, elementType, propertySet).State != ExactIsExternalParameterState.Absent)
             return null;
         var parameter = ResolveExactFunctionParameter(elementType, includeSerializedCurtainWallFunction: false);
         if (parameter.State == ExactIsExternalParameterState.Blocked

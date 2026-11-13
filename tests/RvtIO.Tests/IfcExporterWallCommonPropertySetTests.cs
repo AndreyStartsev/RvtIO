@@ -240,6 +240,21 @@ public class IfcExporterWallCommonPropertySetTests
         Assert.Equal("IFCBOOLEAN(.T.)", values["LoadBearing"]);
     }
 
+    [Theory]
+    [InlineData("IsExternal")]
+    [InlineData("Pset_WallCommon.IsExternal")]
+    public void Wall_NamedIsExternalBlocksTheTypeFunctionValue(string name)
+    {
+        var type = new Element { Id = 500, CategoryId = -2000011, Name = "Basic wall",
+            SerializedBasicWallTypeFunction = 1 };
+        var wall = Wall(100, 500, "Wall", 1);
+        wall.Parameters.Add(TypeParameter(500));
+        wall.Parameters.Add(new Parameter { Definition = new Definition { Name = name },
+            StorageType = StorageType.Integer, Value = 0 });
+        string ifc = ExportWalls(type, wall);
+        Assert.DoesNotContain("IsExternal", OccurrenceCommonValues(ifc, SoleEntityId(ifc, "IFCWALLSTANDARDCASE")).Keys);
+    }
+
     [Fact]
     public void Wall_OccurrenceOverrideDoesNotContaminateSiblingOrTypeValuePool()
     {

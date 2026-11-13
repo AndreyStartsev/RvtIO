@@ -420,11 +420,12 @@ public partial class IfcExporter
 
     /// <summary>The IsExternal property of an occurrence: an own or type IsExternal parameter, else
     /// <see cref="PureIsElementExternalCurrent"/>. Null when the named parameter cannot be read exactly.</summary>
-    private static bool? OccurrenceIsExternalCurrent(Element occurrence, IReadOnlyDictionary<int, Element> elementsById)
+    private static bool? OccurrenceIsExternalCurrent(
+        Element occurrence, IReadOnlyDictionary<int, Element> elementsById, string? propertySet = null)
     {
         Element? type = occurrence.FamilyTypeId > 0 && elementsById.TryGetValue(occurrence.FamilyTypeId, out Element? found)
             ? found : null;
-        ExactIsExternalParameterResult named = ResolveExactIsExternalParameter(occurrence, type);
+        ExactIsExternalParameterResult named = ResolveExactIsExternalParameter(occurrence, type, propertySet);
         if (named.State == ExactIsExternalParameterState.Value) return named.Value != 0;
         if (named.State == ExactIsExternalParameterState.Blocked) return null;
         return PureIsElementExternalCurrent(occurrence, elementsById);
@@ -433,12 +434,13 @@ public partial class IfcExporter
     /// <summary>IsExternal of the occurrences that carry a Common set with it (members, plates, columns,
     /// slabs); an unreadable named parameter reads as false, the portable fallback of the legacy profile replay.</summary>
     internal static IReadOnlyDictionary<int, bool> ResolveOccurrenceIsExternalValuesCurrent(
-        IReadOnlyDictionary<int, Element> elementsById, IReadOnlyCollection<int> occurrenceIds)
+        IReadOnlyDictionary<int, Element> elementsById, IReadOnlyCollection<int> occurrenceIds,
+        IReadOnlyDictionary<int, string>? propertySets = null)
     {
         var values = new Dictionary<int, bool>();
         foreach (int id in occurrenceIds)
             if (elementsById.TryGetValue(id, out Element? occurrence))
-                values[id] = OccurrenceIsExternalCurrent(occurrence, elementsById) ?? false;
+                values[id] = OccurrenceIsExternalCurrent(occurrence, elementsById, propertySets?.GetValueOrDefault(id)) ?? false;
         return values;
     }
 

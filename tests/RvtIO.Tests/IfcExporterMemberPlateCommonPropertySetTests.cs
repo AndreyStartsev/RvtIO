@@ -389,6 +389,31 @@ public class IfcExporterMemberPlateCommonPropertySetTests
             props.Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
 
+    [Theory]
+    [InlineData(IfcProfile.Legacy)]
+    [InlineData(IfcProfile.Current)]
+    public void Mullion_SetQualifiedIsExternalWinsOverThePropertyName(IfcProfile profile)
+    {
+        var mullion = LinearElement(
+            id: 300, typeId: 301, name: "Mullion_50x100", categoryId: MullionCategoryId,
+            category: "OST_CurtainWallMullions", centreX: 0, curveElemLengthFt: 10.0);
+        mullion.Parameters.Add(new Parameter { Id = 9201, Definition = new Definition { Id = 9201, Name = "IsExternal" },
+            StorageType = StorageType.Integer, Value = 0 });
+        mullion.Parameters.Add(new Parameter { Id = 9202, Definition = new Definition { Id = 9202, Name = "Pset_MemberCommon.IsExternal" },
+            StorageType = StorageType.Integer, Value = 1 });
+        var info = new RevitFileInfo();
+        info.Elements.Add(mullion);
+        string path = TempIfcPath($"member-qualified-external-{profile}");
+        try
+        {
+            new IfcExporter { Profile = profile }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            var (_, valueIds) = SolePsetOfName(ifc, "Pset_MemberCommon");
+            Assert.Equal("IFCBOOLEAN(.T.)", ResolveProperties(ifc, valueIds)["IsExternal"]);
+        }
+        finally { Cleanup(path); }
+    }
+
     [Fact]
     public void CurrentMullion_GetsTheExactSpanAsInLegacy()
     {
