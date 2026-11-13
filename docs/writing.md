@@ -78,8 +78,8 @@ When rewriting data, `RvtWriter` enforces the following invariants:
 | `unknown-file-kind` | Container has neither `PartAtom` nor `ProjectInformation` and its path extension is not `.rvt`/`.rte`/`.rfa`/`.rft`. |
 | `cloud-model` | `BasicFileInfo` marks a single-user or workshared cloud model (`IsSingleUserCloudModel: True` or cloud central path). |
 | `workshared-model` | `BasicFileInfo` reports worksharing enabled. |
-| `missing-metadata` | `BasicFileInfo` is missing, unreadable, or lacks a recognised `Worksharing`, `IsSingleUserCloudModel`, or saving-release field, or `TransmissionData` is missing when relocating a file with `RvtLinkSymbol` records. |
-| `relative-reference-relocation` | Saving to a different directory would change the resolved target of a relative external file reference (or an unverified `PointCloudType` path). |
+| `missing-metadata` | `BasicFileInfo` is missing, unreadable, or lacks a recognised `Worksharing`, `IsSingleUserCloudModel`, or saving-release field, or, when relocating a file with `RvtLinkSymbol` records, `TransmissionData` is missing or lists no external reference for one of them. |
+| `relative-reference-relocation` | Saving to a different directory would change the resolved target of a relative external file reference (path type `Relative` or `Relative to Central Model`, as Revit writes it, or no path type with a relative path), a reference has a path type other than these, `Absolute`, `Server`, `Content` and `Library`, or the file holds an unverified `PointCloudType` path. |
 | `unreadable-transmission-data` | `TransmissionData` cannot be parsed cleanly when saving to a different directory. |
 | `corrupt-page-parity` | A `Formats/*`, `Global/*`, or `Partitions/*` stream fails Hamming page parity verification. |
 | `missing-schema` | `Formats/Latest` is missing, unreadable, or cannot be parsed. |

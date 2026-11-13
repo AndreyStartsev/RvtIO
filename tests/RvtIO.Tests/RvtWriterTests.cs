@@ -792,8 +792,11 @@ public sealed class RvtWriterTests : IDisposable
         return Path.GetFullPath(Path.Combine(hostDir, normalized));
     }
 
-    [Fact]
-    public void SaveAs_AndRewrite_WithValidRelativeLink_PreserveTargetInSameDirectory_AndRefuseDifferentDirectory()
+    // "Relative to Central Model" is what Revit 2022 writes for a relative link
+    [Theory]
+    [InlineData("Relative to Central Model")]
+    [InlineData("Relative")]
+    public void SaveAs_AndRewrite_WithValidRelativeLink_PreserveTargetInSameDirectory_AndRefuseDifferentDirectory(string pathType)
     {
         string linksDir = Path.Combine(_folder, "links");
         string inputDir = Path.Combine(_folder, "input");
@@ -821,7 +824,7 @@ public sealed class RvtWriterTests : IDisposable
                 SchemaRelease = 2022,
                 SavedRelease = 2022,
                 LinkedPath = @"..\links\linked.rvt",
-                LinkedPathType = "Relative",
+                LinkedPathType = pathType,
                 LinkedLoadState = "Loaded",
                 IncludeRevitLinkRecord = true,
             });
@@ -977,5 +980,64 @@ public sealed class RvtWriterTests : IDisposable
         var exStripped = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(strippedTdHost, nestedStrippedCopy));
         Assert.Equal("missing-metadata", exStripped.Kind);
         Assert.False(File.Exists(nestedStrippedCopy));
+    }
+
+    [Fact]
+    public void SaveAs_ToDifferentDirectory_RefusesALinkThatTransmissionDataDoesNotList()
+    {
+        string inputDir = Path.Combine(_folder, "input");
+        string nestedDir = Path.Combine(_folder, "output", "nested");
+        Directory.CreateDirectory(inputDir);
+        Directory.CreateDirectory(nestedDir);
+        const string keynoteXml = "<ExternalFileReference><ElementId>502</ElementId><ExternalFileReferenceType>Keynote Table</ExternalFileReferenceType><LastSavedPath></LastSavedPath><LastSavedPathType>Absolute</LastSavedPathType><LastSavedLoadState>Not Found</LastSavedLoadState></ExternalFileReference>";
+        byte[] Xml(string body)
+        {
+            string xml = $"<?xml version=\"1.0\"?><TransmissionData isTransmitted=\"false\" userData=\"\" version=\"5\">{body}</TransmissionData>";
+            byte[] data = new byte[4 + xml.Length * 2];
+            BinaryPrimitives.WriteInt32LittleEndian(data, xml.Length);
+            Encoding.Unicode.GetBytes(xml).CopyTo(data.AsSpan(4));
+            return data;
+        }
+
+        // a valid but empty TransmissionData, and one that lists only another reference, while Partitions/1 holds RvtLinkSymbol 501
+        foreach (var (name, td) in new[] { ("empty", Xml("")), ("other", Xml(keynoteXml)) })
+        {
+            string host = CreateSyntheticRevitFile(
+                Path.Combine(inputDir, $"host_{name}.rvt"),
+                new SyntheticFileOptions { SchemaRelease = 2022, SavedRelease = 2022, RawTransmissionDataBytes = td, IncludeRevitLinkRecord = true });
+
+            RvtWriter.SaveAs(host, Path.Combine(inputDir, $"host_{name}_copy.rvt"));
+            string nested = Path.Combine(nestedDir, $"host_{name}.rvt");
+            var ex = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(host, nested));
+            Assert.Equal("missing-metadata", ex.Kind);
+            Assert.Contains("501", ex.Message);
+            Assert.False(File.Exists(nested));
+        }
+    }
+
+    [Fact]
+    public void SaveAs_ToDifferentDirectory_RefusesAnUnrecognisedPathType()
+    {
+        string inputDir = Path.Combine(_folder, "input");
+        string nestedDir = Path.Combine(_folder, "output", "nested");
+        Directory.CreateDirectory(inputDir);
+        Directory.CreateDirectory(nestedDir);
+        string host = CreateSyntheticRevitFile(
+            Path.Combine(inputDir, "host.rvt"),
+            new SyntheticFileOptions
+            {
+                SchemaRelease = 2022,
+                SavedRelease = 2022,
+                LinkedPath = @"..\links\linked.rvt",
+                LinkedPathType = "Relative to Somewhere Else",
+                IncludeRevitLinkRecord = true,
+            });
+
+        RvtWriter.SaveAs(host, Path.Combine(inputDir, "host_copy.rvt"));
+        string nested = Path.Combine(nestedDir, "host.rvt");
+        var ex = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(host, nested));
+        Assert.Equal("relative-reference-relocation", ex.Kind);
+        Assert.Contains("Relative to Somewhere Else", ex.Message);
+        Assert.False(File.Exists(nested));
     }
 }

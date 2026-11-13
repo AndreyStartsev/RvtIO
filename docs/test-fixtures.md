@@ -49,8 +49,8 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 
 ## What runs without the private files
 
-With no private file at all, 10483 of the 10929 test cases run and pass on net8.0 and 446 are skipped (net10.0: 10487 of
-10933, 446 skipped): 440 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
+With no private file at all, 10486 of the 10932 test cases run and pass on net8.0 and 446 are skipped (net10.0: 10490 of
+10936, 446 skipped): 440 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
 and 6 need other inputs (two need symbolic links, three
 need `RVTIO_FREEFORM_FULL`, `RVTIO_CYL_FULL` or `RVTIO_MESH_FULL`, one is a known gap). The tests that run use synthetic data built
 in the tests and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the

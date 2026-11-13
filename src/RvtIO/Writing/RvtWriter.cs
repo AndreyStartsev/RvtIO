@@ -247,7 +247,7 @@ public static class RvtWriter
         RvtWriteCapabilities Capabilities,
         PartitionFraming.Tags? FramingTags,
         IReadOnlyDictionary<string, string> CanonicalStreamPaths,
-        bool HasPartitionRevitLinks,
+        IReadOnlySet<ulong> PartitionRevitLinkIds,
         bool HasPartitionPointClouds);
 
     private static RvtWriteCapabilities InspectContainer(string containerPath, string? pathHint = null)
@@ -384,7 +384,7 @@ public static class RvtWriter
         RvtOperationSupport saveAsSupport;
         RvtOperationSupport pagedSupport;
         RvtOperationSupport partitionSupport;
-        bool hasPartitionRevitLinks = false;
+        IReadOnlySet<ulong> partitionRevitLinkIds = new HashSet<ulong>();
         bool hasPartitionPointClouds = false;
 
         if (baseFailure is { } refusal)
@@ -405,7 +405,7 @@ public static class RvtWriter
                 idWidth,
                 rvtLinkClassTag,
                 pointCloudClassTag,
-                out hasPartitionRevitLinks,
+                out partitionRevitLinkIds,
                 out hasPartitionPointClouds);
         }
 
@@ -434,7 +434,7 @@ public static class RvtWriter
             capabilities,
             framingTags,
             canonicalPaths,
-            hasPartitionRevitLinks,
+            partitionRevitLinkIds,
             hasPartitionPointClouds);
     }
 
@@ -516,10 +516,11 @@ public static class RvtWriter
         int? idWidth,
         ushort? rvtLinkClassTag,
         ushort? pointCloudClassTag,
-        out bool hasPartitionRevitLinks,
+        out IReadOnlySet<ulong> partitionRevitLinkIds,
         out bool hasPartitionPointClouds)
     {
-        hasPartitionRevitLinks = false;
+        var revitLinkIds = new HashSet<ulong>();
+        partitionRevitLinkIds = revitLinkIds;
         hasPartitionPointClouds = false;
 
         if (framingTags is null)
@@ -531,7 +532,6 @@ public static class RvtWriter
 
         var adler = new Adler32();
         ulong terminator = idWidth.Value == 8 ? ulong.MaxValue : uint.MaxValue;
-        bool sawRevitLink = false;
         bool sawPointCloud = false;
         foreach (var entry in partitionEntries)
         {
@@ -546,7 +546,7 @@ public static class RvtWriter
                 if (record.Block == 0 && record.Channel == 102 && record.Body.Length >= 2)
                 {
                     ushort classTag = BinaryPrimitives.ReadUInt16LittleEndian(record.Body.Span);
-                    if (rvtLinkClassTag == classTag) sawRevitLink = true;
+                    if (rvtLinkClassTag == classTag) revitLinkIds.Add(record.Owner);
                     if (pointCloudClassTag == classTag) sawPointCloud = true;
                 }
                 if (record.Channel == 101) return;
@@ -560,7 +560,6 @@ public static class RvtWriter
                 }
             }, out string? reason, out _);
 
-            hasPartitionRevitLinks = sawRevitLink;
             hasPartitionPointClouds = sawPointCloud;
 
             if (!ok)
@@ -609,7 +608,7 @@ public static class RvtWriter
 
         if (!inspection.CanonicalStreamPaths.TryGetValue("TransmissionData", out string? tdPath))
         {
-            if (inspection.HasPartitionRevitLinks && !sameDirectory)
+            if (inspection.PartitionRevitLinkIds.Count > 0 && !sameDirectory)
             {
                 throw new RvtWriteRefusedException(
                     "missing-metadata",
@@ -628,6 +627,22 @@ public static class RvtWriter
                     "TransmissionData cannot be parsed cleanly, so relative external reference targets cannot be verified when changing directories.");
             }
             return;
+        }
+
+        if (!sameDirectory)
+        {
+            // every RvtLinkSymbol needs its own reference entry: without one the target of the link cannot be checked
+            var referencedIds = new HashSet<ulong>();
+            foreach (var entry in references)
+                if (ulong.TryParse(entry.ElementId?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out ulong id))
+                    referencedIds.Add(id);
+            ulong[] unlisted = inspection.PartitionRevitLinkIds.Where(id => !referencedIds.Contains(id)).Order().ToArray();
+            if (unlisted.Length > 0)
+            {
+                throw new RvtWriteRefusedException(
+                    "missing-metadata",
+                    $"TransmissionData lists no external reference for RvtLinkSymbol element(s) {string.Join(", ", unlisted)} in Partitions/, so their link targets cannot be verified across directories.");
+            }
         }
 
         foreach (var entry in references)
@@ -668,22 +683,30 @@ public static class RvtWriter
             return;
 
         string? trimmedType = pathType?.Trim();
-        bool isExplicitRelative = string.Equals(trimmedType, "Relative", StringComparison.OrdinalIgnoreCase);
-        bool isExplicitNonRelative = !string.IsNullOrEmpty(trimmedType)
-            && (string.Equals(trimmedType, "Absolute", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(trimmedType, "Server", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(trimmedType, "Content", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(trimmedType, "Library", StringComparison.OrdinalIgnoreCase));
+        string elementSuffix = string.IsNullOrWhiteSpace(elementId) ? "" : $" (element {elementId.Trim()})";
+        // Revit 2022 writes "Relative to Central Model" for a link whose Revit API path type is Relative
+        bool isExplicitRelative = string.Equals(trimmedType, "Relative", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmedType, "Relative to Central Model", StringComparison.OrdinalIgnoreCase);
+        bool isExplicitNonRelative = string.Equals(trimmedType, "Absolute", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmedType, "Server", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmedType, "Content", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmedType, "Library", StringComparison.OrdinalIgnoreCase);
 
-        bool isImplicitRelative = !isExplicitNonRelative
-            && string.IsNullOrEmpty(trimmedType)
+        if (!string.IsNullOrEmpty(trimmedType) && !isExplicitRelative && !isExplicitNonRelative)
+        {
+            if (sameDirectory) return;
+            throw new RvtWriteRefusedException(
+                "relative-reference-relocation",
+                $"Saving to a different directory cannot verify external reference{elementSuffix} with the unrecognised path type '{trimmedType}'.");
+        }
+
+        bool isImplicitRelative = string.IsNullOrEmpty(trimmedType)
             && !string.IsNullOrWhiteSpace(rawPath)
             && !IsRootedOrUriLikePath(rawPath);
 
         if (!isExplicitRelative && !isImplicitRelative)
             return;
 
-        string elementSuffix = string.IsNullOrWhiteSpace(elementId) ? "" : $" (element {elementId.Trim()})";
         if (string.IsNullOrWhiteSpace(rawPath))
         {
             if (!sameDirectory)
