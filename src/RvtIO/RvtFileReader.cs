@@ -775,6 +775,7 @@ public partial class RvtFileReader
 
         LogPhase("Export ids applied");
         ResolveParameterUnits(rvtInfo, state);
+        Parameter.ResolveZeroElementIds(rvtInfo, state);
 
         // Shared-coordinates / true-north placement: the project may be modelled
         // axis-aligned but exported (by Revit) rotated+offset into shared coords. The exact
