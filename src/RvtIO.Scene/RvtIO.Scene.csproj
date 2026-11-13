@@ -6,7 +6,7 @@
     <RootNamespace>RvtIO.Scene</RootNamespace>
     <AssemblyName>RvtIO.Scene</AssemblyName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <!-- The IOScene range ends at 0.2.0-0 so that previews of the next breaking line stay out; NU5104 flags that bound. -->
+    <!-- The IOScene range ends at 0.2.0-0.0 so that previews of the next breaking line stay out (all but 0.2.0-0, which IOScene does not publish); NU5104 flags that bound. -->
     <NoWarn>$(NoWarn);NU5104</NoWarn>
   </PropertyGroup>
 

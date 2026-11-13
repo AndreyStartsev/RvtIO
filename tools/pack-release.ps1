@@ -34,7 +34,7 @@ function New-Zip([string]$SourceDir, [string]$ZipPath) {
     Compress-Archive -Path (Join-Path $SourceDir '*') -DestinationPath $ZipPath
 }
 
-# Throws unless the RvtIO.Scene nuspec depends on RvtIO exactly at $Version and on a released IOScene.
+# Throws unless the RvtIO.Scene nuspec depends on RvtIO exactly at $Version and on a released IOScene, with bounds nuget.org accepts.
 function Assert-SceneDependencies([xml]$Nuspec, [string]$Version) {
     $dependencies = @($Nuspec.SelectNodes("//*[local-name()='dependency']"))
     # (a) Guards the PinProjectReferencesExactly target, which hooks a private NuGet target and would fail silently if an SDK renamed it.
@@ -53,6 +53,18 @@ function Assert-SceneDependencies([xml]$Nuspec, [string]$Version) {
         $lower = $range.TrimStart('[', '(').Split(',')[0].Trim()
         if ($lower -eq '' -or $lower.Contains('-')) {
             throw "RvtIO.Scene depends on IOScene '$range', whose lower bound is missing or a preview; release on a published IOScene 0.1.0 or later"
+        }
+    }
+    # (c) nuget.org refuses a dependency bound with metadata, or one whose prerelease label has one part and does not start
+    # with a letter (NuGetGallery ManifestValidator.ValidateDependencyVersion); dotnet pack accepts both, so only the push would fail.
+    foreach ($dependency in $dependencies) {
+        $range = $dependency.GetAttribute('version')
+        foreach ($bound in $range.Trim('[', ']', '(', ')').Split(',')) {
+            $bound = $bound.Trim()
+            $label = if ($bound.Contains('-')) { $bound.Substring($bound.IndexOf('-') + 1) } else { '' }
+            if ($bound.Contains('+') -or ($label -ne '' -and -not $label.Contains('.') -and $label -notmatch '^[a-z][0-9a-z-]*$')) {
+                throw "RvtIO.Scene depends on $($dependency.GetAttribute('id')) '$range', whose bound '$bound' nuget.org refuses"
+            }
         }
     }
 }
