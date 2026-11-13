@@ -30,6 +30,9 @@ Add the library to a .NET project:
 dotnet add package RvtIO
 ```
 
+`RvtIO.Scene` (a separate package released with RvtIO) turns a Revit project into an `IOScene` scene document for
+viewers; see the [scene adapter](docs/scene.md) for usage and limits.
+
 The library targets .NET 8 and .NET 10. It uses managed code without native dependencies or Windows-only APIs and supports Windows, Linux and macOS. Tests currently run on Windows.
 
 ## Command line
@@ -168,7 +171,7 @@ The tested projects include basic and advanced architecture, structure and MEP s
 
 ## Limitations
 
-- Version 0.3.0 is a preview. The API can change before 1.0.
+- Version 0.4.0 is a preview. The API can change before 1.0.
 - Geometry coverage is partial for some element kinds.
 - Revit 2027 support is partial.
 - There is no support for writing or modifying Revit files.
