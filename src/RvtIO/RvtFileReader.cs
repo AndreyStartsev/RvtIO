@@ -2456,7 +2456,7 @@ public partial class RvtFileReader
         return stored;
     }
 
-    private static void ParseBlocks(ParsingState state, TextWriter? diag)
+    internal static void ParseBlocks(ParsingState state, TextWriter? diag)
     {
         var lap = System.Diagnostics.Stopwatch.StartNew();
         void Lap(string name) { diag?.WriteLine($"Timing: {name} {lap.Elapsed.TotalSeconds:F1}s"); lap.Restart(); }

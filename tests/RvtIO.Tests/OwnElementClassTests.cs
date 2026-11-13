@@ -140,6 +140,32 @@ public class OwnElementClassTests
     }
 
     [Fact]
+    public void ParseBlocks_OfAFileReadByItsFraming_TakesThePartitionRecords_AndScansOnlyTheOtherChunks()
+    {
+        // the partition chunk holds the project's record of element 123 and behind it a block of element 456 in the document of a loaded
+        // family; the chunk of Global, which has no framing, holds a block of element 789
+        byte[] record = Frame(3708), family = Frame(157), global = Frame(2000);
+        BitConverter.GetBytes(456u).CopyTo(family, 0);
+        BitConverter.GetBytes(789u).CopyTo(global, 0);
+        byte[] partition = [.. record, .. family];
+        var state = new ParsingState
+        {
+            AllKnownIds = [123, 789],
+            Chunks = [partition, global],
+            RecordChunks = [partition],
+            NonRecordChunks = [global],
+            PartitionChunkCount = 1,
+            FramedPartitions = [new PartitionFraming.Framed([partition], [new(102, 123, 0, record.Length)], 4)],
+        };
+
+        RvtFileReader.ParseBlocks(state, null);
+
+        Assert.Equal(1, state.BlockClassInventory[3708].Count);
+        Assert.False(state.BlockClassInventory.ContainsKey(157));
+        Assert.Equal(1, state.BlockClassInventory[2000].Count);
+    }
+
+    [Fact]
     public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded()
     {
         byte[] crossing = Frame(0x07D7), whole = Frame(0x07D7);
