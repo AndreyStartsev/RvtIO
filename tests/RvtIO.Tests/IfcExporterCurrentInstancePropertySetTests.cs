@@ -6,8 +6,8 @@ using Xunit;
 namespace RvtIO.Tests;
 
 /// <summary>Occurrence property sets where the current profile differs from the legacy profile reference: Manufacturer and
-/// flow-segment Length sets, Pset_DistributionFlowElementCommon on doors and fittings, a constant
-/// LoadBearing of walls, no column bar pitch, no ProvisionForVoid, and IsExternal as a plain function of the
+/// flow-segment Length sets, Pset_DistributionFlowElementCommon on doors and fittings, LoadBearing of
+/// walls from the Structural box and the usage, no column bar pitch, no ProvisionForVoid, and IsExternal as a plain function of the
 /// type and host. The legacy profile contract stays in the original per-set test classes.</summary>
 public class IfcExporterCurrentInstancePropertySetTests
 {
@@ -166,12 +166,52 @@ public class IfcExporterCurrentInstancePropertySetTests
     }
 
     [Theory]
-    [InlineData(IfcProfile.Current, "IFCBOOLEAN(.T.)")]
-    [InlineData(IfcProfile.Legacy, "IFCBOOLEAN(.F.)")]
-    public void NonBearingWall_LoadBearingFollowsTheVersion(IfcProfile version, string expected)
+    [InlineData(IfcProfile.Legacy, 0, null, "IFCBOOLEAN(.F.)")]
+    [InlineData(IfcProfile.Current, 1, 1, "IFCBOOLEAN(.T.)")]
+    [InlineData(IfcProfile.Current, 1, 0, "IFCBOOLEAN(.F.)")]
+    [InlineData(IfcProfile.Current, 0, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData(IfcProfile.Current, 2, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData(IfcProfile.Current, 1, null, null)]
+    public void WallLoadBearing_InCurrentNeedsTheStructuralBoxAndBearingUsage(
+        IfcProfile version, int structuralUsage, int? structuralBox, string? expected)
     {
-        var sets = SetsOf(Export(version, Level(), Wall(110, 0)), "IFCWALLSTANDARDCASE");
+        var wall = Wall(110, structuralUsage);
+        if (structuralBox is int box)
+            wall.Parameters.Add(new Parameter { Id = -1001596, Definition = new Definition { Id = -1001596, Name = "WALL_STRUCTURAL_SIGNIFICANT" },
+                StorageType = StorageType.Integer, Value = box });
+        var sets = SetsOf(Export(version, Level(), wall), "IFCWALLSTANDARDCASE");
+        Assert.Equal(expected, sets.Single(set => set.Name == "Pset_WallCommon").Properties.GetValueOrDefault("LoadBearing"));
+    }
+
+    [Theory]
+    [InlineData("LoadBearing", 1, 0, 0, "IFCBOOLEAN(.T.)")]
+    [InlineData("LoadBearing", 1, 0, null, "IFCBOOLEAN(.T.)")]
+    [InlineData("LoadBearing", 0, 1, 1, "IFCBOOLEAN(.F.)")]
+    [InlineData("Pset_WallCommon.LoadBearing", 1, 0, 0, "IFCBOOLEAN(.T.)")]
+    [InlineData("Pset_WallCommon.LoadBearing", 0, 1, 1, "IFCBOOLEAN(.F.)")]
+    public void WallLoadBearing_InCurrentANamedParameterWinsOverTheStructuralFlags(
+        string name, int named, int structuralUsage, int? structuralBox, string expected)
+    {
+        var wall = Wall(110, structuralUsage);
+        if (structuralBox is int box)
+            wall.Parameters.Add(new Parameter { Id = -1001596, Definition = new Definition { Id = -1001596, Name = "WALL_STRUCTURAL_SIGNIFICANT" },
+                StorageType = StorageType.Integer, Value = box });
+        wall.Parameters.Add(new Parameter { Id = 900001, Definition = new Definition { Id = 900001, Name = name },
+            StorageType = StorageType.Integer, Value = named });
+        var sets = SetsOf(Export(IfcProfile.Current, Level(), wall), "IFCWALLSTANDARDCASE");
         Assert.Equal(expected, sets.Single(set => set.Name == "Pset_WallCommon").Properties["LoadBearing"]);
+    }
+
+    [Fact]
+    public void WallLoadBearing_InCurrentTheSetQualifiedNameWinsOverThePlainName()
+    {
+        var wall = Wall(110, 1);
+        wall.Parameters.Add(new Parameter { Id = 900001, Definition = new Definition { Id = 900001, Name = "LoadBearing" },
+            StorageType = StorageType.Integer, Value = 1 });
+        wall.Parameters.Add(new Parameter { Id = 900002, Definition = new Definition { Id = 900002, Name = "Pset_WallCommon.LoadBearing" },
+            StorageType = StorageType.Integer, Value = 0 });
+        var sets = SetsOf(Export(IfcProfile.Current, Level(), wall), "IFCWALLSTANDARDCASE");
+        Assert.Equal("IFCBOOLEAN(.F.)", sets.Single(set => set.Name == "Pset_WallCommon").Properties["LoadBearing"]);
     }
 
     [Theory]

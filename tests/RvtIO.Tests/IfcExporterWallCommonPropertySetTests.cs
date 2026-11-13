@@ -162,6 +162,9 @@ public class IfcExporterWallCommonPropertySetTests
         // reference the identical IfcPropertySingleValue entity.
         var wallA = Wall(id: 150, typeId: 151, name: "Type A", structuralUsage: 1);
         var wallB = Wall(id: 160, typeId: 161, name: "Type B", structuralUsage: 1, offsetX: 20);
+        foreach (var wall in new[] { wallA, wallB }) // the current profile also needs the Structural box
+            wall.Parameters.Add(new Parameter { Id = -1001596, Definition = new Definition { Id = -1001596, Name = "WALL_STRUCTURAL_SIGNIFICANT" },
+                StorageType = StorageType.Integer, Value = 1 });
         var info = new RevitFileInfo();
         info.Elements.Add(Level());
         info.Elements.AddRange([wallA, wallB]);
