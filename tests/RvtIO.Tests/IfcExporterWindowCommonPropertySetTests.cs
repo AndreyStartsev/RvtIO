@@ -39,6 +39,41 @@ public class IfcExporterWindowCommonPropertySetTests
         Assert.DoesNotContain("IFCWINDOWSTYLE", ifc);
     }
 
+    [Theory]
+    [InlineData(null, "IFCBOOLEAN(.T.)")]
+    [InlineData("Pset_WallCommon.IsExternal", "IFCBOOLEAN(.T.)")]
+    [InlineData("IsExternal", "IFCBOOLEAN(.F.)")]
+    public void LegacyWindow_HostWallClassificationReadsThePropertyNameAlone(string? wallParameter, string expected)
+    {
+        // The legacy profile takes a window's IsExternal from its host wall's classification, which a wall parameter named
+        // for the wall's own Pset_WallCommon property does not change.
+        Element window = HostedProduct(id: 4100, typeId: 4101, name: "Window type");
+        window.SerializedHostId = 4200;
+        var wallType = new Element { Id = 4201, CategoryId = -2000011, SerializedBasicWallTypeFunction = 1 };
+        var wall = new Element
+        {
+            Id = 4200, CategoryId = -2000011,
+            Parameters = [new Parameter { Definition = new Definition { Name = "ELEM_TYPE_PARAM" },
+                StorageType = StorageType.ElementId, Value = 4201 }],
+        };
+        if (wallParameter != null)
+            wall.Parameters.Add(new Parameter { Definition = new Definition { Name = wallParameter },
+                StorageType = StorageType.Integer, Value = 0 });
+
+        var info = new RevitFileInfo();
+        info.Elements.AddRange([window, wall, wallType]);
+        string path = Path.Combine(Path.GetTempPath(), $"revitreader-window-host-{Guid.NewGuid():N}.ifc");
+        string ifc;
+        try
+        {
+            new IfcExporter { Profile = IfcProfile.Legacy }.Export(info, path);
+            ifc = File.ReadAllText(path);
+        }
+        finally { File.Delete(path); }
+
+        Assert.Equal(expected, Properties(ifc, SolePset(ifc, "Pset_WindowCommon"))["IsExternal"].Expression);
+    }
+
     [Fact]
     public void ValidatedWindowTypeReference_OverridesWrongGeneralName()
     {

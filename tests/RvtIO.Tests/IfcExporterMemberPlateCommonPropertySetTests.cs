@@ -389,6 +389,31 @@ public class IfcExporterMemberPlateCommonPropertySetTests
             props.Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
 
+    [Theory]
+    [InlineData(IfcProfile.Legacy)]
+    [InlineData(IfcProfile.Current)]
+    public void Mullion_SetQualifiedIsExternalWinsOverThePropertyName(IfcProfile profile)
+    {
+        var mullion = LinearElement(
+            id: 300, typeId: 301, name: "Mullion_50x100", categoryId: MullionCategoryId,
+            category: "OST_CurtainWallMullions", centreX: 0, curveElemLengthFt: 10.0);
+        mullion.Parameters.Add(new Parameter { Id = 9201, Definition = new Definition { Id = 9201, Name = "IsExternal" },
+            StorageType = StorageType.Integer, Value = 0 });
+        mullion.Parameters.Add(new Parameter { Id = 9202, Definition = new Definition { Id = 9202, Name = "Pset_MemberCommon.IsExternal" },
+            StorageType = StorageType.Integer, Value = 1 });
+        var info = new RevitFileInfo();
+        info.Elements.Add(mullion);
+        string path = TempIfcPath($"member-qualified-external-{profile}");
+        try
+        {
+            new IfcExporter { Profile = profile }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            var (_, valueIds) = SolePsetOfName(ifc, "Pset_MemberCommon");
+            Assert.Equal("IFCBOOLEAN(.T.)", ResolveProperties(ifc, valueIds)["IsExternal"]);
+        }
+        finally { Cleanup(path); }
+    }
+
     [Fact]
     public void CurrentMullion_GetsTheExactSpanAsInLegacy()
     {
@@ -581,6 +606,26 @@ public class IfcExporterMemberPlateCommonPropertySetTests
             [wallType, panelType, host, panel]);
 
         Assert.Equal(expected, values[panel.Id]);
+    }
+
+    [Fact]
+    public void HostSetQualifiedIsExternal_StaysOutOfTheValueItsHostedColumnInherits()
+    {
+        var slabType = new Element { Id = 3201, CategoryId = -2000032 };
+        var columnType = new Element { Id = 3203, CategoryId = -2001330 };
+        Element slab = BareTypedElement(3210, -2000032, slabType.Id);
+        slab.Parameters.Add(new Parameter { Definition = new Definition { Name = "IsExternal" },
+            StorageType = StorageType.Integer, Value = 1 });
+        slab.Parameters.Add(new Parameter { Definition = new Definition { Name = "Pset_SlabCommon.IsExternal" },
+            StorageType = StorageType.Integer, Value = 0 });
+        Element column = BareTypedElement(3211, -2001330, columnType.Id, slab.Id);
+
+        IReadOnlyDictionary<int, bool> values = IfcExporter.ResolveMemberPlateIsExternalValues(
+            [slabType, columnType, slab, column], [slab.Id, column.Id],
+            new Dictionary<int, string> { [slab.Id] = "Pset_SlabCommon", [column.Id] = "Pset_ColumnCommon" });
+
+        Assert.False(values[slab.Id]);
+        Assert.True(values[column.Id]);
     }
 
     [Fact]

@@ -167,6 +167,22 @@ public class IfcExporterCurrentTypePropertySetTests
     }
 
     [Fact]
+    public void OccurrenceIsExternal_ReadsTheSetQualifiedNameOfItsOwnSet()
+    {
+        var occurrence = new Element { Id = 10, CategoryId = -2000171 };
+        occurrence.Parameters.Add(new Parameter { Definition = new Definition { Name = "IsExternal" },
+            StorageType = StorageType.Integer, Value = 1 });
+        occurrence.Parameters.Add(new Parameter { Definition = new Definition { Name = "Pset_MemberCommon.IsExternal" },
+            StorageType = StorageType.Integer, Value = 0 });
+        var elements = new Dictionary<int, Element> { [10] = occurrence };
+        Assert.False(IfcExporter.ResolveOccurrenceIsExternalValuesCurrent(
+            elements, [10], new Dictionary<int, string> { [10] = "Pset_MemberCommon" })[10]);
+        Assert.True(IfcExporter.ResolveOccurrenceIsExternalValuesCurrent(
+            elements, [10], new Dictionary<int, string> { [10] = "Pset_PlateCommon" })[10]);
+        Assert.True(IfcExporter.ResolveOccurrenceIsExternalValuesCurrent(elements, [10])[10]);
+    }
+
+    [Fact]
     public void TypeIsExternal_SetQualifiedNameWinsOverThePropertyName()
     {
         var type = Type(1, "t", null);
