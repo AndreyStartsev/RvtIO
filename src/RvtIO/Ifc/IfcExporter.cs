@@ -66168,8 +66168,12 @@ public partial class IfcExporter
         if (element.CategoryId != CurtainWallMullionCategoryId)
             return false;
 
+        // As in Revit's exporter, the set-qualified name wins over the property name.
         List<Parameter> instanceSpanCandidates = element.Parameters.Where(
-            parameter => ParameterNameEquals(parameter, "Span")).ToList();
+            parameter => ParameterNameEquals(parameter, "Pset_MemberCommon.Span")).ToList();
+        if (instanceSpanCandidates.Count == 0)
+            instanceSpanCandidates = element.Parameters.Where(
+                parameter => ParameterNameEquals(parameter, "Span")).ToList();
         ExactSpanParameterResult instanceSpan = ResolveExactSpanParameter(
             instanceSpanCandidates);
         if (instanceSpan.State == ExactSpanParameterState.Blocked)
