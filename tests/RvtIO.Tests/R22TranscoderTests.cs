@@ -91,6 +91,14 @@ public class R22TranscoderTests
     }
 
     [Fact]
+    public void Payload_BytesAfterTheObjectAreNotRewritten_AndSayWhy()
+    {
+        var block = Bytes(w => { w.Write((ushort)6); w.Write(1); w.Write(2); w.Write(77L); w.Write((ushort)0); });
+        Assert.Null(new R22Transcoder(Source(), Target(), 8).Payload(block, 0, block.Length, out var failure));
+        Assert.Equal("Pair: bytes after the end of the object", failure);
+    }
+
+    [Fact]
     public void Payload_RootClassWithoutCounterpartIsNotRewritten()
     {
         var block = Bytes(w => { w.Write((ushort)4); w.Write(1); });
@@ -106,6 +114,55 @@ public class R22TranscoderTests
             w.Write(1L << 40); w.Write(5); w.Write(0u);
         });
         Assert.Null(new R22Transcoder(Source(), Target(), 8).Payload(block, 0, block.Length));
+    }
+
+    [Fact]
+    public void Framed_RewritesTheBlocksOfTheProjectBlock_EachWholeInOneSegment_AndLeavesOutTheHeaders()
+    {
+        var payload = Bytes(w => { w.Write((ushort)6); w.Write(1); w.Write(2); w.Write(77L); });
+        var unknown = Bytes(w => { w.Write((ushort)4); w.Write(1); });
+        // [owner:8][channel != 101: checksum:4][size:4][payload][size:4]
+        byte[] Item(ulong owner, bool header, byte[] body) => Bytes(w =>
+        {
+            w.Write(owner);
+            if (!header) w.Write(0u);
+            w.Write((uint)body.Length); w.Write(body); w.Write((uint)body.Length);
+        });
+        byte[] header = Item(123, true, payload), root = Item(123, false, payload), geometry = Item(456, false, unknown);
+        byte[] stream = [.. header, .. root, .. geometry];
+        int cut = header.Length + 10; // the root runs into the next segment
+        var source = new PartitionFraming.Framed([stream[..cut], stream[cut..]],
+            [new(101, 123, 0, header.Length), new(102, 123, header.Length, root.Length), new(103, 456, header.Length + root.Length, geometry.Length)], 8);
+        var transcoder = new R22Transcoder(Source(), Target(), 8);
+
+        var framed = transcoder.Framed(source, out var stats)!;
+
+        Assert.Equal(4, framed.IdWidth);
+        Assert.Equal([(102, 123UL), (103, 456UL)], framed.Items.Select(i => (i.Channel, i.Owner)));
+        Assert.Equal((1, 1, 1, 0), (stats.RootBlocks, stats.RootBlocksRewritten, stats.OtherBlocks, stats.OtherBlocksRewritten));
+        byte[] Block(uint owner, byte[] body) => Bytes(w =>
+        {
+            w.Write(owner); w.Write(Adler32(body));
+            w.Write((uint)body.Length); w.Write(body); w.Write((uint)body.Length);
+        });
+        byte[] marked = [.. unknown];
+        marked[0] = 0xFE; marked[1] = 0xFF; // R22Transcoder.UnknownTag
+        byte[][] expected = [Block(123, transcoder.Payload(payload, 0, payload.Length)!), Block(456, marked)];
+        for (int i = 0; i < 2; i++)
+        {
+            var (data, start, copied) = framed.Bytes(framed.Items[i]);
+            Assert.False(copied);
+            Assert.Equal(expected[i], data.AsSpan(start, framed.Items[i].Length).ToArray());
+        }
+        // a frame of another id width than the file's schema is not rewritten
+        Assert.Null(transcoder.Framed(source with { IdWidth = 4 }, out _));
+    }
+
+    private static uint Adler32(byte[] data)
+    {
+        uint a = 1, b = 0;
+        foreach (byte x in data) { a = (a + x) % 65521; b = (b + a) % 65521; }
+        return (b << 16) | a;
     }
 
     [SkippableFact]
