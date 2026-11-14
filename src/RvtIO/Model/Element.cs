@@ -212,9 +212,6 @@ namespace RvtIO.Model
         internal int? SerializedFamilyId { get; set; }
 
         [JsonIgnore]
-        internal double? ValidatedProfileRoofAreaFeet { get; set; }
-
-        [JsonIgnore]
         internal double? ValidatedRailingLengthFeet { get; set; }
 
         /// <summary>Exact serialized Element.m_unplacedOwnerId value.</summary>
