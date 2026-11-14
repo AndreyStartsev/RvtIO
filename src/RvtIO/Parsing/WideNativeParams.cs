@@ -40,6 +40,8 @@ internal sealed class WideNativeParams
 
     internal const string ViewerViewKey = "viewer:m_dbViewId";
 
+    private const string RailTopHeightKey = "490:m_topRailHeight";
+
     private const string PlaneOriginKey = "plane:m_origin";
 
     private const string LineKeyPrefix = "gline:";
@@ -105,6 +107,9 @@ internal sealed class WideNativeParams
         if (declaring.Name == "ParamElem" && field.Name == "m_pParamDef") return ParamDefPointerKey;
         // the view a viewer (a section mark, ...) stands for
         if (declaring.Name == "Viewer" && field.Name == "m_dbViewId") return ViewerViewKey;
+        // the top rail height of a railing type (BaseRailingAttr and its subclasses, by the file's own class names), which
+        // ElementBuilder.ApplySerializedRailingData reads bare as the shipped 2022 walk stores it
+        if (declaring.Name == "BaseRailingAttr" && field.Name == "m_topRailHeight") return RailTopHeightKey;
         int r22 = _toR22.GetValueOrDefault(declaring.Id);
         bool keyed = r22 != 0 && _r22[r22].Fields.Any(f => f.Name == field.Name)
             && _bases.Contains(r22.ToString(CultureInfo.InvariantCulture) + ":" + field.Name);
@@ -223,6 +228,7 @@ internal sealed class WideNativeParams
             {
                 if (keyed) np.DoubleFields[key] = c.Real;
                 if (bare) np.DoubleFields[name] = c.Real;
+                if (c.AtRoot && c.Key == RailTopHeightKey) np.DoubleFields["m_topRailHeight"] = c.Real;
             }
             else if (c.Text != null)
             {

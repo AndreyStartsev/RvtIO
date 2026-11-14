@@ -4778,7 +4778,7 @@ public partial class IfcExporter
                         elem.CategoryId == -2000126 && elem.ValidatedRoofOrRailingTypeReferenceName != null
                             && !elem.ValidatedRoofOrRailingTypeReferenceIsBlocked ? quantityTakeOffReferenceValueId : null,
                         ResolveRailingIsExternal(elem, elemById, elementIdOccurrenceCounts),
-                        propertySingleValueIds, CurrentProfile);
+                        propertySingleValueIds);
                 }
                 if (quantityTakeOffReferenceValueId.HasValue
                     && ifcType is "IFCSTAIR" or "IFCSTAIRFLIGHT")
@@ -64060,8 +64060,7 @@ public partial class IfcExporter
     /// </summary>
     private static void ExportRailingCommonHeightPropertySet(
         StepWriter w, Element elem, int elemEntityId, int ownerHistId, int? referenceValueId,
-        bool? isExternal, Dictionary<(string PropertyName, string ValueExpr), int> valuePool,
-        bool currentProfile = false)
+        bool? isExternal, Dictionary<(string PropertyName, string ValueExpr), int> valuePool)
     {
         var values = new List<int>();
         if (isExternal is bool external)
@@ -64073,8 +64072,8 @@ public partial class IfcExporter
             && elem.SerializedRailingTopHeightFeet is double heightFeet
             && double.IsFinite(heightFeet) && heightFeet > 0)
         {
-            double heightMillimetres = currentProfile ? 0 : heightFeet * 304.8;
-            if (double.IsFinite(heightMillimetres) && (currentProfile || heightMillimetres > 0))
+            double heightMillimetres = heightFeet * 304.8;
+            if (double.IsFinite(heightMillimetres) && heightMillimetres > 0)
                 values.Add(w.Add("IFCPROPERTYSINGLEVALUE",
                     $"{S("Height")},$,IFCPOSITIVELENGTHMEASURE({D17(heightMillimetres)}),$"));
         }
