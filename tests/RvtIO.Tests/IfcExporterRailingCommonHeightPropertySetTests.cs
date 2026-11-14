@@ -458,7 +458,7 @@ public class IfcExporterRailingCommonHeightPropertySetTests
     }
 
     [Fact]
-    public void Current_StairRailingHeight_IsZeroForEveryValidatedHeight()
+    public void Current_StairRailingHeight_IsTheTopRailHeightAsInLegacy()
     {
         Element railing = Product(
             id: 9200, typeId: 9201, categoryId: -2000126,
@@ -470,15 +470,15 @@ public class IfcExporterRailingCommonHeightPropertySetTests
 
         string ifc = ExportToText(IfcProfile.Current, railing, unvalidated);
 
+        // Revit's IFC2X3 exports write the top rail height (1100 on a Revit 2022 model, 1219.2 on rac_advanced), never 0.
         Assert.Equal(
-            "IFCPOSITIVELENGTHMEASURE(0.)",
+            "IFCPOSITIVELENGTHMEASURE(899.99999999999989)",
             Properties(ifc, Assert.Single(Psets(ifc, "Pset_RailingCommon"),
                 pset => Properties(ifc, pset).ContainsKey("Height")))["Height"].Expression);
         Assert.Single(Regex.Matches(ifc, @"IFCPROPERTYSINGLEVALUE\('Height',"));
     }
 
     private static string ExportToText(params Element[] elements) =>
-        // The legacy profile contract: the current profile writes a zero Height for a stair railing.
         ExportToText(IfcProfile.Legacy, elements);
 
     private static string ExportToText(IfcProfile version, params Element[] elements)

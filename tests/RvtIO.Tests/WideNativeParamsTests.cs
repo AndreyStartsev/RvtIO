@@ -14,7 +14,7 @@ public class WideNativeParamsTests
 {
     private const int IdentifierId = 1, ElementIdId = 2, PlaneId = 3, LevelId = 4, PhasesId = 5, RoomId = 6, RootId = 7, SubRootId = 8, HolderId = 9,
         NamedParamId = 10, FamilyParamsId = 11, InlineParamsId = 12, QueuedParamsId = 13, XyzId = 14, CalculationPointId = 15, RegenHolderId = 16,
-        PlainPointId = 17, PlanePointId = 18;
+        PlainPointId = 17, PlanePointId = 18, BaseRailingAttrId = 19, StairsRailingAttrId = 20, OtherAttrId = 21;
 
     private static SchemaField Field(string name, byte type, byte mods = 0, int? reference = null, int? fixedCount = null) =>
         new(name, type, mods, 0, fixedCount, reference, null, null);
@@ -41,6 +41,9 @@ public class WideNativeParamsTests
             new(RegenHolderId, "RegenHolder", 0, 1, [Field("m_arrFamSymRegenData", 14, 81)], []),
             new(PlainPointId, "PlainPoint", 0, 1, [Field("m_position", 14, 0, XyzId)], []),
             new(PlanePointId, "PlanePoint", 0, 1, [Field("m_position", 14, 0, PlaneId)], []),
+            new(BaseRailingAttrId, "BaseRailingAttr", 0, 1, [Field("m_topRailHeight", 7)], []),
+            new(StairsRailingAttrId, "StairsRailingAttr", BaseRailingAttrId, 1, [], []),
+            new(OtherAttrId, "OtherAttr", 0, 1, [Field("m_topRailHeight", 7)], []),
         ],
     };
 
@@ -136,6 +139,19 @@ public class WideNativeParamsTests
         Assert.Equal(-0.5, np.DoubleFields["3639:m_position@0"]);
         Assert.Equal(0.25, np.DoubleFields["3639:m_position@1"]);
         Assert.Equal(5.375, np.DoubleFields["3639:m_position@2"]);
+    }
+
+    [Fact]
+    public void Build_KeepsTheTopRailHeightOfARailingTypeBare_AndOnlyFromBaseRailingAttr()
+    {
+        // A railing type of a file read by its own schema (Revit 2020, 2024, ...): StairsRailingAttr inherits
+        // BaseRailingAttr.m_topRailHeight, which ElementBuilder reads as DoubleFields["m_topRailHeight"].
+        var np = Params.Build(Walk(StairsRailingAttrId, w => w.Write(4.0)));
+        Assert.NotNull(np);
+        Assert.Equal(4.0, np.DoubleFields["m_topRailHeight"]);
+
+        var other = Params.Build(Walk(OtherAttrId, w => w.Write(4.0)));
+        Assert.False(other?.DoubleFields.ContainsKey("m_topRailHeight") ?? false);
     }
 
     [Fact]
