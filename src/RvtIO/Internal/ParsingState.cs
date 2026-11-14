@@ -443,9 +443,10 @@ internal class ParsingState
     public Dictionary<uint, StairComponentSource.MembershipRoot> StairMembershipRoots { get; } = new();
     public Dictionary<uint, StairComponentSource.ElementClassRoot> OwnedElementClassRoots { get; } = new();
 
-    /// <summary>The same root count as <see cref="OwnedElementClassRoots"/>, taken from the stream walk alone. A file with its own
-    /// class schema is seeded in <see cref="OwnedElementClassRoots"/> by the schema index and the walk then counts the same block a
-    /// second time, so every id there reads as a duplicate; the stair source reads this table instead.</summary>
+    /// <summary>The same root count as <see cref="OwnedElementClassRoots"/>, taken from the counted roots alone (the records of the project's
+    /// block, or the stream walk when a stream is not read by its framing). A file with its own class schema is seeded in
+    /// <see cref="OwnedElementClassRoots"/> by the schema index; read by the walk, the walk then counts the same block a second time, so
+    /// every id there reads as a duplicate; the stair source reads this table instead.</summary>
     public Dictionary<uint, StairComponentSource.ElementClassRoot> WalkedElementClassRoots { get; } = new();
 
     /// <summary>The root count of the stair source: the stream walk's own count when the walk saw the element, else the seeded one.</summary>

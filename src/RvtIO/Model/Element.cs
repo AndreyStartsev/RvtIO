@@ -300,9 +300,9 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal ushort? SerializedOwnElementClassId { get; set; }
 
-        /// <summary>True when the element class root was counted once by the schema-seeded table alone (<c>OwnedElementClassRoots</c>), the
-        /// count the stair source read before the walked count replaced it. The Length surrogate of a stair run was calibrated on the files
-        /// where this holds, so only those runs get it.</summary>
+        /// <summary>True when the element class root was counted once in <c>OwnedElementClassRoots</c> with its class: by the records of the
+        /// project's block when every stream is read by its framing, else by the stream walk, after the schema index seeded the roots of a file
+        /// with its own class schema. The Length surrogate of a stair run was calibrated on the files where this holds, so only those runs get it.</summary>
         [JsonIgnore]
         internal bool OwnClassRootSeededOnce { get; set; }
 
