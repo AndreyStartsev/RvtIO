@@ -974,6 +974,12 @@ namespace RvtIO.Model
         /// </summary>
         public int? SerializedHostId { get; set; }
 
+        /// <summary>
+        /// The workset ID of the element (equal to ELEM_PARTITION_PARAM / Autodesk.Revit.DB.Element.WorksetId).
+        /// Non-null in workshared files where a partition is assigned; null in non-workshared files.
+        /// </summary>
+        public int? WorksetId { get; set; }
+
         /// <summary>Own direct CurtainCellFamRef/MullionFamRef membership, distinct from
         /// the host which this instance can cut. Attached only from a unique native root.</summary>
         [JsonIgnore]
