@@ -93,19 +93,19 @@ public class ProfileRoofAreaTests
         Assert.Equal(mutation == "valid" ? 100d : (double?)null, roof.ValidatedProfileRoofAreaFeet);
     }
 
-    [Theory]
-    [InlineData(true, 12.870562689188338)] [InlineData(false, 14.375562689188321)]
-    public void OnlyCurrentUsesTheValidatedArea(bool currentProfile, double expected)
+    [Fact]
+    public void ProjectedAreaIsTheStoredAreaNotTheValidatedProfileArea()
     {
+        // Revit's ProjectedArea is the stored HOST_AREA_COMPUTED; the own-profile area was the ODA 27.7 TotalArea.
         var writer = new StepWriter();
         var roof = new Element { Id = 10, CategoryId = -2000035,
             ValidatedProfileRoofAreaFeet = 12.870562689188338 / (.3048 * .3048) };
         roof.Parameters.Add(new Parameter { Id = -1012805, StorageType = StorageType.Double,
             Value = 14.375562689188321 / (.3048 * .3048) });
-        IfcExporter.ExportRoofCommonPropertySet(writer, roof, 100, 1, new(), null, currentProfile);
+        IfcExporter.ExportRoofCommonPropertySet(writer, roof, 100, 1, new(), null);
         var area = Assert.Single(Enumerable.Range(0, writer.EntityCount).Select(writer.EntityAt),
             entity => entity.Args.Contains("IFCAREAMEASURE(")).Args;
-        Assert.Equal(expected, double.Parse(Regex.Match(area, @"IFCAREAMEASURE\(([^)]+)\)").Groups[1].Value,
+        Assert.Equal(14.375562689188321, double.Parse(Regex.Match(area, @"IFCAREAMEASURE\(([^)]+)\)").Groups[1].Value,
             CultureInfo.InvariantCulture), 12);
     }
 }

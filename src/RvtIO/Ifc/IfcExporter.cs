@@ -4729,8 +4729,7 @@ public partial class IfcExporter
                         w, elem, elemEntityId, ownerHistId,
                         propertySingleValueIds,
                         elem.CategoryId == RoofCategoryId && elem.ValidatedRoofOrRailingTypeReferenceName != null
-                            && !elem.ValidatedRoofOrRailingTypeReferenceIsBlocked ? quantityTakeOffReferenceValueId : null,
-                        CurrentProfile);
+                            && !elem.ValidatedRoofOrRailingTypeReferenceIsBlocked ? quantityTakeOffReferenceValueId : null);
                 }
                 if (quantityTakeOffReferenceValueId.HasValue
                     && quantityTakeOffReferenceValue is not null
@@ -4828,12 +4827,10 @@ public partial class IfcExporter
                         (elem, elemEntityId,
                             quantityTakeOffReferenceValueId.Value));
                 }
-                // The column pitch description of the current profile is a copy of the beam one
-                // (named after the beam, applying to IfcBeam), so a column receives no such set
-                // there.
+                // Revit's exports (2021 and 2022) write the column pitch set on every column with a Reference.
                 if (quantityTakeOffReferenceValueId.HasValue
                     && quantityTakeOffReferenceValue is not null
-                    && ifcType == "IFCCOLUMN" && !CurrentProfile)
+                    && ifcType == "IFCCOLUMN")
                 {
                     ExportReinforcementBarPitchOfColumnPropertySet(
                         w, elem, elemEntityId, ownerHistId,
@@ -4998,8 +4995,7 @@ public partial class IfcExporter
                 string? roofReference = ResolveValidatedProductTypeName(parent, "IFCROOF", elemById) ?? parent.Name;
                 int? roofReferenceId = ExportQuantityTakeOffPropertySet(
                     w, parent, entity, ownerHistId, roofReference, propertySingleValueIds);
-                ExportRoofCommonPropertySet(w, parent, entity, ownerHistId, propertySingleValueIds, roofReferenceId, CurrentProfile,
-                    withArea: !CurrentProfile);
+                ExportRoofCommonPropertySet(w, parent, entity, ownerHistId, propertySingleValueIds, roofReferenceId);
             }
             else
             {
@@ -64198,9 +64194,7 @@ public partial class IfcExporter
                         : "IFCBOOLEAN(.F.)"));
             }
 
-            // The current profile writes neither NumberOfRiser nor NumberOfTreads (the calculators
-            // find no run data).
-            if (!currentProfile && elem.SerializedActualNumberOfRisers is int numberOfRisers
+            if (elem.SerializedActualNumberOfRisers is int numberOfRisers
                 && numberOfRisers > 0
                 && !HasStairCommonOverrideCandidate(
                     elem, stairType, "NumberOfRiser", psetName))
@@ -64241,8 +64235,8 @@ public partial class IfcExporter
         }
         if (ifcType == "IFCSTAIRFLIGHT")
             AddStairFlightProperties(w, elem, elementsById, valueIds, currentProfile);
-        else if (ifcType == "IFCSTAIR" && stairType != null && !currentProfile)
-            AddStairTreadCount(w, elem, elementsById, stairType, valueIds);
+        else if (ifcType == "IFCSTAIR" && stairType != null)
+            AddStairTreadCount(w, elem, elementsById, stairType, valueIds, currentProfile);
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"{seedPrefix}-pset:{elem.Id}"))},{R(ownerHistId)},{S(psetName)},$,{StepWriter.List(valueIds.Select(R))}");
         w.Add("IFCRELDEFINESBYPROPERTIES",
@@ -64276,14 +64270,14 @@ public partial class IfcExporter
     /// Pset_StairCommon.NumberOfTreads of a stair: the sum of the tread counts of its runs.
     /// </summary>
     private static void AddStairTreadCount(StepWriter w, Element stair,
-        IReadOnlyDictionary<int, Element> elementsById, Element stairType, List<int> valueIds)
+        IReadOnlyDictionary<int, Element> elementsById, Element stairType, List<int> valueIds, bool current = false)
     {
         if (HasStairCommonOverrideCandidate(stair, stairType, "NumberOfTreads", "Pset_StairCommon")) return;
         int treads = 0, runs = 0;
         foreach (var run in elementsById.Values)
         {
             if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.StairsId != stair.Id) continue;
-            if (!StairRunCountsAgree(run, elementsById, numbers) || StairRunTreads(run, numbers) is not int runTreads) return;
+            if (!StairRunCountsAgree(run, elementsById, numbers, current) || StairRunTreads(run, numbers, current) is not int runTreads) return;
             treads += runTreads; runs++;
         }
         if (runs == 0 || treads <= 0) return;
@@ -64315,7 +64309,6 @@ public partial class IfcExporter
     private static void AddStairFlightProperties(StepWriter w, Element run,
         IReadOnlyDictionary<int, Element> elementsById, List<int> valueIds, bool currentProfile = false)
     {
-        bool includeCounts = !currentProfile;
         if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.OwnerId != run.Id
             || !elementsById.TryGetValue(run.FamilyTypeId > 0 ? run.FamilyTypeId : run.TypeId, out var runType)
             || runType.Id == run.Id || runType.CategoryId != run.CategoryId
@@ -64327,10 +64320,10 @@ public partial class IfcExporter
         void Add(string name, string value) => valueIds.Add(w.Add("IFCPROPERTYSINGLEVALUE", $"{S(name)},$,{value},$"));
         string Length(string measure, double millimetres) => $"{measure}({D17(millimetres)})";
 
-        int risers = StairRunIndexSpan(numbers);
-        bool countsAgree = StairRunCountsAgree(run, elementsById, numbers);
-        if (includeCounts && countsAgree && Free("NumberOfRiser")) Add("NumberOfRiser", $"IFCCOUNTMEASURE({D17(risers)})");
-        if (includeCounts && countsAgree && Free("NumberOfTreads") && StairRunTreads(run, numbers) is int treads && treads > 0)
+        int risers = StairRunIndexSpan(numbers), countedRisers = StairRunRisers(run, numbers, currentProfile);
+        bool countsAgree = StairRunCountsAgree(run, elementsById, numbers, currentProfile);
+        if (countsAgree && countedRisers > 0 && Free("NumberOfRiser")) Add("NumberOfRiser", $"IFCCOUNTMEASURE({D17(countedRisers)})");
+        if (countsAgree && Free("NumberOfTreads") && StairRunTreads(run, numbers, currentProfile) is int treads && treads > 0)
             Add("NumberOfTreads", $"IFCCOUNTMEASURE({D17(treads)})");
         double riserHeight = (numbers.TopElevation - numbers.BottomElevation) / risers * 304.8;
         if (Free("RiserHeight") && double.IsFinite(riserHeight) && riserHeight > 0)
@@ -65645,21 +65638,18 @@ public partial class IfcExporter
     /// </summary>
     internal static void ExportRoofCommonPropertySet(
         StepWriter w, Element elem, int elemEntityId, int ownerHistId,
-        Dictionary<(string PropertyName, string ValueExpr), int> valuePool, int? referenceValueId,
-        bool currentProfile = false, bool withArea = true)
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool, int? referenceValueId)
     {
         int isExternalValueId = GetOrAddPropertySingleValue(
             w, valuePool, "IsExternal", "IFCBOOLEAN(.T.)");
         var values = new List<int> { isExternalValueId };
         if (referenceValueId.HasValue) values.Insert(0, referenceValueId.Value);
-        if (withArea && elem.Parameters.FirstOrDefault(parameter => parameter.Id == -1012805)?.Value is double hostAreaFeet
+        if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == -1012805)?.Value is double hostAreaFeet
             && double.IsFinite(hostAreaFeet) && hostAreaFeet > 0)
         {
-            if (currentProfile && elem.ValidatedProfileRoofAreaFeet is double ownArea) hostAreaFeet = ownArea;
-            // The current profile maps TotalArea to the same parameter and never computes
-            // ProjectedArea.
+            // Revit writes the stored HOST_AREA_COMPUTED as ProjectedArea; its TotalArea, the live sloped area, is not reproduced.
             values.Add(w.Add("IFCPROPERTYSINGLEVALUE",
-                $"{S(currentProfile ? "TotalArea" : "ProjectedArea")},$,IFCAREAMEASURE({D17(hostAreaFeet * FeetToMetres * FeetToMetres)}),$"));
+                $"{S("ProjectedArea")},$,IFCAREAMEASURE({D17(hostAreaFeet * FeetToMetres * FeetToMetres)}),$"));
         }
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"roof-common-pset:{elem.Id}"))},{R(ownerHistId)},{S("Pset_RoofCommon")},$,{StepWriter.List(values.Select(R))}");
