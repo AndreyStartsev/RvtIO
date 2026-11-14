@@ -6398,7 +6398,6 @@ internal static partial class ElementBuilder
             ApplyValidatedWallSweepTypeReferenceNames(rvtInfo.Elements, state);
             ApplyValidatedDistributionTypeReferenceNames(rvtInfo.Elements, state);
             ApplyValidatedRoofOrRailingTypeReferenceNames(rvtInfo.Elements, state);
-            ApplyValidatedProfileRoofAreas(rvtInfo.Elements, state);
             ApplyValidatedRailingLengths(rvtInfo.Elements, state);
             ApplyValidatedFamilyNamesFromCanonicalTypeId(rvtInfo.Elements, state);
             ApplyValidatedDoorTypeNames(rvtInfo.Elements, state);

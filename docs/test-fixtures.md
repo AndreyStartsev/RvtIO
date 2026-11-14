@@ -107,7 +107,6 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `OwnElementClassTests` | 1 | 1 | TESTFILE.rvt |
 | `PageCodecSampleTests` | 2 | 2 | any `.rvt` project files |
 | `PartitionFramingFuzzTests` | 1 | 1 | TESTFILE.rvt |
-| `ProfileRoofAreaTests` | 3 | 11 | TestData blocks |
 | `ProjectLengthUnitTests` | 1 | 1 | One Way Sign in Route Analysis.rfa |
 | `R22TranscoderTests` | 2 | 2 | Test_2025.rvt, TESTFILE.rvt |
 | `RailingQuantitySourceTests` | 4 | 18 | TestData blocks |
@@ -152,7 +151,6 @@ same test. The tests therefore read the blocks from `TestData` of the fixture fo
 | `ArcProfileTests` | `sample-a-wall-9765668-grep` |
 | `EdgeBoundsTests` | `sample-a-wall-8954843-grep`, `-8959579-grep`, `-9750515-grep`, `-9750549-grep`, `-9765007-grep`, `-9765665-grep`, `-9765668-grep`, `-9766112-grep` |
 | `FaceAreaTests` | `sample-a-room-8964053-curved`, `sample-a-wall-8961372-arc` |
-| `ProfileRoofAreaTests` | `sample-a-roof-7311849-root`, `sample-a-roof-7311849-grep` |
 | `RailingQuantitySourceTests` | `sample-a-railing-7583306-root`, `-7583306-symbol`, `sample-a-railing-2653815-symbol` |
 | `SpaceBoundaryLiteralTests` | `sample-a-room-2766296-fourfaces`, `sample-a-room-5992163-sliver`, `sample-a-room-8964053-curved` |
 | `VkConnectorBlockTests` | `vk_flex_pipe_9123013`, `vk_proxy_directional_5919313`, `vk_proxy_mixed_domain_2823056` |

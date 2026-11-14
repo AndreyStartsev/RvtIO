@@ -2440,7 +2440,6 @@ public partial class RvtFileReader
             DiagnosticSink.WriteLine($"  [gscan] targeted scan recovered {found} G-blocks + {foundSketch} sketch curves for {missingIds.Count} candidate ids");
         }
         ReadOwnWallPlanarBodies(state);
-        ReadOwnProfileRoofAreas(state);
     }
 
     /// <summary>Decodes collected GRep blocks in parallel and stores, in collection order, the first decodable block of
