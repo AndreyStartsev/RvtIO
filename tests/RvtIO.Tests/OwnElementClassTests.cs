@@ -166,6 +166,43 @@ public class OwnElementClassTests
     }
 
     [Fact]
+    public void AFileWithItsOwnClassSchema_IsReadByItsFraming_OnlyInTheRevit2022View()
+    {
+        var framed = new PartitionFraming.Framed([[]], [], 4);
+        var state = new ParsingState { WideSchema = new FileSchema(new SchemaDocument()), FramedPartitions = [framed] };
+        Assert.False(state.ReadsFramedRecords);
+        state.R22View = true;
+        Assert.True(state.ReadsFramedRecords);
+        state.FramedPartitions = [framed, null];
+        Assert.False(state.ReadsFramedRecords);
+    }
+
+    [Fact]
+    public void ParseBlocks_InTheRevit2022View_ReadsTheBlockBehindAHeaderLikeRunOfAnUnknownElement()
+    {
+        // a byte run that looks like the block of element 999, which the element table does not list, lies in front of the record of
+        // element 123; the rewritten partition chunk is the one the transcoder wrote, the framed record lies in its own segment
+        byte[] run = Frame(3708), record = Frame(3708);
+        BitConverter.GetBytes(999u).CopyTo(run, 0);
+        byte[] partition = [.. run, .. record];
+        var state = new ParsingState
+        {
+            WideSchema = new FileSchema(new SchemaDocument()),
+            R22View = true,
+            AllKnownIds = [123],
+            Chunks = [partition],
+            RecordChunks = [partition],
+            PartitionChunkCount = 1,
+            FramedPartitions = [new PartitionFraming.Framed([record], [new(102, 123, 0, record.Length)], 4)],
+        };
+
+        RvtFileReader.ParseBlocks(state, null);
+
+        Assert.Equal(1, state.BlockClassInventory[3708].Count);
+        Assert.DoesNotContain(999u, state.BlockOnlyIds);
+    }
+
+    [Fact]
     public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded()
     {
         byte[] crossing = Frame(0x07D7), whole = Frame(0x07D7);

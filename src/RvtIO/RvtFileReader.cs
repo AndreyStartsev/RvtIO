@@ -78,9 +78,13 @@ public partial class RvtFileReader
         LogRelease(root, fileMetadata, wideSchema, diag);
         var episodeTable = ReadEpisodeTable(root, diag, wideSchema);
         bool r22View = false;
-        if (wideSchema != null && _options.R22Layout && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, diag) is { } r22Chunks)
+        IReadOnlyList<PartitionFraming.Framed?> readFrames = framedStreams;
+        int partitionChunkCount = partitionStreams.Sum(s => s.Count);
+        if (wideSchema != null && _options.R22Layout
+            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag) is { } r22)
         {
-            chunks = r22Chunks;
+            (chunks, partitionChunkCount, var r22Frames) = r22;
+            readFrames = r22Frames;
             r22View = true;
         }
         diag?.WriteLine($"ElemRec histories: {(elemRecHistories != null ? $"{elemRecHistories.Count} (exact)" : "unavailable")}");
@@ -103,8 +107,8 @@ public partial class RvtFileReader
             ElemRecOwningElementIds = elemRecOwners,
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
-            FramedPartitions = framedStreams,
-            PartitionChunkCount = partitionStreams.Sum(s => s.Count),
+            FramedPartitions = readFrames,
+            PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
@@ -852,9 +856,13 @@ public partial class RvtFileReader
         var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root);
         var episodeTable = ReadEpisodeTable(root, diag, wideSchema);
         bool r22View = false;
-        if (wideSchema != null && _options.R22Layout && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, diag) is { } r22Chunks)
+        IReadOnlyList<PartitionFraming.Framed?> readFrames = framedStreams;
+        int partitionChunkCount = partitionStreams.Sum(s => s.Count);
+        if (wideSchema != null && _options.R22Layout
+            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag) is { } r22)
         {
-            chunks = r22Chunks;
+            (chunks, partitionChunkCount, var r22Frames) = r22;
+            readFrames = r22Frames;
             r22View = true;
         }
 
@@ -873,8 +881,8 @@ public partial class RvtFileReader
             ElemRecOwningElementIds = elemRecOwners,
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
-            FramedPartitions = framedStreams,
-            PartitionChunkCount = partitionStreams.Sum(s => s.Count),
+            FramedPartitions = readFrames,
+            PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
@@ -2190,8 +2198,9 @@ public partial class RvtFileReader
             foreach (var part in dumpGrepEnv.Split(','))
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
         var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
-        // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
-        bool framedRoots = state.ReadsFramedRecords;
+        // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing (in the
+        // Revit 2022 view the walk still counts them: the element index seeds their class roots first)
+        bool framedRoots = state.ReadsFramedRecords && state.WideSchema == null;
         if (framedRoots) RecordFramedRoots(state);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
         {

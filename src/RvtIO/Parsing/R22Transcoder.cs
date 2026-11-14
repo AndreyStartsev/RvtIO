@@ -119,6 +119,30 @@ internal sealed class R22Transcoder
         return result;
     }
 
+    /// <summary>The channel-102 and 103 records of the project's own block of one framed stream in the 2022 layout, each rewritten as
+    /// <see cref="Stream"/> rewrites a block and none running into the next segment; channel 101 is left out. Null when the frame's id
+    /// width is not the one of the file's schema.</summary>
+    internal PartitionFraming.Framed? Framed(PartitionFraming.Framed source, out Stats stats)
+    {
+        stats = new Stats();
+        if (source.IdWidth != _sourceWidth) return null;
+        var segments = new List<byte[]>();
+        var items = new List<PartitionFraming.ProjectItem>();
+        var output = new MemoryStream();
+        long flushed = 0;
+        foreach (var item in source.Items)
+        {
+            if (item.Channel == 101 || item.Length < _sourceWidth + 14) continue;
+            var (data, start, _) = source.Bytes(item);
+            long at = flushed + output.Length;
+            WriteBlock(data, start, output, stats, root: item.Channel == 102);
+            items.Add(new(item.Channel, item.Owner, at, (int)(flushed + output.Length - at)));
+            if (output.Length >= 1 << 20) { flushed += output.Length; segments.Add(output.ToArray()); output.SetLength(0); }
+        }
+        if (output.Length > 0) segments.Add(output.ToArray());
+        return new(segments, items, 4);
+    }
+
     internal sealed class Stats
     {
         public int Records, RecordsRewritten, RootBlocks, RootBlocksRewritten, OtherBlocks, OtherBlocksRewritten;
@@ -264,7 +288,7 @@ internal sealed class R22Transcoder
                 }
                 ReadObject(c, tag);
             }
-            if (c.Pos != c.End) return null;
+            if (c.Pos != c.End) { failure = _source[rootClass].Name + ": bytes after the end of the object"; return null; }
         }
         catch (Fail fail)
         {
