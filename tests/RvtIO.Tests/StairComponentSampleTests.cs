@@ -30,7 +30,7 @@ public class StairComponentSampleTests
             Assert.EndsWith(":" + type, flight.ObjectType);
             Assert.DoesNotContain("Element ", flight.ObjectType);
             var common = Assert.Single(ifc.PropertySetsOf(flight.EntityId), set => set.Name == "Pset_StairFlightCommon");
-            Assert.Equal(["Reference", "RiserHeight", "TreadLength", "NosingLength", "WalkingLineOffset", "TreadLengthAtOffset", "TreadLengthAtInnerSide"],
+            Assert.Equal(["Reference", "NumberOfRiser", "NumberOfTreads", "RiserHeight", "TreadLength", "NosingLength", "WalkingLineOffset", "TreadLengthAtOffset", "TreadLengthAtInnerSide"],
                 common.Properties);
             var takeOff = Assert.Single(ifc.PropertySetsOf(flight.EntityId), set => set.Name == "Pset_QuantityTakeOff");
             Assert.Equal(["Reference"], takeOff.Properties);
