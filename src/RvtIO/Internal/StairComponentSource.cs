@@ -49,11 +49,7 @@ internal static class StairComponentSource
             state.StairMembershipRoots[owner] = state.StairMembershipRoots.TryGetValue(owner, out var prior)
                 ? new(prior.BlockCount + 1, null) : new(1, value);
         }
-        // Count every semantic class of table-backed ids so a railing's non-owned
-        // duplicate cannot be hidden by scan order. Separate GElement frames never count.
-        if (!TfBlockDeserializer.IsSubclassOf(classId, 37)
-            || classId != 3681 && !(state.ElemRecOwningElementIds?.ContainsKey(owner) ?? false))
-            return;
+        if (!CountsClassRoot(state, classId, owner)) return;
         ushort? exactClass = headerMatches
             && TfBlockDeserializer.TryExtractOwnElementClass(data, start, size, classId, out int namedOwner)
             && namedOwner == owner ? classId : null;
@@ -62,6 +58,13 @@ internal static class StairComponentSource
         state.WalkedElementClassRoots[owner] = state.WalkedElementClassRoots.TryGetValue(owner, out var walked)
             ? new(walked.BlockCount + 1, null) : new(1, exactClass);
     }
+
+    /// <summary>Whether <see cref="Record"/> counts a root of this class in <see cref="ParsingState.OwnedElementClassRoots"/>: every
+    /// semantic class of table-backed ids, so a railing's non-owned duplicate cannot be hidden by scan order. Separate GElement frames
+    /// never count.</summary>
+    internal static bool CountsClassRoot(ParsingState state, ushort classId, uint owner) =>
+        TfBlockDeserializer.IsSubclassOf(classId, 37)
+        && (classId == 3681 || (state.ElemRecOwningElementIds?.ContainsKey(owner) ?? false));
 
     internal static void Apply(IReadOnlyList<Element> elements, ParsingState state)
     {

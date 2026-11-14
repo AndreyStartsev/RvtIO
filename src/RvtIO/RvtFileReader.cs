@@ -2149,18 +2149,23 @@ public partial class RvtFileReader
     /// wall (<see cref="RecordWallLocationLine"/>) is read from its root record once every root is counted.</summary>
     internal static void RecordFramedRoots(ParsingState state)
     {
-        var walls = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>();
+        var roots = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>();
         foreach (var frame in state.FramedPartitions!)
             foreach (var record in frame!.Items)
             {
                 if (record.Channel != 102 || record.Length < 18 || record.Owner > uint.MaxValue) continue;
                 // the item [owner:4][checksum:4][size:4][class:2 ...][size:4] is the block layout the walk hands over
                 var (data, start, _) = frame.Bytes(record);
-                ushort classId = BitConverter.ToUInt16(data, start + 12);
-                StairComponentSource.Record(state, data, start, (uint)(record.Length - 16), classId, (uint)record.Owner);
-                if (classId is 3524 or 361) walls.Add((data, start, (uint)(record.Length - 16), classId, (uint)record.Owner));
+                roots.Add((data, start, (uint)(record.Length - 16), BitConverter.ToUInt16(data, start + 12), (uint)record.Owner));
             }
-        foreach (var (data, start, size, classId, owner) in walls) RecordWallLocationLine(state, data, start, size, classId, owner);
+        // a file with its own class schema has the roots of its element index seeded already (ReadWideElementIndex): the record replaces
+        // the seed where it is counted; a root the count leaves out, such as one whose rewrite failed (unknown tag), keeps it
+        if (state.WideSchema != null)
+            foreach (var (_, _, _, classId, owner) in roots)
+                if (StairComponentSource.CountsClassRoot(state, classId, owner)) state.OwnedElementClassRoots.Remove(owner);
+        foreach (var (data, start, size, classId, owner) in roots) StairComponentSource.Record(state, data, start, size, classId, owner);
+        foreach (var (data, start, size, classId, owner) in roots)
+            if (classId is 3524 or 361) RecordWallLocationLine(state, data, start, size, classId, owner);
     }
 
     /// <summary>Hands <see cref="BlockParser.ParseBlock"/> the channel-102 and 103 records of the project's own block (the root objects and the
@@ -2198,9 +2203,8 @@ public partial class RvtFileReader
             foreach (var part in dumpGrepEnv.Split(','))
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
         var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
-        // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing (in the
-        // Revit 2022 view the walk still counts them: the element index seeds their class roots first)
-        bool framedRoots = state.ReadsFramedRecords && state.WideSchema == null;
+        // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
+        bool framedRoots = state.ReadsFramedRecords;
         if (framedRoots) RecordFramedRoots(state);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
         {
