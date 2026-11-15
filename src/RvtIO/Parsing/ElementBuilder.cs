@@ -2614,7 +2614,7 @@ internal static partial class ElementBuilder
         bool wide = state.WideSchema != null;
         info.SerializedProjectPhaseIds = source.BlockCount == 1
             && source.PhaseIds is { Length: > 0 } phases
-            && phases.All(id => (wide ? id >= 0 : id > 0) && state.ElemClassIdx.GetValueOrDefault((uint)id) == 3065)
+            && phases.All(id => id >= 0 && state.ElemClassIdx.GetValueOrDefault((uint)id) == 3065)
             && phases.Distinct().Count() == phases.Length ? phases.ToArray() : null;
         info.SerializedDefaultExportPhaseId = info.SerializedProjectPhaseIds?[^1];
         foreach (var element in info.Elements)
@@ -2622,7 +2622,8 @@ internal static partial class ElementBuilder
             element.SerializedRoomPhaseId = (element.CategoryId == -2000160 || wide && element.CategoryId == -2003600) && element.Id > 0
                 && (wide || state.RoomNameSource.TryGetValue((uint)element.Id, out var root)
                     && root.BlockCount == 1 && !string.IsNullOrEmpty(root.Name))
-                && state.ExactRoomPhaseIds.TryGetValue((uint)element.Id, out int phase) && (wide ? phase >= 0 : phase > 0)
+                && state.ExactRoomPhaseIds.TryGetValue((uint)element.Id, out int phase)
+                && (phase > 0 || phase == 0 && (wide || info.SerializedProjectPhaseIds?.Contains(0) == true))
                     ? phase : null;
             if (element.CategoryId == -2000160 && element.Id > 0
                 && state.RoomNameSource.TryGetValue((uint)element.Id, out var validation)
@@ -3048,7 +3049,7 @@ internal static partial class ElementBuilder
     /// Apply the native parameter stores (schema-deserialized Element m_pParamValueSet* containers)
     /// - the file's authoritative stored params.
     /// </summary>
-    private static void ApplyNativeParams(RevitFileInfo info, ParsingState? state)
+    internal static void ApplyNativeParams(RevitFileInfo info, ParsingState? state)
     {
         if (state == null
             || (state.NativeParams.Count == 0
@@ -3266,12 +3267,18 @@ internal static partial class ElementBuilder
                 e.SerializedCreatedPhaseId = storedCreatedPhase;
             if (np.Fields.TryGetValue("m_demolishedPhaseId", out int storedDemolishedPhase))
                 e.SerializedDemolishedPhaseId = storedDemolishedPhase;
-            if (np.Fields.TryGetValue("m_createdPhaseId", out int phc) && phc > 0)
+            bool phaseZeroExists = state.WideSchema != null || state.ElemClassIdx.GetValueOrDefault(0u) == 3065;
+            if (np.Fields.TryGetValue("m_createdPhaseId", out int phc) && (phc > 0 || phc == 0 && phaseZeroExists))
                 Apply(-1012100, StorageType.ElementId, phc); // PHASE_CREATED
             // PHASE_DEMOLISHED: the null id (-1) of a file with 64-bit ids is the stored value
             // ("None"); the Revit 2022 pass below adds the same default for the other files
-            if (np.Fields.TryGetValue("m_demolishedPhaseId", out int phd) && (phd > 0 || phd == -1 && e.NativeRootClassName != null))
-                Apply(-1012101, StorageType.ElementId, phd, noRevitValue: phd <= 0);
+            if (np.Fields.TryGetValue("m_demolishedPhaseId", out int phd)
+                && (phd > 0 || phd == 0 && phaseZeroExists || phd == -1 && e.NativeRootClassName != null))
+                Apply(-1012101, StorageType.ElementId, phd, noRevitValue: phd < 0);
+            if (e.Id == 0 && e.CategoryId == -2000112 && string.IsNullOrWhiteSpace(e.Name)
+                && np.StringFields.TryGetValue("3065:m_name", out string? phaseZeroName)
+                && !string.IsNullOrWhiteSpace(phaseZeroName))
+                e.Name = phaseZeroName;
             if (np.Fields.TryGetValue("m_WallAttributesId", out int wat) && wat > 0)
                 ApplyType(wat);
             if (np.Fields.TryGetValue("m_upToLevelId", out int upl))
@@ -4131,7 +4138,7 @@ internal static partial class ElementBuilder
             {
                 void AddRef(int bip, string name, int val)
                 {
-                    if (!existing.Contains(bip) && state.AllKnownIds.Contains((uint)val))
+                    if (!existing.Contains(bip) && val > 0 && state.AllKnownIds.Contains((uint)val))
                         e.Parameters.Add(BipHelpers.MakeBipParam(bip, name, StorageType.ElementId, val));
                 }
                 AddRef(-1114351, "SPACE_POWER_SCHEDULE_PARAM", sch.Power);
@@ -4883,9 +4890,8 @@ internal static partial class ElementBuilder
         {
             element.SerializedExportId = null;
             element.SerializedHandleExportId = null;
-            // Id 0 is an ElemTable row of the 64-bit layout (state.WideSchema); the other layouts
-            // never had it here.
-            if (element.Id < 0 || element.Id == 0 && state.WideSchema == null
+            // Id 0 is a valid ElemTable row (ProjectPhase / DimensionStyle) across wide and native R22 tables.
+            if (element.Id < 0
                 || state.ElemRecHistories is not { } histories
                 || !histories.TryGetValue((uint)element.Id, out var history)
                 || ElementExportIds.EpisodeGuid(history, state.HistoryEpisodeGuids, state.EpisodeTableX)
