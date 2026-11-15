@@ -75,6 +75,21 @@ public class DerivedInstanceParamsTests
     }
 
     [Fact]
+    public void ArchitecturalColumn_BaseOffsetAndLength()
+    {
+        var column = new Element { Id = 1, CategoryId = -2000100, NativeMasterSymbolId = 5,
+            FamilyLevelRefs = (10, 1.0, 11, 0.5), InstanceIsVertical = true };
+        var info = new RevitFileInfo { Elements = [Level(10, 0), Level(11, 10), column] };
+
+        ElementBuilder.ApplyStructuralColumnParams(info);
+
+        Assert.Equal(1.0, Value(column, -1002065));
+        Assert.Equal(1.0, Value(column, -1001357));
+        Assert.Null(Value(column, -1150171));
+        Assert.Equal(9.5, Value(column, -1001375));
+    }
+
+    [Fact]
     public void RoomLevelNameAndComputationHeight()
     {
         var room = new Element { Id = 1, CategoryId = -2000160 };

@@ -1569,7 +1569,8 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>
-    /// Structural columns from their stored FamilyLevelRef pair (base, top) and m_bVertical: Base
+    /// Columns (structural OST_StructuralColumns -2001330 and architectural OST_Columns -2000100)
+    /// from their stored FamilyLevelRef pair (base, top) and m_bVertical: Base
     /// Offset (SCHEDULE_BASE_LEVEL_OFFSET_PARAM and FAMILY_BASE_LEVEL_OFFSET_PARAM) is the base
     /// offset.
     /// </summary>
@@ -1579,11 +1580,12 @@ internal static partial class ElementBuilder
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId != -2001330 || e.NativeMasterSymbolId == null || e.FamilyLevelRefs is not { } refs) continue;
+            if (e.CategoryId is not (-2001330 or -2000100) || e.NativeMasterSymbolId == null || e.FamilyLevelRefs is not { } refs) continue;
             SetParam(e, -1002065, "SCHEDULE_BASE_LEVEL_OFFSET_PARAM", StorageType.Double, refs.BaseOffset);
             SetParam(e, -1001357, "FAMILY_BASE_LEVEL_OFFSET_PARAM", StorageType.Double, refs.BaseOffset);
             if (e.InstanceIsVertical != true) continue;
-            SetParam(e, -1150171, "SLANTED_COLUMN_TYPE_PARAM", StorageType.Integer, 0);
+            if (e.CategoryId == -2001330)
+                SetParam(e, -1150171, "SLANTED_COLUMN_TYPE_PARAM", StorageType.Integer, 0);
             if (LevelElevation(refs.BaseLevel) is double baseElevation && LevelElevation(refs.TopLevel) is double topElevation)
                 SetParam(e, -1001375, "INSTANCE_LENGTH_PARAM", StorageType.Double,
                     topElevation + refs.TopOffset - (baseElevation + refs.BaseOffset));
@@ -3022,10 +3024,15 @@ internal static partial class ElementBuilder
                 // ElemTable workset is authoritative - force-override any stale value.
                 if (existing != null) { existing.Value = (int)ws; existing.StorageType = StorageType.Integer; }
                 else e.Parameters.Add(BipHelpers.MakeBipParam(-1002053, "ELEM_PARTITION_PARAM", StorageType.Integer, (int)ws));
+                e.WorksetId = (int)ws;
             }
             else if (existing is { Value: int pv } && pv < 0)
             {
                 e.Parameters.Remove(existing);
+            }
+            else if (existing is { Value: int val } && val >= 0)
+            {
+                e.WorksetId = val;
             }
         }
     }
