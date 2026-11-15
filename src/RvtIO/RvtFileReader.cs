@@ -776,6 +776,7 @@ public partial class RvtFileReader
 
         LogPhase("Export ids applied");
         ResolveParameterUnits(rvtInfo, state);
+        Parameter.ResolveZeroElementIds(rvtInfo, state);
 
         // Shared-coordinates / true-north placement: the project may be modelled
         // axis-aligned but exported (by Revit) rotated+offset into shared coords. The exact
@@ -1186,7 +1187,8 @@ public partial class RvtFileReader
             int? partitionNumber = int.TryParse(partEntry.Name, out int parsedPartition) ? parsedPartition : null;
             if (framed != null && partitionNumber is int partNum)
                 framed = framed with { Partition = partNum };
-            RecordStream("Partitions/" + partEntry.Name, raw.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified);
+            RecordStream("Partitions/" + partEntry.Name, raw.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified,
+                chunks.Sum(chunk => (long)chunk.Length));
             diag?.WriteLine(framingFailure == null ? $"  Chunks: {chunks.Count} segments of the exact framing"
                 : $"  Chunks: {chunks.Count} decompressed by a search for gzip members (framing: {framingFailure})");
             if (_options.ResolveCurrentCopies && routing != null && partitionNumber is int pruningPartition
@@ -1266,11 +1268,11 @@ public partial class RvtFileReader
         return new RoutingPlan(census, current);
     }
 
-    private void RecordStream(string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified)
+    private void RecordStream(string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified, long unpackedBytes = 0)
     {
         if (_options.Diagnostics == null) return;
         if (_options.Diagnostics.Streams.Any(s => s.Name == name)) return;
-        _options.Diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified));
+        _options.Diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified, unpackedBytes));
     }
 
     private List<byte[]> DecompressStorage(RootStorage root, string storageName, TextWriter? diag)
@@ -1293,13 +1295,14 @@ public partial class RvtFileReader
                     if (PagedGzipStream.Decompress(raw) is { } exact)
                     {
                         diag?.WriteLine($"{storageName}/{entry.Name}: exact paged decode ({exact.Length:N0} bytes)");
-                        RecordStream($"{storageName}/{entry.Name}", raw.Length, 1, 1, 0, 0, 0);
+                        RecordStream($"{storageName}/{entry.Name}", raw.Length, 1, 1, 0, 0, 0, exact.Length);
                         allChunks.Add(exact);
                         continue;
                     }
                     var chunks = decompressor.DecompressAll(raw);
                     var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
-                    RecordStream($"{storageName}/{entry.Name}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers);
+                    RecordStream($"{storageName}/{entry.Name}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers,
+                        chunks.Sum(chunk => (long)chunk.Length));
                     if (chunks.Count > 0)
                     {
                         diag?.WriteLine($"{storageName}/{entry.Name}: {chunks.Count} chunks ({raw.Length:N0} bytes)");
@@ -1330,7 +1333,7 @@ public partial class RvtFileReader
         if (PagedGzipStream.Read(root, "Global", "History", out long rawLength) is { } exact)
         {
             diag?.WriteLine($"Global/History: exact paged decode ({exact.Length:N0} bytes)");
-            RecordStream("Global/History", rawLength, 1, 1, 0, 0, 0);
+            RecordStream("Global/History", rawLength, 1, 1, 0, 0, 0, exact.Length);
             return ParseEpisodeGuids(new List<byte[]> { exact }, diag, wideSchema);
         }
         return ParseEpisodeGuids(DecompressNamedStream(root, "Global", "History", diag), diag, wideSchema);
@@ -1352,7 +1355,8 @@ public partial class RvtFileReader
             var decompressor = new ChunkDecompressor();
             var chunks = decompressor.DecompressAll(raw);
             var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
-            RecordStream($"{storageName}/{streamName}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers);
+            RecordStream($"{storageName}/{streamName}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers,
+                chunks.Sum(chunk => (long)chunk.Length));
             diag?.WriteLine($"{storageName}/{streamName}: {chunks.Count} chunks ({raw.Length:N0} bytes)");
             return chunks;
         }
@@ -2553,13 +2557,16 @@ public partial class RvtFileReader
             BlockParser.CollectBipStrings(chunk, state);
 
         Lap("bip strings");
-        // a file read by its framing: the blocks of the partitions are its records, the chunks of Formats and Global are scanned
-        var partitionChunks = state.ReadsFramedRecords
+        // a file read by its framing or an unrewritten 64-bit file: skip the legacy 32-bit partition chunk scan
+        bool framedBlocks = state.ReadsFramedRecords;
+        bool skipPartitionScan = framedBlocks
+            || (!state.R22View && state.WideSchema != null && WideElementRecords.IdWidth(state.WideSchema) == 8);
+        var partitionChunks = skipPartitionScan
             ? state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance) : null;
         bool Scanned(byte[] chunk) => partitionChunks?.Contains(chunk) != true;
         // First pass: parse blocks, collect block-only IDs
         var firstPassGReps = new List<BlockParser.PendingGRep>();
-        if (partitionChunks != null) ParseFramedBlocks(state, collectBlockOnlyIds: true, firstPassGReps);
+        if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: true, firstPassGReps);
         foreach (var chunk in state.NonRecordChunks.Where(Scanned))
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
         foreach (var chunk in state.RecordChunks.Where(Scanned))
@@ -2574,7 +2581,7 @@ public partial class RvtFileReader
             foreach (var bid in state.BlockOnlyIds)
                 state.AllKnownIds.Add(bid);
             var secondPassGReps = new List<BlockParser.PendingGRep>();
-            if (partitionChunks != null) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
+            if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
             foreach (var chunk in state.NonRecordChunks.Where(Scanned))
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
             foreach (var chunk in state.RecordChunks.Where(Scanned))

@@ -134,6 +134,23 @@ public class ElemTableAuthorityTests
         Assert.Null(element.BoundingBox);
     }
 
+    [Fact]
+    public void ApplyWorksets_AssignsWorksetIdAndParameter()
+    {
+        var elem1 = new Element { Id = 101 };
+        var elem2 = new Element { Id = 102 };
+        var info = new RevitFileInfo { Elements = [elem1, elem2] };
+        var state = new ParsingState();
+        state.ElemWorksets[(uint)elem1.Id] = 55;
+
+        typeof(ElementBuilder).GetMethod("ApplyWorksets", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, [info, state]);
+
+        Assert.Equal(55, elem1.WorksetId);
+        Assert.Equal(55, elem1.Parameters.FirstOrDefault(p => p.Id == -1002053)?.Value);
+        Assert.Null(elem2.WorksetId);
+    }
+
     private static Dictionary<uint, uint> Parse(byte[] bytes)
     {
         var result = new Dictionary<uint, uint>();
