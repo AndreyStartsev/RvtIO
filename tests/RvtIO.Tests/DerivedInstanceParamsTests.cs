@@ -606,4 +606,26 @@ public class DerivedInstanceParamsTests
         Assert.Null(Value(uncertified, -1012806));
         Assert.Null(Value(door, -1012806));
     }
+
+    [Fact]
+    public void ApplyInstanceQuantities_ArchitecturalColumnAndPlumbing_SetsVolume()
+    {
+        SolidQuantities.Shell?[] shells =
+        [
+            null,
+            new SolidQuantities.Shell(3.5, 12.0, 6.0),
+            new SolidQuantities.Shell(4.0, 14.0, 7.0),
+        ];
+
+        var archCol = new Element { Id = 10, CategoryId = -2000100, NativeMasterSymbolId = 5, LevelSolidCounts = [0, 1, 1], LevelShells = shells };
+        var plumbing = new Element { Id = 11, CategoryId = -2001040, NativeMasterSymbolId = 5, LevelSolidCounts = [0, 1, 1], LevelShells = shells };
+        var classes = new Dictionary<uint, ushort> { [10] = 1794, [11] = 1794 };
+
+        ElementBuilder.ApplyInstanceQuantities(new RevitFileInfo { Elements = [archCol, plumbing] }, classes);
+
+        Assert.Equal(3.5, Value(archCol, -1012806));
+        Assert.Null(Value(archCol, -1012805));
+        Assert.Equal(3.5, Value(plumbing, -1012806));
+        Assert.Null(Value(plumbing, -1012805));
+    }
 }
